@@ -119,6 +119,7 @@
 				badge.className = 'ou-status-pill err';
 				badge.innerHTML = '<span class="ou-dot err"></span> 检测异常';
 			}
+			setText('check-reason', (res && res.error) ? res.error : '检测异常');
 			$('btn-force').style.display = '';
 			$('btn-upgrade').style.display = 'none';
 			return;
@@ -128,8 +129,22 @@
 		setText('new-ver', verDisplay);
 		setText('latest-size', res.latest.size_human);
 		setText('latest-time', res.latest.updated_local);
-		setText('check-reason', res.reason +
-			(res.resolved_tag && res.resolved_tag !== res.tag ? '  ·  Release: ' + res.resolved_tag : ''));
+
+		// Render Detection Reason with full details (Reason, Resolved Tag, and direct GitHub Link)
+		var reasonEl = $('check-reason');
+		if (reasonEl) {
+			var reasonHtml = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
+			if (res.resolved_tag) {
+				reasonHtml += '<span class="ou-tag-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-chip-svg"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>目标 Release: ' + esc(res.resolved_tag) + '</span>';
+			}
+			if (res.release_url) {
+				reasonHtml += '<a href="' + esc(res.release_url) + '" target="_blank" rel="noopener" class="ou-ext-link">' +
+					'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-ext-svg"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+					'<span>查看 Release 发布页 ↗</span></a>';
+			}
+			reasonEl.innerHTML = reasonHtml;
+		}
+
 		var hasUpdate = res.has_update === true;
 		setText('check-result', hasUpdate ? '🎉 发现新固件可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason));
 		hint('check-result', hasUpdate ? '🎉 发现新固件可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason), hasUpdate ? 'ok' : '');

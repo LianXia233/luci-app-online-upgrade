@@ -50,7 +50,7 @@
 
 .ou-hero-content {
 	flex: 1;
-	min-width: 320px;
+	min-width: 300px;
 	z-index: 1;
 }
 
@@ -108,7 +108,7 @@
 
 .ou-hero-features {
 	display: flex;
-	gap: 16px;
+	gap: 12px;
 	flex-wrap: wrap;
 }
 
@@ -145,19 +145,6 @@
 	height: auto;
 	max-height: 160px;
 	filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.04));
-}
-
-@media (max-width: 860px) {
-	.ou-hero-card {
-		flex-direction: column;
-		align-items: flex-start;
-		padding: 24px;
-	}
-	.ou-hero-visual {
-		width: 100%;
-		flex: none;
-		margin-top: 10px;
-	}
 }
 
 /* --------------------------------------------------------------------------
@@ -203,6 +190,7 @@
 	display: flex;
 	align-items: center;
 	gap: 10px;
+	flex-wrap: wrap;
 }
 
 .ou-card-head h3 {
@@ -334,7 +322,7 @@
 
 .ou-container .ou-btn-primary:hover:not(:disabled) {
 	background: linear-gradient(180deg, #1d4ed8 0%, #1e40af 100%) !important;
-	box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35) !important;
+	box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
 	transform: translateY(-1px);
 	color: #ffffff !important;
 }
@@ -343,12 +331,12 @@
 	background: linear-gradient(180deg, #059669 0%, #047857 100%) !important;
 	color: #ffffff !important;
 	border-color: #047857 !important;
-	box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3) !important;
+	box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3);
 }
 
 .ou-container .ou-btn-success:hover:not(:disabled) {
 	background: linear-gradient(180deg, #047857 0%, #065f46 100%) !important;
-	box-shadow: 0 4px 14px rgba(5, 150, 105, 0.4) !important;
+	box-shadow: 0 4px 14px rgba(5, 150, 105, 0.4);
 	transform: translateY(-1px);
 	color: #ffffff !important;
 }
@@ -397,11 +385,11 @@
 }
 
 /* --------------------------------------------------------------------------
-   4. Stat Metric Grid
+   4. Stat Metric Grid & Detection Reason Layout
    -------------------------------------------------------------------------- */
 .ou-stat-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	grid-template-columns: repeat(3, 1fr);
 	gap: 16px;
 	margin-bottom: 20px;
 }
@@ -415,6 +403,7 @@
 	align-items: flex-start;
 	gap: 14px;
 	transition: all 0.2s ease;
+	min-width: 0;
 }
 
 .ou-stat-card:hover {
@@ -422,6 +411,23 @@
 	border-color: #cbd5e1 !important;
 	box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05) !important;
 	transform: translateY(-2px);
+}
+
+.ou-stat-card-full {
+	grid-column: 1 / -1 !important;
+	background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%) !important;
+	border: 1px solid #dbeafe !important;
+}
+
+.ou-stat-card-full:hover {
+	border-color: #93c5fd !important;
+	box-shadow: 0 4px 16px rgba(37, 99, 235, 0.06) !important;
+}
+
+.ou-stat-card-full .ou-stat-icon-wrap {
+	background: #eff6ff !important;
+	border-color: #bfdbfe !important;
+	color: #2563eb !important;
 }
 
 .ou-stat-icon-wrap {
@@ -471,20 +477,86 @@
 	border: 1px solid #dbeafe !important;
 	padding: 1px 6px;
 	border-radius: 6px;
+	white-space: nowrap;
 }
 
 .ou-stat-val {
 	font-size: 14px !important;
 	font-weight: 700 !important;
 	color: #0f172a !important;
-	margin-bottom: 2px;
-	display: block;
+	margin-bottom: 3px !important;
+	display: block !important;
+	white-space: normal !important;
+	word-break: break-all !important;
+	line-height: 1.45 !important;
 }
 
-.ou-text-truncate {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+/* Detection Reason Full Display */
+.ou-reason-val {
+	font-size: 13.5px !important;
+	font-weight: 600 !important;
+	color: #0f172a !important;
+	white-space: normal !important;
+	word-break: break-word !important;
+	line-height: 1.6 !important;
+	display: flex !important;
+	align-items: center !important;
+	flex-wrap: wrap !important;
+	gap: 8px !important;
+}
+
+.ou-reason-text {
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.ou-tag-chip {
+	display: inline-flex !important;
+	align-items: center !important;
+	gap: 4px !important;
+	padding: 2px 9px !important;
+	border-radius: 6px !important;
+	font-size: 11.5px !important;
+	font-weight: 600 !important;
+	background: #eff6ff !important;
+	color: #2563eb !important;
+	border: 1px solid #dbeafe !important;
+	vertical-align: middle;
+}
+
+.ou-chip-svg {
+	width: 12px;
+	height: 12px;
+	flex-shrink: 0;
+}
+
+.ou-ext-link {
+	display: inline-flex !important;
+	align-items: center !important;
+	gap: 4px !important;
+	padding: 2px 9px !important;
+	border-radius: 6px !important;
+	font-size: 11.5px !important;
+	font-weight: 600 !important;
+	background: #ffffff !important;
+	color: #475569 !important;
+	border: 1px solid #cbd5e1 !important;
+	text-decoration: none !important;
+	transition: all 0.2s ease !important;
+	vertical-align: middle;
+}
+
+.ou-ext-link:hover {
+	background: #f1f5f9 !important;
+	border-color: #94a3b8 !important;
+	color: #0f172a !important;
+	transform: translateY(-1px);
+}
+
+.ou-ext-svg {
+	width: 12px;
+	height: 12px;
+	flex-shrink: 0;
 }
 
 .ou-stat-sub {
@@ -681,6 +753,7 @@
    -------------------------------------------------------------------------- */
 .ou-table-responsive {
 	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
 	border: 1px solid #e2e8f0 !important;
 	border-radius: 12px !important;
 	background: #ffffff !important;
@@ -692,6 +765,7 @@
 	text-align: left;
 	font-size: 13px;
 	background: #ffffff !important;
+	min-width: 480px;
 }
 
 .ou-table th {
@@ -747,11 +821,13 @@
 	border-radius: 6px;
 	font-size: 11.5px;
 	font-weight: 500;
+	white-space: nowrap;
 }
 
 .ou-time-text {
 	color: #64748b !important;
 	font-size: 12px;
+	white-space: nowrap;
 }
 
 /* Empty State */
@@ -951,10 +1027,11 @@
 	border: 1px solid #e2e8f0 !important;
 	color: #475569 !important;
 	font-size: 11px;
-	padding: 2px 8px;
+	padding: 3px 8px;
 	border-radius: 6px;
 	cursor: pointer;
 	transition: all 0.15s ease;
+	line-height: 1.3;
 }
 
 .ou-quick-pill:hover {
@@ -1136,7 +1213,6 @@
 	border: none !important;
 }
 
-/* Custom scrollbar for terminal */
 .ou-terminal::-webkit-scrollbar {
 	width: 8px;
 	height: 8px;
@@ -1291,4 +1367,222 @@
 .ou-btn-lg {
 	padding: 10px 24px !important;
 	font-size: 14px !important;
+}
+
+/* ==========================================================================
+   10. Comprehensive Responsive Design (Mobile & Desktop)
+   ========================================================================== */
+
+/* Tablet & Medium Screens */
+@media (max-width: 992px) {
+	.ou-stat-grid {
+		grid-template-columns: repeat(2, 1fr);
+	}
+
+	.ou-hero-card {
+		flex-direction: column;
+		align-items: flex-start;
+		padding: 24px 28px !important;
+	}
+
+	.ou-hero-visual {
+		width: 100%;
+		flex: none;
+		max-height: 140px;
+		margin-top: 10px;
+	}
+}
+
+/* Mobile Screens */
+@media (max-width: 768px) {
+	.ou-container {
+		padding: 4px 6px 40px;
+	}
+
+	.ou-hero-card {
+		padding: 20px 18px !important;
+		border-radius: 16px !important;
+		gap: 16px;
+	}
+
+	.ou-hero-title {
+		font-size: 20px !important;
+	}
+
+	.ou-hero-desc {
+		font-size: 12.5px !important;
+		margin-bottom: 12px !important;
+	}
+
+	.ou-hero-features {
+		gap: 8px;
+		flex-direction: column;
+	}
+
+	.ou-feature-item {
+		width: 100%;
+		font-size: 11.5px;
+	}
+
+	.ou-hero-visual {
+		width: 100%;
+		max-height: 110px;
+	}
+
+	.ou-card {
+		padding: 18px 14px !important;
+		border-radius: 16px !important;
+		margin-bottom: 16px !important;
+	}
+
+	.ou-card-head {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+		margin-bottom: 16px;
+		padding-bottom: 14px;
+	}
+
+	.ou-card-head h3 {
+		font-size: 15px !important;
+	}
+
+	.ou-btn-row {
+		width: 100%;
+		display: flex;
+		flex-wrap: wrap;
+	}
+
+	.ou-btn-row .ou-btn {
+		flex: 1 1 auto;
+		justify-content: center;
+		min-height: 40px;
+	}
+
+	/* Status Card buttons full stack on phone */
+	#card-status .ou-btn-row {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	#card-status .ou-btn-row .ou-btn {
+		width: 100%;
+	}
+
+	/* Backup Card: 2x2 grid buttons on phone */
+	#card-backup .ou-btn-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 8px;
+		width: 100%;
+	}
+
+	/* Stat grid stacks cleanly on mobile */
+	.ou-stat-grid {
+		grid-template-columns: 1fr !important;
+		gap: 12px;
+	}
+
+	.ou-stat-card {
+		padding: 14px 14px !important;
+	}
+
+	.ou-reason-val {
+		font-size: 13px !important;
+		flex-direction: column;
+		align-items: flex-start !important;
+		gap: 6px !important;
+	}
+
+	.ou-tag-chip, .ou-ext-link {
+		margin-left: 0 !important;
+	}
+
+	/* Steps section on mobile */
+	.ou-config-steps {
+		grid-template-columns: 1fr !important;
+		gap: 14px;
+	}
+
+	.ou-form-card {
+		padding: 14px !important;
+	}
+
+	.ou-input-group {
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.ou-input-group .ou-btn {
+		width: 100%;
+		min-height: 38px;
+	}
+
+	.ou-asset-select-row {
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.ou-asset-select-row .ou-btn {
+		width: 100%;
+	}
+
+	.ou-adv-grid {
+		grid-template-columns: 1fr !important;
+		padding: 14px !important;
+		gap: 12px;
+	}
+
+	.ou-card-foot {
+		flex-direction: column-reverse;
+		align-items: stretch;
+		gap: 10px;
+	}
+
+	.ou-card-foot .ou-btn {
+		width: 100%;
+		min-height: 42px;
+	}
+
+	/* Step pipeline compact on mobile */
+	.ou-step-pipeline {
+		padding: 0;
+		margin: 6px 0 16px;
+	}
+
+	.ou-step-circle {
+		width: 26px;
+		height: 26px;
+		font-size: 11px;
+	}
+
+	.ou-step-text {
+		font-size: 10.5px;
+	}
+
+	.ou-step-line {
+		margin: 0 2px -12px;
+	}
+
+	/* Terminal on mobile */
+	.ou-terminal {
+		font-size: 11px !important;
+		padding: 12px 14px !important;
+		max-height: 240px !important;
+	}
+
+	/* Reboot modal on mobile */
+	.ou-reboot-card {
+		padding: 28px 20px !important;
+		border-radius: 20px !important;
+	}
+
+	.ou-reboot-title {
+		font-size: 19px !important;
+	}
+
+	.ou-countdown {
+		font-size: 38px !important;
+	}
 }

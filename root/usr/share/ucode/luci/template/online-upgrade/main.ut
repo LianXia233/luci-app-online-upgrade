@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.1.0">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.2.0">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -19,7 +19,7 @@
 			</div>
 			<h1 class="ou-hero-title">固件在线升级</h1>
 			<p class="ou-hero-desc">
-				基于 Tokio 多线程分段下载内核，智能匹配 GitHub Releases 固件，支持配置自动无损保留、Range 分块断点续传与全量配置快照灾备。
+				基于 Tokio 多线程分段加速下载内核，智能匹配 GitHub Releases 固件，支持配置自动无损保留、Range 分块断点续传与全量配置快照灾备。
 			</p>
 			<div class="ou-hero-features">
 				<div class="ou-feature-item">
@@ -190,7 +190,7 @@
 						<span class="ou-stat-label">云端最新固件</span>
 						<span class="ou-ver-badge" id="new-ver">—</span>
 					</div>
-					<span class="ou-stat-val ou-text-truncate" id="latest-name" title="等待检测">—</span>
+					<span class="ou-stat-val" id="latest-name" title="目标固件产物">—</span>
 					<span class="ou-stat-sub">目标 Release 适配产物</span>
 				</div>
 			</div>
@@ -208,14 +208,14 @@
 					<span class="ou-stat-sub">SHA256 &amp; 文件大小校验</span>
 				</div>
 			</div>
-			<div class="ou-stat-card">
+			<div class="ou-stat-card ou-stat-card-full">
 				<div class="ou-stat-icon-wrap">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-stat-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 12 14 22 4"/></svg>
 				</div>
 				<div class="ou-stat-meta">
-					<span class="ou-stat-label">检测依据与规则</span>
-					<span class="ou-stat-val ou-text-truncate" id="check-reason">—</span>
-					<span class="ou-stat-sub">版本号 / 编译时间戳双重判定</span>
+					<span class="ou-stat-label">检测依据与判定规则</span>
+					<div class="ou-stat-val ou-reason-val" id="check-reason">—</div>
+					<span class="ou-stat-sub">双重判定策略：基于最新构建编译时间戳与 Release 标签策略，按时间倒序自动追踪</span>
 				</div>
 			</div>
 		</div>
@@ -571,6 +571,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.1.0"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.2.0"></script>
 
 {% include(`footer`) %}
