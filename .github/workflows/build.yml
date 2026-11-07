@@ -59,9 +59,11 @@ jobs:
         include:
           - sdk_url: https://downloads.immortalwrt.org/releases/25.12.0/targets/mediatek/filogic/immortalwrt-sdk-25.12.0-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             bin_artifact: online-upgrade-aarch64-unknown-linux-musl
+            pkg_arch: aarch64_cortex-a53
             ext: apk
           - sdk_url: https://downloads.immortalwrt.org/releases/25.12.0/targets/x86/64/immortalwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             bin_artifact: online-upgrade-x86_64-unknown-linux-musl
+            pkg_arch: x86_64
             ext: apk
     steps:
       - name: Checkout source
@@ -103,11 +105,11 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p /tmp/pkgs
-          # tag the arch onto the filename — both SDKs otherwise produce
-          # identically named apks and the release upload would overwrite one
+          # NB: the 25.12 SDK drops everything into bin/packages/base/, so the
+          # arch must come from the matrix, not the directory name — otherwise
+          # both apks are identically named and the release upload overwrites one
           find sdk/bin/packages -name "luci-app-online-upgrade*.${{ matrix.ext }}" | while read f; do
-            arch=$(basename "$(dirname "$f")")
-            cp "$f" "/tmp/pkgs/$(basename "$f" ".${{ matrix.ext }}")_${arch}.${{ matrix.ext }}"
+            cp "$f" "/tmp/pkgs/$(basename "$f" ".${{ matrix.ext }}")_${{ matrix.pkg_arch }}.${{ matrix.ext }}"
           done
           ls -lh /tmp/pkgs/
 
