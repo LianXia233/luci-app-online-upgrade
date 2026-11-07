@@ -78,7 +78,7 @@
 		var el = $(id);
 		if (!el) return;
 		el.textContent = text || '';
-		el.className = 'hint' + (cls ? ' ' + cls : '');
+		el.className = 'ou-hint hint' + (cls ? ' ' + cls : '');
 	}
 
 	function setText(id, text) {
@@ -96,7 +96,11 @@
 		var b = $(btnId);
 		if (!b) return;
 		b.disabled = !!busy;
-		if (label !== undefined) b.textContent = label;
+		if (label !== undefined) {
+			var txt = b.querySelector('.btn-label') || b.querySelector('span');
+			if (txt) txt.textContent = label;
+			else b.textContent = label;
+		}
 	}
 
 	/* ---------------- status card ---------------- */
@@ -105,29 +109,54 @@
 
 	function renderCheckResult(res) {
 		lastCheck = res;
+		var badge = $('status-badge');
+		var box = $('check-result-box');
 		if (!res || res.ok !== true) {
 			setText('check-result', '❌ ' + (res && res.error ? res.error : '检测失败'));
-			$('check-result').className = 'hint err';
+			hint('check-result', (res && res.error ? res.error : '检测失败'), 'err');
+			if (box) box.className = 'ou-notice-box err';
+			if (badge) {
+				badge.className = 'ou-status-pill err';
+				badge.innerHTML = '<span class="ou-dot err"></span> 检测异常';
+			}
 			$('btn-force').style.display = '';
 			$('btn-upgrade').style.display = 'none';
 			return;
 		}
 		setText('latest-name', res.latest.name);
-		setText('new-ver', 'v' + (res.latest.version || '—'));
+		var verDisplay = res.latest.version ? ('v' + res.latest.version) : (res.resolved_tag || '最新构建');
+		setText('new-ver', verDisplay);
 		setText('latest-size', res.latest.size_human);
 		setText('latest-time', res.latest.updated_local);
 		setText('check-reason', res.reason +
 			(res.resolved_tag && res.resolved_tag !== res.tag ? '  ·  Release: ' + res.resolved_tag : ''));
 		var hasUpdate = res.has_update === true;
-		setText('check-result', hasUpdate ? '✅ 发现新固件!' : '✓ ' + res.reason);
-		$('check-result').className = 'hint' + (hasUpdate ? ' ok' : '');
+		setText('check-result', hasUpdate ? '🎉 发现新固件可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason));
+		hint('check-result', hasUpdate ? '🎉 发现新固件可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason), hasUpdate ? 'ok' : '');
+		if (box) box.className = 'ou-notice-box' + (hasUpdate ? ' ok' : '');
+		if (badge) {
+			if (hasUpdate) {
+				badge.className = 'ou-status-pill update';
+				badge.innerHTML = '<span class="ou-dot update"></span> 有新版本';
+			} else {
+				badge.className = 'ou-status-pill ok';
+				badge.innerHTML = '<span class="ou-dot ok"></span> 已是最新';
+			}
+		}
 		$('btn-upgrade').style.display = hasUpdate ? '' : 'none';
 		$('btn-force').style.display = '';
 	}
 
 	function runCheck() {
 		setBusy('btn-check', true, '检查中...');
-		hint('check-result', '正在检查固件更新...');
+		hint('check-result', '正在连接云端检查固件更新...');
+		var box = $('check-result-box');
+		if (box) box.className = 'ou-notice-box';
+		var badge = $('status-badge');
+		if (badge) {
+			badge.className = 'ou-status-pill update';
+			badge.innerHTML = '<span class="ou-dot update"></span> 检测中';
+		}
 		stopPoll();
 		ubus('check').then(function () {
 			pollTimer = setInterval(function () {
@@ -147,6 +176,7 @@
 			}, 1000);
 		}).catch(function (e) {
 			hint('check-result', '❌ ' + e.message, 'err');
+			if (box) box.className = 'ou-notice-box err';
 			setBusy('btn-check', false, '检查更新');
 		});
 	}
@@ -195,12 +225,34 @@
 		failed: '操作失败'
 	};
 
+	function updatePipeline(stage) {
+		var sEnv = $('step-env'), sBackup = $('step-backup'), sDl = $('step-dl'), sFlash = $('step-flash');
+		if (!sEnv || !sBackup || !sDl || !sFlash) return;
+		[sEnv, sBackup, sDl, sFlash].forEach(function (el) { el.className = 'ou-step-node'; });
+		if (stage === 'checking' || stage === 'check_done') {
+			sEnv.className = 'ou-step-node active';
+		} else if (stage === 'backing_up' || stage === 'backup_done') {
+			sEnv.className = 'ou-step-node done';
+			sBackup.className = 'ou-step-node active';
+		} else if (stage === 'downloading' || stage === 'downloaded' || stage === 'saving') {
+			sEnv.className = 'ou-step-node done';
+			sBackup.className = 'ou-step-node done';
+			sDl.className = 'ou-step-node active';
+		} else if (stage === 'flashing' || stage === 'restore_done') {
+			sEnv.className = 'ou-step-node done';
+			sBackup.className = 'ou-step-node done';
+			sDl.className = 'ou-step-node done';
+			sFlash.className = 'ou-step-node active';
+		}
+	}
+
 	function renderProgress(st) {
 		if (!$('card-progress')) return;
 		$('card-progress').style.display = '';
 		$('progress-bar').style.width = (st.pct || 0) + '%';
 		$('progress-pct').textContent = (st.pct || 0) + '%';
 		$('progress-text').textContent = (st.error ? ('❌ ' + st.error) : (st.msg || STAGE_TEXT[st.stage] || st.stage));
+		updatePipeline(st.stage);
 	}
 
 	function pollUpgrade() {
@@ -221,7 +273,7 @@
 					setBusy('btn-check', false, '检查更新');
 					$('btn-force').style.display = '';
 					$('card-progress').style.display = 'none';
-					hint('check-result', '❌ 升级失败:' + (st.error || '未知错误'), 'err');
+					hint('check-result', '❌ 升级失败: ' + (st.error || '未知错误'), 'err');
 				}
 			}).catch(function () { /* keep polling; device may reboot mid-poll */ });
 		}, 1000);
@@ -230,7 +282,7 @@
 	function startUpgrade(isForce) {
 		var msg = isForce
 			? '确定强制更新固件?\n\n即使已是最新版本也会重新下载并刷写。\n配置将自动备份并在刷写后恢复。\n请勿断电!'
-			: '确定执行在线固件升级?\n\n系统将自动:备份配置 → 多线程下载固件 → 刷写(自动恢复配置)→ 重启。\n请勿断电!';
+			: '确定执行在线固件升级?\n\n系统将自动:备份配置 → 多线程下载固件 → 刷写(自动恢复配置) → 重启。\n请勿断电!';
 		if (!confirm(msg)) return;
 
 		ubus('start_upgrade', { force: isForce === true }).then(function () {
@@ -250,18 +302,29 @@
 			var tbody = $('backup-table').querySelector('tbody');
 			tbody.innerHTML = '';
 			if (!r.backups || !r.backups.length) {
-				tbody.innerHTML = '<tr><td colspan="3" class="empty">暂无备份</td></tr>';
+				tbody.innerHTML = '<tr><td colspan="4" class="ou-empty">' +
+					'<div class="ou-empty-box">' +
+					'<svg class="ou-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>' +
+					'<div class="ou-empty-title">暂无历史配置备份</div>' +
+					'<div class="ou-empty-sub">升级前后系统将自动创建快照，您也可以点击上方「创建备份」快速保存</div>' +
+					'</div></td></tr>';
 				hint('backup-hint', '');
 				return;
 			}
 			r.backups.forEach(function (b) {
 				var tr = document.createElement('tr');
-				tr.innerHTML = '<td>' + esc(b.name) + '</td><td>' + fmtSize(b.size) + '</td><td>' + fmtTime(b.mtime) + '</td>' +
-					'<td><button type="button" class="btn cbi-button cbi-button-remove ou-del-btn" data-path="' + esc(b.path) + '">删除</button></td>';
+				tr.innerHTML = '<td><div class="ou-file-cell">' +
+					'<svg class="ou-file-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>' +
+					'<span class="ou-file-text">' + esc(b.name) + '</span></div></td>' +
+					'<td><span class="ou-badge-size">' + fmtSize(b.size) + '</span></td>' +
+					'<td><span class="ou-time-text">' + fmtTime(b.mtime) + '</span></td>' +
+					'<td style="text-align:right"><button type="button" class="btn ou-btn ou-btn-danger ou-del-btn" data-path="' + esc(b.path) + '">' +
+					'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
+					'<span>删除</span></button></td>';
 				tr.querySelector('.ou-del-btn').addEventListener('click', function () { deleteBackup(b.path); });
 				tbody.appendChild(tr);
 			});
-			hint('backup-hint', '最新备份:' + r.backups[0].path, 'ok');
+			hint('backup-hint', '最新备份: ' + r.backups[0].path, 'ok');
 		}).catch(function (e) {
 			hint('backup-hint', '❌ ' + e.message, 'err');
 		});
@@ -270,13 +333,13 @@
 	function runBackup() {
 		setBusy('btn-backup', true, '备份中...');
 		ubus('backup').then(function (r) {
-			if (r && r.ok) hint('backup-hint', '✅ 备份成功:' + r.path + ' (' + r.size_human + ', ' + r.files + ' 个文件)', 'ok');
+			if (r && r.ok) hint('backup-hint', '✅ 备份成功: ' + r.path + ' (' + r.size_human + ', ' + r.files + ' 个文件)', 'ok');
 			else hint('backup-hint', '❌ ' + (r && r.error ? r.error : '备份失败'), 'err');
 			refreshBackups();
 		}).catch(function (e) {
 			hint('backup-hint', '❌ ' + e.message, 'err');
 		}).finally(function () {
-			setBusy('btn-backup', false, '📦 创建备份');
+			setBusy('btn-backup', false, '创建备份');
 		});
 	}
 
@@ -329,7 +392,7 @@
 			}).catch(function (e) {
 				hint('backup-hint', '❌ ' + e.message, 'err');
 			}).finally(function () {
-				setBusy('btn-auto-restore', false, '🔄 自动恢复');
+				setBusy('btn-auto-restore', false, '自动恢复');
 			});
 		}).catch(function (e) {
 			hint('backup-hint', '❌ ' + e.message, 'err');
@@ -370,7 +433,7 @@
 				hint('backup-hint', '❌ ' + e.message, 'err');
 			})
 			.finally(function () {
-				setBusy('btn-manual-restore', false, '📂 手动恢复');
+				setBusy('btn-manual-restore', false, '手动恢复');
 			});
 	}
 
@@ -397,8 +460,6 @@
 		updateSummary();
 	}
 
-	// Accepts: release page URL, releases list/latest URL, repo URL, or bare
-	// owner/repo. Works with ANY repository — nothing is hardcoded.
 	function parseUrl() {
 		var v = $('cfg-url').value.trim();
 		if (!v) { hint('config-hint', '请先粘贴链接或填写仓库', 'err'); return; }
@@ -423,24 +484,20 @@
 		updateSummary();
 	}
 
-	// Fetch the newest release's asset list for the currently entered repo/tag
-	// and let the user pick the firmware file → auto-generate the match rule.
 	function fetchAssets() {
 		var repo = $('cfg-repo').value.trim();
 		if (!repo) { hint('config-hint', '❌ 请先在①填写或识别仓库', 'err'); return; }
-		var btn = $('btn-fetch-assets');
-		btn.disabled = true;
-		btn.textContent = '获取中...';
+		setBusy('btn-fetch-assets', true, '获取中...');
 		ubus('probe_assets', { repo: repo, tag: $('cfg-tag').value.trim() || 'latest' })
 			.then(function (r) {
 				if (!r || !r.ok) throw new Error((r && r.error) || '获取失败');
-				setText('asset-resolved', '最新 Release:' + r.resolved_tag);
+				setText('asset-resolved', '最新 Release: ' + r.resolved_tag);
 				var sel = $('cfg-asset');
 				sel.innerHTML = '';
 				r.assets.forEach(function (a) {
 					var o = document.createElement('option');
 					o.value = a.name;
-					o.textContent = a.name + '(' + a.size_human + ')';
+					o.textContent = a.name + ' (' + a.size_human + ')';
 					sel.appendChild(o);
 				});
 				$('asset-box').style.display = '';
@@ -450,8 +507,7 @@
 				hint('config-hint', '❌ ' + e.message, 'err');
 			})
 			.finally(function () {
-				btn.disabled = false;
-				btn.textContent = '获取固件列表';
+				setBusy('btn-fetch-assets', false, '获取固件列表');
 			});
 	}
 
@@ -475,15 +531,14 @@
 		if (!el) return;
 		if (!repo) { el.textContent = '尚未配置固件源'; return; }
 		var tagText = tag === 'latest' ? '自动追踪最新 Release'
-			: tag.indexOf('latest@') === 0 ? '追踪最新 Release(仅取标签匹配 ' + tag.slice(7) + ' 的)'
+			: tag.indexOf('latest@') === 0 ? '追踪最新 Release (仅取标签匹配 ' + tag.slice(7) + ' 的)'
 			: '固定标签 ' + tag;
-		el.textContent = '当前: ' + repo + ' · ' + tagText +
-			(pattern ? ' · 固件匹配 ' + pattern : ' · 未设匹配规则');
+		el.textContent = '当前: ' + repo + '  ·  ' + tagText +
+			(pattern ? '  ·  固件匹配 ' + pattern : '  ·  未设匹配规则');
 	}
 
 	function saveConfig() {
 		setBusy('btn-save-config', true, '保存中...');
-		// omit unset numeric fields entirely — ubus args are typed
 		var cfg = {
 			repo: $('cfg-repo').value.trim(),
 			tag: $('cfg-tag').value.trim(),
@@ -545,6 +600,14 @@
 		$('btn-refresh-log').addEventListener('click', refreshLog);
 		$('btn-reload').addEventListener('click', function () { location.reload(); });
 
+		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {
+			pill.addEventListener('click', function () {
+				var p = this.getAttribute('data-proxy');
+				$('cfg-proxy').value = p;
+				hint('config-hint', p ? ('已填入代理节点: ' + p) : '已切换为 GitHub 直连模式', 'ok');
+			});
+		});
+
 		refreshLog();
 		ubus('get_sysinfo').then(renderSysinfo).catch(function () { setText('cur-ver', '读取失败'); });
 		ubus('get_config').then(function (r) { fillConfig(r.settings || {}); }).catch(function (e) {
@@ -554,7 +617,10 @@
 
 		// resume UI if an operation is already running (e.g. page reloaded mid-upgrade)
 		ubus('get_status').then(function (st) {
-			if (st.stage === 'idle' || st.stage === 'check_done' || st.stage === 'check_failed') return;
+			if (st.stage === 'idle' || st.stage === 'check_done' || st.stage === 'check_failed') {
+				if (st.stage === 'check_done' && st.result) renderCheckResult(st.result);
+				return;
+			}
 			if (st.stage === 'flashing') { showRebootOverlay(); return; }
 			if (st.stage === 'downloading' || st.stage === 'backing_up' || st.stage === 'saving') {
 				renderProgress(st);
