@@ -6,7 +6,7 @@
 
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](LICENSE)
 [![LuCI Version](https://img.shields.io/badge/LuCI-25.12%2B-0052cc.svg)](https://github.com/openwrt/luci)
-[![OpenWrt/ImmortalWrt](https://img.shields.io/badge/OpenWrt%20%2F%20ImmortalWrt-21.02%20~%2026.x-brightgreen.svg)](https://immortalwrt.org/)
+[![OpenWrt/ImmortalWrt](https://img.shields.io/badge/OpenWrt%20%2F%20ImmortalWrt-25.x%2B-brightgreen.svg)](https://immortalwrt.org/)
 [![Rust Tokio](https://img.shields.io/badge/Rust-Tokio%20Async-orange.svg?logo=rust)](https://www.rust-lang.org/)
 [![UI Style](https://img.shields.io/badge/UI-Modern%20Pure%20White-6366f1.svg)](#-界面美学与设计)
 [![Architecture](https://img.shields.io/badge/Arch-aarch64%20%7C%20x86__64-success.svg)](#-支持架构)
