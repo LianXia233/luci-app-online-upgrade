@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.4.0">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.0">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -463,6 +463,11 @@
 					<input type="password" id="cfg-token" class="ou-input-text" placeholder="可选，突破匿名 API 60次/小时限制" autocomplete="off">
 				</div>
 				<div class="ou-form-field">
+					<label for="cfg-expected-sha256">自定义 SHA256 校验值 (可选)</label>
+					<input type="text" id="cfg-expected-sha256" class="ou-input-text" placeholder="留空则自动从 Release 校验清单或说明中提取" spellcheck="false">
+					<p class="ou-field-help">支持自定义固件 SHA256 哈希值；升级前会自动校验，不匹配将拒绝刷写以保护设备</p>
+				</div>
+				<div class="ou-form-field">
 					<label for="cfg-workers">多线程下载并发数</label>
 					<input type="number" id="cfg-workers" class="ou-input-text" min="1" max="16" step="1" placeholder="6">
 					<p class="ou-field-help">分段并发 worker 连接数 (1 为单流)，默认 6</p>
@@ -571,6 +576,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.4.0"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.5.0"></script>
 
 {% include(`footer`) %}

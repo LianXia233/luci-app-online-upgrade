@@ -3,6 +3,7 @@
 
 mod downloader;
 mod github;
+mod hash;
 mod http;
 mod json;
 mod status;

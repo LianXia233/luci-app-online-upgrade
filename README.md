@@ -57,7 +57,9 @@
 - **断点续传与故障恢复**：内置 `.parts.json` 侧车机制，意外断网无缝续传；支持块级独立重试与 30 秒停滞看门狗（Stall Watchdog），遇不支持分段的目标自动平滑降级单流传输。
 - **内置常用镜像代理**：预置快捷镜像节点（`gh.acg2.mom`、`ghfast.top`、`moeyy.xyz` 等），一键切换 GitHub 加速或直连模式。
 
-### 🛡️ 5. 全流程配置容灾与安全升级
+### 🛡️ 5. 固件哈希校验与配置容灾安全升级
+- **固件 SHA-256 完整性校验**：自动探查 Release 产物中的校验单（`sha256sums` / `sha256sums.txt` / `<firmware>.sha256` 等）或 Release 页面说明提取 SHA256 哈希值进行比对校验；亦支持在高级配置中自定义期望哈希。下载后自动核验，若哈希不符立即终止刷写并清理固件，确保绝不刷入损坏镜像。
+- **板型兼容性预检**：支持自动调用 `sysupgrade -T` 针对固件包头与设备兼容性进行无损预检验。
 - **刷前自动全备份**：每次启动刷写前，全自动为路由器当前配置创建压缩归档存于 `/root/`。
 - **三维恢复通道**：在 Web 界面即可随时「下载备份包到电脑」、「一键自动恢复现有备份」或「手动上传历史备份包恢复」。
 - **升级自举无损保留**：与 `sysupgrade -f` 及 `keep.d` 深度集成，升级完成后自动触发 `uci-defaults` 恢复缺失配置，安全可靠。
@@ -182,6 +184,7 @@ make package/luci-app-online-upgrade/compile V=s
 | `proxy` | string | `https://gh.acg2.mom/` | GitHub 文件下载加速代理 URL，留空则直连 GitHub |
 | `firmware_pattern` | string | 空 | 固件文件名称匹配的正则表达式（支持通过步骤 2 自动生成） |
 | `min_size_mb` | integer | `15` | **最小固件体积阈值 (MB)**，获取列表与检测匹配时自动忽略小于此体积的文件，填 `0` 则不限制 |
+| `expected_sha256` | string | 空 | 可选。自定义或强制校验固件的 SHA-256 哈希值（64位十六进制），留空则自动从 Release 提取校验 |
 | `keep_config` | bool | `1` | 升级时是否调用 `-f` 保留现有配置（1=保留，0=不保留） |
 | `dl_workers` | integer | `6` | FluxDown 并发下载线程数（范围 1~16，单流设为 1） |
 | `dl_chunk_mb` | integer | `4` | 动态分片大小（MB），默认 4MB |

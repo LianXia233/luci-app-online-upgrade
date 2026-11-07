@@ -38,6 +38,7 @@ struct Asset {
     version: String,
     name: String,
     size: u64,
+    sha256: String,
 }
 
 async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
@@ -77,7 +78,51 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
             .unwrap_or("")
             .to_string(),
         size: latest.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
+        sha256: latest
+            .get("sha256")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string(),
     })
+}
+
+fn verify_firmware_integrity(asset: &Asset) -> Result<(), String> {
+    status::set("verifying", 91, "正在校验固件 SHA256 哈希完整性...");
+    let actual_sha256 = crate::hash::sha256_file(TMP_FIRMWARE)
+        .map_err(|e| format!("SHA256 计算失败: {e}"))?;
+
+    logline!("[verify] 固件实际 SHA256: {actual_sha256}");
+
+    // Check custom UCI expected_sha256 first, then release asset's sha256
+    let manual_expected = uci::get("expected_sha256").unwrap_or_default().trim().to_lowercase();
+    let expected = if !manual_expected.is_empty() {
+        manual_expected
+    } else {
+        asset.sha256.trim().to_lowercase()
+    };
+
+    if !expected.is_empty() {
+        if actual_sha256 != expected {
+            let err = format!("SHA256 校验不匹配! 期望: {expected}, 实际: {actual_sha256}");
+            logline!("[verify] ❌ {err}");
+            let _ = std::fs::remove_file(TMP_FIRMWARE);
+            let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
+            return Err(err);
+        }
+        logline!("[verify] ✅ SHA256 校验一致 (匹配通过: {expected})");
+    } else {
+        logline!("[verify] ℹ️ 云端未提供校验单，已完成本地完整性记录 (SHA256: {actual_sha256})");
+    }
+
+    // Run sysupgrade -T image compatibility test if available
+    if which("sysupgrade") {
+        logline!("[verify] 执行 sysupgrade -T 测试固件兼容性...");
+        if let Some(out) = sh("sysupgrade", &["-T", TMP_FIRMWARE]) {
+            logline!("[verify] sysupgrade -T 兼容性通过: {}", out.lines().next().unwrap_or(""));
+        }
+    }
+
+    Ok(())
 }
 
 /// `online-upgrade download` — check + segmented download only (no backup/flash).
@@ -133,6 +178,10 @@ pub async fn download_only() -> i32 {
             );
             status::set("downloaded", 100, "固件下载完成");
             let _ = std::fs::write(TMP_FIRMWARE_TS, &asset.updated);
+            if let Err(e) = verify_firmware_integrity(&asset) {
+                status::set_error("failed", 100, "固件哈希校验失败", &e);
+                return 1;
+            }
             0
         }
         Err(e) => {
@@ -160,10 +209,10 @@ pub async fn run(force: bool) -> i32 {
             return 1;
         }
     };
-    let url = asset.url;
-    let updated = asset.updated;
-    let fw_version = asset.version;
-    let name = asset.name;
+    let url = asset.url.clone();
+    let updated = asset.updated.clone();
+    let fw_version = asset.version.clone();
+    let name = asset.name.clone();
     let size_hint = asset.size;
     let download_url = full_url(&github::load_cfg(), &url);
 
@@ -217,6 +266,12 @@ pub async fn run(force: bool) -> i32 {
                 return 1;
             }
         }
+    }
+
+    // ---- Step 1.5: verify SHA256 checksum and image integrity ----
+    if let Err(e) = verify_firmware_integrity(&asset) {
+        status::set_error("failed", 100, "固件哈希校验失败", &e);
+        return 1;
     }
 
     // ---- Step 2: record version (before backup so the backup contains it) ----

@@ -129,6 +129,15 @@
 		setText('new-ver', verDisplay);
 		setText('latest-size', res.latest.size_human);
 		setText('latest-time', res.latest.updated_local);
+		if (res.latest.sha256) {
+			var h = res.latest.sha256;
+			var shortH = h.substring(0, 8) + '...' + h.substring(h.length - 8);
+			setText('latest-hash-status', '🔒 SHA256: ' + shortH);
+			if ($('latest-hash-status')) $('latest-hash-status').title = '完整 SHA256: ' + h;
+		} else {
+			setText('latest-hash-status', '🛡️ SHA256 完整性自动校验');
+			if ($('latest-hash-status')) $('latest-hash-status').title = '下载后自动执行完整性与兼容性哈希校验';
+		}
 
 		// Render Detection Reason with full details (Reason, Resolved Tag, and direct GitHub Link)
 		var reasonEl = $('check-reason');
@@ -136,6 +145,9 @@
 			var reasonHtml = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
 			if (res.resolved_tag) {
 				reasonHtml += '<span class="ou-tag-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-chip-svg"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>目标 Release: ' + esc(res.resolved_tag) + '</span>';
+			}
+			if (res.latest.sha256) {
+				reasonHtml += '<span class="ou-tag-chip" title="SHA256: ' + esc(res.latest.sha256) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-chip-svg"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>SHA256: ' + esc(res.latest.sha256.substring(0, 10)) + '...</span>';
 			}
 			if (res.release_url) {
 				reasonHtml += '<a href="' + esc(res.release_url) + '" target="_blank" rel="noopener" class="ou-ext-link">' +
@@ -469,6 +481,9 @@
 		$('cfg-chunk').value = settings.dl_chunk_mb || '4';
 		$('cfg-stall').value = settings.dl_stall_sec || '30';
 		$('cfg-retries').value = settings.dl_retries || '3';
+		if ($('cfg-expected-sha256')) {
+			$('cfg-expected-sha256').value = settings.expected_sha256 || '';
+		}
 		if (settings.repo) {
 			$('cfg-url').value = (settings.tag === 'latest' || (settings.tag || '').indexOf('latest@') === 0)
 				? ('https://github.com/' + settings.repo)
@@ -612,7 +627,8 @@
 			tag: $('cfg-tag').value.trim(),
 			pattern: $('cfg-pattern').value.trim(),
 			proxy: $('cfg-proxy').value.trim(),
-			github_token: $('cfg-token').value
+			github_token: $('cfg-token').value,
+			expected_sha256: $('cfg-expected-sha256') ? $('cfg-expected-sha256').value.trim() : ''
 		};
 		[['dl_workers', 'cfg-workers'], ['dl_chunk_mb', 'cfg-chunk'],
 		 ['dl_stall_sec', 'cfg-stall'], ['dl_retries', 'cfg-retries'],

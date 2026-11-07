@@ -171,6 +171,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
     let mut resolved_tag: Option<String> = None;
     let mut file_name: Option<String> = None;
     let mut asset_ref: Option<&Value> = None;
+    let mut matched_rel: Option<&Value> = None;
     for (tag_name, release) in release_candidates(&parsed, use_latest, &cfg.tag, &tag_filter) {
         let assets = match release.get("assets").and_then(|a| a.as_arr()) {
             Some(a) if !a.is_empty() => a,
@@ -191,6 +192,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
                 .and_then(|n| n.as_str())
                 .map(|s| s.to_string());
             asset_ref = Some(asset);
+            matched_rel = Some(release);
             break;
         }
     }
@@ -239,6 +241,47 @@ pub async fn check(client: &reqwest::Client) -> Value {
     current.push(("release".into(), Value::str(&cur_release)));
     current.push(("revision".into(), Value::str(&cur_revision)));
 
+    let mut sha256_hash = uci::get("expected_sha256").unwrap_or_default().trim().to_lowercase();
+    if sha256_hash.is_empty() {
+        if let Some(rel) = matched_rel {
+            // 1. Try finding a checksum asset
+            if let Some(assets) = rel.get("assets").and_then(|a| a.as_arr()) {
+                let chk_asset = assets.iter().find(|a| {
+                    let n = a.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                    let lower = n.to_ascii_lowercase();
+                    lower == "sha256sums"
+                        || lower == "sha256sums.txt"
+                        || lower == "sha256sum.txt"
+                        || lower == "checksums.txt"
+                        || lower == "sha256sums.sha256"
+                        || lower == format!("{}.sha256", file_name.to_ascii_lowercase())
+                        || lower == format!("{}.sha256sum", file_name.to_ascii_lowercase())
+                });
+                if let Some(ca) = chk_asset {
+                    if let Some(dl) = ca.get("browser_download_url").and_then(|u| u.as_str()) {
+                        let full_dl = format!("{}{}", cfg.proxy, dl);
+                        if let Ok(resp) = client.get(&full_dl).timeout(std::time::Duration::from_secs(10)).send().await {
+                            if let Ok(txt) = resp.text().await {
+                                if let Some(h) = crate::hash::find_sha256_in_text(&txt, &file_name)
+                                    .or_else(|| crate::hash::extract_single_sha256(&txt)) {
+                                    sha256_hash = h;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // 2. Try release body if still not found
+            if sha256_hash.is_empty() {
+                if let Some(b) = rel.get("body").and_then(|b| b.as_str()) {
+                    if let Some(h) = crate::hash::find_sha256_in_text(b, &file_name) {
+                        sha256_hash = h;
+                    }
+                }
+            }
+        }
+    }
+
     let mut latest = Vec::new();
     latest.push(("name".into(), Value::str(&file_name)));
     latest.push(("size".into(), Value::num(size)));
@@ -247,6 +290,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
     latest.push(("updated_local".into(), Value::str(&utc_to_local(&updated))));
     latest.push(("version".into(), Value::str(&fw_version)));
     latest.push(("url".into(), Value::str(&url)));
+    latest.push(("sha256".into(), Value::str(&sha256_hash)));
 
     Value::Obj(vec![
         ("ok".into(), Value::Bool(true)),
@@ -594,7 +638,6 @@ mod tests {
         assert!(Regex::new("[").is_err());
     }
 
-    #[test]
     #[test]
     fn pick_asset_size_floor() {
         let v = parse(

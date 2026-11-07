@@ -259,7 +259,8 @@ const methods = {
 			dl_chunk_mb: 0,
 			dl_stall_sec: 0,
 			dl_retries: 0,
-			min_size_mb: 0
+			min_size_mb: 0,
+			expected_sha256: ''
 		},
 		call: function(request) {
 			let a = request.args ?? {};
@@ -324,6 +325,13 @@ const methods = {
 				if (length(a.github_token) > 256)
 					return { ok: false, error: 'token 过长' };
 				ctx.set('online-upgrade', 'settings', 'github_token', a.github_token);
+				touched++;
+			}
+			if (type(a.expected_sha256) == 'string') {
+				let h = trim(a.expected_sha256);
+				if (length(h) > 0 && match(h, /^[0-9a-fA-F]{64}$/) == null)
+					return { ok: false, error: 'SHA256 哈希格式不正确 (应为 64 位十六进制字符或留空)' };
+				ctx.set('online-upgrade', 'settings', 'expected_sha256', lc(h));
 				touched++;
 			}
 

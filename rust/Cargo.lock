@@ -531,6 +531,7 @@ dependencies = [
  "futures-util",
  "regex",
  "reqwest",
+ "ring",
  "tokio",
 ]
 
