@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.0">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.7.0">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -511,10 +511,14 @@
 					<div class="ou-head-title-row">
 						<h3>运行日志</h3>
 					</div>
-					<p class="ou-head-sub">实时查看后端 Tokio 多线程分段下载与升级调度日志</p>
+					<p class="ou-head-sub">实时查看后端 Tokio 多线程分段下载与升级调度日志（自动限制内存占用 ≤ 2MB，支持随时清空）</p>
 				</div>
 			</div>
 			<div class="ou-btn-row">
+				<button id="btn-clear-log" class="btn ou-btn ou-btn-default" type="button" title="清空当前日志文件">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+					<span class="btn-label">清空日志</span>
+				</button>
 				<button id="btn-refresh-log" class="btn ou-btn ou-btn-default" type="button">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
 					<span class="btn-label">刷新日志</span>
@@ -532,6 +536,7 @@
 				</div>
 				<span class="ou-terminal-title">/tmp/online-upgrade.log</span>
 				<div class="ou-terminal-spacer"></div>
+				<span class="ou-terminal-limit-badge">内存上限 2MB</span>
 			</div>
 			<pre class="ou-terminal" id="log-view">日志加载中...</pre>
 		</div>
@@ -576,6 +581,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.5.0"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.7.0"></script>
 
 {% include(`footer`) %}

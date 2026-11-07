@@ -35,7 +35,7 @@ async fn cmd_check() -> i32 {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: online-upgrade <check|upgrade [--force]|backup|restore <file>|status>");
+    eprintln!("usage: online-upgrade <check|upgrade [--force]|backup|restore <file>|status|clear-log>");
     2
 }
 
@@ -96,6 +96,11 @@ fn main() {
         },
         "status" => {
             println!("{}", status::read().dump());
+            0
+        }
+        "clear-log" => {
+            status::clear_log();
+            println!("{}", Value::Obj(vec![("ok".into(), Value::Bool(true))]).dump());
             0
         }
         _ => usage(),

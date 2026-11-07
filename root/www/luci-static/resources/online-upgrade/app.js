@@ -327,7 +327,9 @@
 				var st = rs[0], lg = rs[1];
 				if (lg && lg.log) {
 					var lv = $('log-view');
-					lv.textContent = lg.log;
+					var text = lg.log;
+					if (text.length > 2097152) text = text.substring(text.length - 2097152);
+					lv.textContent = text;
 					lv.scrollTop = lv.scrollHeight;
 				}
 				renderProgress(st);
@@ -736,11 +738,37 @@
 	/* ---------------- log ---------------- */
 
 	function refreshLog() {
+		setBusy('btn-refresh-log', true);
 		ubus('get_log').then(function (r) {
-			$('log-view').textContent = (r && r.log) ? r.log : '日志为空';
-			$('log-view').scrollTop = $('log-view').scrollHeight;
+			var text = (r && r.log) ? r.log : '日志为空';
+			if (text.length > 2097152) {
+				text = text.substring(text.length - 2097152);
+			}
+			var lv = $('log-view');
+			if (lv) {
+				lv.textContent = text;
+				lv.scrollTop = lv.scrollHeight;
+			}
 		}).catch(function (e) {
-			$('log-view').textContent = '日志读取失败: ' + e.message;
+			var lv = $('log-view');
+			if (lv) lv.textContent = '日志读取失败: ' + e.message;
+		}).finally(function () {
+			setBusy('btn-refresh-log', false);
+		});
+	}
+
+	function clearLog() {
+		if (!confirm('确定清空当前运行日志吗？')) return;
+		setBusy('btn-clear-log', true, '清空中...');
+		ubus('clear_log').then(function (r) {
+			if (r && r.ok) {
+				var lv = $('log-view');
+				if (lv) lv.textContent = '日志已清空';
+			}
+		}).catch(function (e) {
+			alert('清空日志失败: ' + e.message);
+		}).finally(function () {
+			setBusy('btn-clear-log', false, '清空日志');
 		});
 	}
 
@@ -761,6 +789,7 @@
 		$('btn-apply-asset').addEventListener('click', applyAsset);
 		$('btn-save-config').addEventListener('click', saveConfig);
 		$('btn-refresh-log').addEventListener('click', refreshLog);
+		$('btn-clear-log').addEventListener('click', clearLog);
 		$('btn-reload').addEventListener('click', function () { location.reload(); });
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {

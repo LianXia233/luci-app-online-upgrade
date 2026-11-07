@@ -73,13 +73,17 @@ function read_status() {
 }
 
 function read_log() {
+	let st = stat(LOG_FILE);
+	if (!st || st.size == 0)
+		return { log: '', size: 0 };
 	let content = readfile(LOG_FILE);
 	if (!content)
-		return { log: '' };
+		return { log: '', size: 0 };
 	content = '' + content;
-	if (length(content) > 65536)
-		content = substr(content, length(content) - 65536);
-	return { log: content };
+	// Memory limit: restrict read buffer to maximum 2MB (2 * 1024 * 1024 = 2097152 bytes)
+	if (length(content) > 2097152)
+		content = substr(content, length(content) - 2097152);
+	return { log: content, size: length(content) };
 }
 
 function list_backups() {
@@ -166,6 +170,14 @@ const methods = {
 	get_log: {
 		call: function() {
 			return read_log();
+		}
+	},
+
+	clear_log: {
+		call: function() {
+			run_capture(BIN, ['clear-log']);
+			unlink(LOG_FILE);
+			return { ok: true };
 		}
 	},
 

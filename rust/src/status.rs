@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const STATUS_FILE: &str = "/tmp/online-upgrade-status.json";
 pub const LOG_FILE: &str = "/tmp/online-upgrade.log";
+pub const MAX_LOG_SIZE: u64 = 2 * 1024 * 1024; // 2MB maximum RAM memory limit on tmpfs
+pub const KEEP_LOG_SIZE: usize = 1024 * 1024; // Keep latest 1MB when trimming exceeds 2MB
 
 fn now() -> u64 {
     SystemTime::now()
@@ -80,28 +82,42 @@ pub fn set_result(stage: &'static str, pct: u32, msg: &str, result: Value) {
 /// Append a human-readable line to the log file.
 pub fn log(line: &str) {
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(LOG_FILE) {
         let _ = writeln!(f, "{}", line);
     }
+
+    if COUNTER.fetch_add(1, Ordering::Relaxed) % 32 == 0 {
+        trim_log();
+    }
 }
 
-/// Keep the human-readable log bounded (it lives on tmpfs): past 256 KB keep
-/// only the last 64 KB. Called at the start of long operations.
+/// Keep the human-readable log bounded in tmpfs memory (≤ 2MB):
+/// when exceeding 2MB, keep only the latest 1MB.
 pub fn trim_log() {
     let len = fs::metadata(LOG_FILE).map(|m| m.len()).unwrap_or(0);
-    if len <= 256 * 1024 {
+    if len <= MAX_LOG_SIZE {
         return;
     }
     if let Ok(all) = fs::read(LOG_FILE) {
-        let cut = all.len().saturating_sub(64 * 1024);
-        // align to the next line boundary
-        let cut = all[cut..]
-            .iter()
-            .position(|&b| b == b'\n')
-            .map(|p| cut + p + 1)
-            .unwrap_or(cut);
-        let _ = fs::write(LOG_FILE, &all[cut..]);
+        if all.len() > KEEP_LOG_SIZE {
+            let cut = all.len() - KEEP_LOG_SIZE;
+            // align to the next line boundary
+            let cut = all[cut..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|p| cut + p + 1)
+                .unwrap_or(cut);
+            let _ = fs::write(LOG_FILE, &all[cut..]);
+        }
     }
+}
+
+/// Clear the log file contents immediately.
+pub fn clear_log() {
+    let _ = fs::write(LOG_FILE, "");
 }
 
 pub fn logf(args: std::fmt::Arguments) {

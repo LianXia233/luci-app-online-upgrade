@@ -71,7 +71,7 @@
 
 ### 📊 7. 真实进度条与实时控制台终端
 - **真实字节级进度**：精准展示下载百分比、实时下载速度、已下体积与总大小，非虚假动画估算。
-- **内嵌实时日志控制台**：支持折叠/展开的黑客风格暗色终端，实时捕获输出升级日志，排查一目了然。
+- **内嵌实时日志控制台**：支持折叠/展开的黑客风格暗色终端，实时捕获输出升级日志；支持一键「清空日志」；**内置内存保护机制，严格限制 tmpfs 内存上限 ≤ 2MB**（超额自动截断保留最新），绝不膨胀占用路由器宝贵的物理内存。
 
 ---
 
@@ -372,6 +372,9 @@ online-upgrade check
 # 探查指定仓库最新 Release 产物列表
 online-upgrade probe --repo owner/repo --tag latest
 
+# 清空运行日志文件（内存占用归零）
+online-upgrade clear-log
+
 # 手动备份当前路由器配置
 online-upgrade backup
 
@@ -389,6 +392,9 @@ ubus call luci.online-upgrade get_sysinfo
 
 # 读取插件配置
 ubus call luci.online-upgrade get_config
+
+# 清空运行日志
+ubus call luci.online-upgrade clear_log
 
 # 列出 /root/ 目录下的历史备份列表
 ubus call luci.online-upgrade list_backups
