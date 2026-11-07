@@ -86,7 +86,7 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
     })
 }
 
-fn verify_firmware_integrity(asset: &Asset) -> Result<(), String> {
+fn verify_firmware_integrity(device: &crate::compat::DeviceProfile, asset: &Asset, force: bool) -> Result<(), String> {
     status::set("verifying", 91, "正在校验固件 SHA256 哈希完整性...");
     let actual_sha256 = crate::hash::sha256_file(TMP_FIRMWARE)
         .map_err(|e| format!("SHA256 计算失败: {e}"))?;
@@ -114,12 +114,14 @@ fn verify_firmware_integrity(asset: &Asset) -> Result<(), String> {
         logline!("[verify] ℹ️ 云端未提供校验单，已完成本地完整性记录 (SHA256: {actual_sha256})");
     }
 
-    // Run sysupgrade -T image compatibility test if available
-    if which("sysupgrade") {
-        logline!("[verify] 执行 sysupgrade -T 测试固件兼容性...");
-        if let Some(out) = sh("sysupgrade", &["-T", TMP_FIRMWARE]) {
-            logline!("[verify] sysupgrade -T 兼容性通过: {}", out.lines().next().unwrap_or(""));
+    // Hardware & sysupgrade -T image compatibility verification
+    if let Err(e) = crate::compat::verify_downloaded_image(device, TMP_FIRMWARE) {
+        if !force {
+            let _ = std::fs::remove_file(TMP_FIRMWARE);
+            let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
+            return Err(e);
         }
+        logline!("[verify] ⚠️ 强制模式生效，跳过固件兼容性预检未通过继续执行");
     }
 
     Ok(())
@@ -178,8 +180,9 @@ pub async fn download_only() -> i32 {
             );
             status::set("downloaded", 100, "固件下载完成");
             let _ = std::fs::write(TMP_FIRMWARE_TS, &asset.updated);
-            if let Err(e) = verify_firmware_integrity(&asset) {
-                status::set_error("failed", 100, "固件哈希校验失败", &e);
+            let device = crate::compat::DeviceProfile::current();
+            if let Err(e) = verify_firmware_integrity(&device, &asset, false) {
+                status::set_error("failed", 100, "固件校验或兼容性预检失败", &e);
                 return 1;
             }
             0
@@ -215,6 +218,24 @@ pub async fn run(force: bool) -> i32 {
     let name = asset.name.clone();
     let size_hint = asset.size;
     let download_url = full_url(&github::load_cfg(), &url);
+
+    let device = crate::compat::DeviceProfile::current();
+    let compat = crate::compat::evaluate_asset(&device, &name);
+    logline!(
+        "[upgrade] 本地设备: {} ({} / {}), 目标固件: {}, 兼容判定: {} [{}]",
+        device.model,
+        device.uname_arch,
+        device.target,
+        name,
+        compat.badge,
+        compat.reason
+    );
+    if !compat.can_upgrade && !force {
+        let err = format!("固件架构或机型与当前设备冲突 ({}): 拒绝刷写以防变砖！", compat.reason);
+        logline!("[upgrade] ❌ {err}");
+        status::set_error("failed", 100, "固件不兼容，已拒绝刷机", &err);
+        return 1;
+    }
 
     // ---- Step 1: download (segmented, real progress) ----
     let skip = std::fs::metadata(TMP_FIRMWARE).map(|m| m.len()).unwrap_or(0) > 0
@@ -269,8 +290,8 @@ pub async fn run(force: bool) -> i32 {
     }
 
     // ---- Step 1.5: verify SHA256 checksum and image integrity ----
-    if let Err(e) = verify_firmware_integrity(&asset) {
-        status::set_error("failed", 100, "固件哈希校验失败", &e);
+    if let Err(e) = verify_firmware_integrity(&device, &asset, force) {
+        status::set_error("failed", 100, "固件校验或预检失败", &e);
         return 1;
     }
 

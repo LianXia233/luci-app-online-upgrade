@@ -524,6 +524,37 @@
 	vertical-align: middle;
 }
 
+.ou-tag-chip.ou-chip-ok {
+	background: #ecfdf5 !important;
+	color: #059669 !important;
+	border-color: #a7f3d0 !important;
+}
+
+.ou-tag-chip.ou-chip-warn {
+	background: #fffbeb !important;
+	color: #d97706 !important;
+	border-color: #fde68a !important;
+}
+
+.ou-tag-chip.ou-chip-err {
+	background: #fef2f2 !important;
+	color: #dc2626 !important;
+	border-color: #fecaca !important;
+}
+
+.ou-compat-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 7px;
+	border-radius: 5px;
+	font-size: 11px;
+	font-weight: 600;
+}
+.ou-compat-chip.ok   { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
+.ou-compat-chip.warn { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+.ou-compat-chip.err  { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+
 .ou-chip-svg {
 	width: 12px;
 	height: 12px;

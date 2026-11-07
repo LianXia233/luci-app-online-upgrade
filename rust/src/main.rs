@@ -1,6 +1,7 @@
 // online-upgrade — OpenWrt/ImmortalWrt firmware online upgrade backend.
 // Replaces the original shell implementation; talks JSON to the LuCI frontend.
 
+mod compat;
 mod downloader;
 mod github;
 mod hash;

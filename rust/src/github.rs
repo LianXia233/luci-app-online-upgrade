@@ -118,9 +118,6 @@ pub async fn check(client: &reqwest::Client) -> Value {
     if cfg.repo.is_empty() {
         return check_error(&cfg, "未配置 GitHub 仓库,请先在「仓库配置」中填写(owner/repo)");
     }
-    if cfg.pattern.is_empty() {
-        return check_error(&cfg, "未配置固件匹配模式,请先在「仓库配置」中填写(用于匹配固件文件名的正则)");
-    }
     // `latest` tracks the newest release; `latest@<regex>` restricts candidates
     // to releases whose tag name matches the regex (e.g. `latest@^自用`).
     let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
@@ -141,7 +138,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
     };
 
     status::set("checking", 10, "正在获取 Release 信息...");
-    logline!("[check] repo={} tag={}", cfg.repo, cfg.tag);
+    let device = crate::compat::DeviceProfile::current();
+    logline!("[check] repo={} tag={} device={} ({})", cfg.repo, cfg.tag, device.model, device.uname_arch);
 
     let body = match api_fetch(client, &api, &cfg).await {
         Ok((_, body)) => body,
@@ -161,9 +159,13 @@ pub async fn check(client: &reqwest::Client) -> Value {
         .and_then(|v| v.parse().ok())
         .unwrap_or(15);
     let min_bytes = min_size_mb.saturating_mul(1024 * 1024);
-    let re = Regex::new(&cfg.pattern).map_err(|e| e.to_string()).ok();
-    let fallback_re = if use_latest {
-        None // x86 fallback makes no sense in latest mode
+    let re = if !cfg.pattern.is_empty() {
+        Regex::new(&cfg.pattern).map_err(|e| e.to_string()).ok()
+    } else {
+        None
+    };
+    let fallback_re = if use_latest || !cfg.pattern.is_empty() {
+        None
     } else {
         Regex::new(FALLBACK_PATTERN).ok()
     };
@@ -177,14 +179,31 @@ pub async fn check(client: &reqwest::Client) -> Value {
             Some(a) if !a.is_empty() => a,
             _ => continue,
         };
-        let hit = re
-            .as_ref()
-            .and_then(|r| pick_asset(assets, r, min_bytes))
-            .or_else(|| {
-                fallback_re
-                    .as_ref()
-                    .and_then(|r| pick_asset(assets, r, min_bytes))
-            });
+        let hit = if let Some(ref r) = re {
+            pick_asset(assets, r, min_bytes)
+        } else if let Some(ref fr) = fallback_re {
+            pick_asset(assets, fr, min_bytes)
+        } else {
+            // Intelligent hardware auto-matching: pick highest-scoring compatible asset for this device
+            let mut candidates: Vec<(i32, &Value)> = assets
+                .iter()
+                .filter_map(|a| {
+                    let sz = a.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                    if sz < min_bytes {
+                        return None;
+                    }
+                    let n = a.get("name").and_then(|n| n.as_str())?;
+                    let eval = crate::compat::evaluate_asset(&device, n);
+                    if eval.level != crate::compat::CompatLevel::Incompatible {
+                        Some((eval.score, a))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            candidates.sort_by(|a, b| b.0.cmp(&a.0));
+            candidates.first().map(|(_, a)| *a)
+        };
         if let Some(asset) = hit {
             resolved_tag = Some(tag_name);
             file_name = asset
@@ -199,11 +218,16 @@ pub async fn check(client: &reqwest::Client) -> Value {
     let (Some(file_name), Some(resolved_tag), Some(asset)) =
         (file_name, resolved_tag, asset_ref)
     else {
+        let hint_pattern = if cfg.pattern.is_empty() {
+            format!("设备自动适配[{} / {}]", device.model, device.uname_arch)
+        } else {
+            format!("pattern: {}", cfg.pattern)
+        };
         return check_error(
             &cfg,
             &format!(
-                "未找到匹配的固件文件(pattern: {}, 大小≥{} MB{})",
-                cfg.pattern,
+                "未找到匹配的固件文件({}, 大小≥{} MB{})",
+                hint_pattern,
                 min_size_mb,
                 if use_latest { ", 最近 30 个 Release" } else { "" }
             ),
@@ -292,6 +316,14 @@ pub async fn check(client: &reqwest::Client) -> Value {
     latest.push(("url".into(), Value::str(&url)));
     latest.push(("sha256".into(), Value::str(&sha256_hash)));
 
+    let compat = crate::compat::evaluate_asset(&device, &file_name);
+    logline!(
+        "[check] 兼容性评估: {} (可升级={}) - {}",
+        compat.badge,
+        compat.can_upgrade,
+        compat.reason
+    );
+
     Value::Obj(vec![
         ("ok".into(), Value::Bool(true)),
         ("repo".into(), Value::str(&cfg.repo)),
@@ -308,6 +340,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
         ("latest".into(), Value::Obj(latest)),
         ("has_update".into(), Value::Bool(has_update)),
         ("reason".into(), Value::str(&reason)),
+        ("compatibility".into(), compat.to_json()),
+        ("device".into(), device.to_json()),
     ])
 }
 
@@ -366,28 +400,36 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
         }
     };
 
+    let device = crate::compat::DeviceProfile::current();
     for (tag_name, release) in release_candidates(&parsed, use_latest, &cfg.tag, &tag_filter) {
         if let Some(assets) = release.get("assets").and_then(|a| a.as_arr()) {
             if assets.is_empty() {
                 continue;
             }
-            let list: Vec<Value> = assets
+            let mut list: Vec<(i32, Value)> = assets
                 .iter()
                 .take(80)
                 .map(|a| {
                     let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                     let size = a.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                    Value::Obj(vec![
+                    let compat = crate::compat::evaluate_asset(&device, &name);
+                    let score = compat.score;
+                    let obj = Value::Obj(vec![
                         ("name".into(), Value::str(&name)),
                         ("size".into(), Value::num(size)),
                         ("size_human".into(), Value::str(&human_size(size))),
-                    ])
+                        ("compat".into(), compat.to_json()),
+                    ]);
+                    (score, obj)
                 })
                 .collect();
+            list.sort_by(|a, b| b.0.cmp(&a.0));
+            let sorted_assets: Vec<Value> = list.into_iter().map(|(_, v)| v).collect();
             return Value::Obj(vec![
                 ("ok".into(), Value::Bool(true)),
                 ("resolved_tag".into(), Value::str(&tag_name)),
-                ("assets".into(), Value::Arr(list)),
+                ("device".into(), device.to_json()),
+                ("assets".into(), Value::Arr(sorted_assets)),
             ]);
         }
     }

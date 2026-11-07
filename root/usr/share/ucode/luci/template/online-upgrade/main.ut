@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.0">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.0">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -178,7 +178,7 @@
 				<div class="ou-stat-meta">
 					<span class="ou-stat-label">当前运行版本</span>
 					<span class="ou-stat-val" id="cur-ver">加载中...</span>
-					<span class="ou-stat-sub">本机系统固件环境</span>
+					<span class="ou-stat-sub" id="cur-device-sub">本机系统固件环境</span>
 				</div>
 			</div>
 			<div class="ou-stat-card">
@@ -191,7 +191,7 @@
 						<span class="ou-ver-badge" id="new-ver">—</span>
 					</div>
 					<span class="ou-stat-val" id="latest-name" title="目标固件产物">—</span>
-					<span class="ou-stat-sub">目标 Release 适配产物</span>
+					<span class="ou-stat-sub" id="latest-compat-badge">目标 Release 适配产物</span>
 				</div>
 			</div>
 			<div class="ou-stat-card">

@@ -139,10 +139,31 @@
 			if ($('latest-hash-status')) $('latest-hash-status').title = '下载后自动执行完整性与兼容性哈希校验';
 		}
 
-		// Render Detection Reason with full details (Reason, Resolved Tag, and direct GitHub Link)
+		// Update compatibility badge in Card 2
+		var compatBadgeEl = $('latest-compat-badge');
+		var isCompatible = true;
+		var compatInfo = res.compatibility;
+		if (compatInfo && compatBadgeEl) {
+			var cLevel = compatInfo.level || (compatInfo.can_upgrade ? 'compatible' : 'incompatible');
+			var cls = cLevel === 'compatible' ? 'ok' : cLevel === 'warning' ? 'warn' : 'err';
+			var icon = cLevel === 'compatible' ? '🟢' : cLevel === 'warning' ? '🟡' : '🔴';
+			compatBadgeEl.innerHTML = '<span class="ou-compat-chip ' + cls + '">' + icon + ' ' + esc(compatInfo.badge || '适配评估') + '</span>';
+			compatBadgeEl.title = compatInfo.reason || '';
+			isCompatible = compatInfo.can_upgrade !== false;
+		} else if (compatBadgeEl) {
+			compatBadgeEl.textContent = '目标 Release 适配产物';
+		}
+
+		// Render Detection Reason with full details (Reason, Compatibility chip, Resolved Tag, and direct GitHub Link)
 		var reasonEl = $('check-reason');
 		if (reasonEl) {
 			var reasonHtml = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
+			if (compatInfo) {
+				var cLevel = compatInfo.level || (compatInfo.can_upgrade ? 'compatible' : 'incompatible');
+				var chipCls = cLevel === 'compatible' ? 'ou-chip-ok' : cLevel === 'warning' ? 'ou-chip-warn' : 'ou-chip-err';
+				var chipIcon = cLevel === 'compatible' ? '✅' : cLevel === 'warning' ? '⚠️' : '❌';
+				reasonHtml += '<span class="ou-tag-chip ' + chipCls + '" title="' + esc(compatInfo.reason) + '">' + chipIcon + ' ' + esc(compatInfo.badge) + '</span>';
+			}
 			if (res.resolved_tag) {
 				reasonHtml += '<span class="ou-tag-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-chip-svg"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>目标 Release: ' + esc(res.resolved_tag) + '</span>';
 			}
@@ -158,8 +179,23 @@
 		}
 
 		var hasUpdate = res.has_update === true;
-		setText('check-result', hasUpdate ? '🎉 发现新固件可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason));
-		hint('check-result', hasUpdate ? '🎉 发现新固件可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason), hasUpdate ? 'ok' : '');
+		if (!isCompatible) {
+			// Incompatible firmware: Block upgrade!
+			var conflictMsg = (compatInfo && compatInfo.reason) ? compatInfo.reason : '检测到固件与当前设备硬件架构或型号不匹配，严禁刷写！';
+			setText('check-result', '❌ ' + conflictMsg);
+			hint('check-result', '❌ ' + conflictMsg, 'err');
+			if (box) box.className = 'ou-notice-box err';
+			if (badge) {
+				badge.className = 'ou-status-pill err';
+				badge.innerHTML = '<span class="ou-dot err"></span> 固件不匹配';
+			}
+			$('btn-upgrade').style.display = 'none';
+			$('btn-force').style.display = '';
+			return;
+		}
+
+		setText('check-result', hasUpdate ? '🎉 固件兼容，发现新版本可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason));
+		hint('check-result', hasUpdate ? '🎉 固件兼容，发现新版本可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason), hasUpdate ? 'ok' : '');
 		if (box) box.className = 'ou-notice-box' + (hasUpdate ? ' ok' : '');
 		if (badge) {
 			if (hasUpdate) {
@@ -571,19 +607,37 @@
 					return;
 				}
 
+				var recommendedSelected = false;
 				filteredAssets.forEach(function (a) {
 					var o = document.createElement('option');
 					o.value = a.name;
-					o.textContent = a.name + ' (' + a.size_human + ')';
+					var prefix = '';
+					if (a.compat) {
+						if (a.compat.level === 'compatible') {
+							prefix = '🟢 [推荐] ';
+						} else if (a.compat.level === 'warning') {
+							prefix = '🟡 [需核对] ';
+						} else if (a.compat.level === 'incompatible') {
+							prefix = '🔴 [不匹配] ';
+						}
+					}
+					o.textContent = prefix + a.name + ' (' + a.size_human + ')';
+					o.setAttribute('data-level', a.compat ? a.compat.level : '');
+					o.setAttribute('data-reason', a.compat ? a.compat.reason : '');
+					if (!recommendedSelected && a.compat && a.compat.can_upgrade) {
+						o.selected = true;
+						recommendedSelected = true;
+					}
 					sel.appendChild(o);
 				});
 				$('asset-box').style.display = '';
+				onAssetSelected();
 
 				var msg = '✅ 已获取 ' + filteredAssets.length + ' 个固件文件';
 				if (filteredCount > 0) {
 					msg += ' (已自动过滤 ' + filteredCount + ' 个小于 ' + minSizeMB + 'MB 的非固件小文件)';
 				}
-				msg += '，点选固件后点「使用此文件」';
+				msg += '，已自动推荐适配固件，点「使用此文件」可固化规则';
 				hint('config-hint', msg, 'ok');
 			})
 			.catch(function (e) {
@@ -592,6 +646,22 @@
 			.finally(function () {
 				setBusy('btn-fetch-assets', false, '获取固件列表');
 			});
+	}
+
+	function onAssetSelected() {
+		var sel = $('cfg-asset');
+		if (!sel || !sel.options || !sel.options.length) return;
+		var opt = sel.options[sel.selectedIndex];
+		if (!opt) return;
+		var level = opt.getAttribute('data-level');
+		var reason = opt.getAttribute('data-reason');
+		if (level === 'incompatible') {
+			hint('config-hint', '⚠️ 警告：' + reason, 'err');
+		} else if (level === 'compatible') {
+			hint('config-hint', '✅ 兼容评估：' + reason + '，可点「使用此文件」生成匹配规则', 'ok');
+		} else if (level === 'warning') {
+			hint('config-hint', '🟡 需人工核对：' + reason, 'warn');
+		}
 	}
 
 	function escapeRegex(s) {
@@ -653,6 +723,14 @@
 	function renderSysinfo(info) {
 		setText('cur-ver', (info.id || 'OpenWrt') + ' ' + (info.release || '') +
 			(info.revision ? ' (' + info.revision + ')' : ''));
+		var devSub = $('cur-device-sub');
+		if (devSub) {
+			var devParts = [];
+			if (info.model) devParts.push(info.model);
+			if (info.arch || info.uname_arch) devParts.push(info.arch || info.uname_arch);
+			if (info.target) devParts.push(info.target);
+			devSub.textContent = devParts.length ? ('本机: ' + devParts.join(' · ')) : '本机系统固件环境';
+		}
 	}
 
 	/* ---------------- log ---------------- */
@@ -679,6 +757,7 @@
 		$('manual-backup-file').addEventListener('change', manualRestoreUpload);
 		$('btn-parse-url').addEventListener('click', parseUrl);
 		$('btn-fetch-assets').addEventListener('click', fetchAssets);
+		$('cfg-asset').addEventListener('change', onAssetSelected);
 		$('btn-apply-asset').addEventListener('click', applyAsset);
 		$('btn-save-config').addEventListener('click', saveConfig);
 		$('btn-refresh-log').addEventListener('click', refreshLog);

@@ -115,12 +115,16 @@ function sysinfo() {
 		}
 		return '';
 	};
+	let model = trim('' + (readfile('/tmp/sysinfo/model') ?? ''));
+	let board_name = trim('' + (readfile('/tmp/sysinfo/board_name') ?? ''));
 	return {
 		id: grab('DISTRIB_ID'),
 		release: grab('DISTRIB_RELEASE'),
 		revision: grab('DISTRIB_REVISION'),
 		target: grab('DISTRIB_TARGET'),
-		arch: grab('DISTRIB_ARCH')
+		arch: grab('DISTRIB_ARCH'),
+		model: model != '' ? model : '通用路由器',
+		board_name: board_name
 	};
 }
 
