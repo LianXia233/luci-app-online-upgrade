@@ -145,6 +145,7 @@ pub async fn download_only() -> i32 {
 }
 
 pub async fn run(force: bool) -> i32 {
+    status::trim_log();
     let client = crate::http::client();
     if force {
         logline!("[upgrade] 强制更新模式");

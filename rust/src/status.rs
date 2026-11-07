@@ -85,6 +85,25 @@ pub fn log(line: &str) {
     }
 }
 
+/// Keep the human-readable log bounded (it lives on tmpfs): past 256 KB keep
+/// only the last 64 KB. Called at the start of long operations.
+pub fn trim_log() {
+    let len = fs::metadata(LOG_FILE).map(|m| m.len()).unwrap_or(0);
+    if len <= 256 * 1024 {
+        return;
+    }
+    if let Ok(all) = fs::read(LOG_FILE) {
+        let cut = all.len().saturating_sub(64 * 1024);
+        // align to the next line boundary
+        let cut = all[cut..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| cut + p + 1)
+            .unwrap_or(cut);
+        let _ = fs::write(LOG_FILE, &all[cut..]);
+    }
+}
+
 pub fn logf(args: std::fmt::Arguments) {
     log(&args.to_string());
 }

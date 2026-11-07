@@ -13,6 +13,7 @@ mod util;
 use json::Value;
 
 async fn cmd_check() -> i32 {
+    status::trim_log();
     let client = http::client();
     status::set("checking", 5, "正在检查固件更新...");
     let result = github::check(&client).await;

@@ -135,10 +135,12 @@
 					if (st.stage === 'check_done' && st.result) {
 						stopPoll();
 						renderCheckResult(st.result);
+						refreshLog();
 						setBusy('btn-check', false, '检查更新');
 					} else if (st.stage === 'check_failed' || st.stage === 'failed') {
 						stopPoll();
 						renderCheckResult({ ok: false, error: st.error || st.msg || '检测失败' });
+						refreshLog();
 						setBusy('btn-check', false, '检查更新');
 					}
 				}).catch(function () { /* transient rpc errors during poll: ignore */ });
@@ -204,7 +206,13 @@
 	function pollUpgrade() {
 		stopPoll();
 		pollTimer = setInterval(function () {
-			ubus('get_status').then(function (st) {
+			Promise.all([ubus('get_status'), ubus('get_log')]).then(function (rs) {
+				var st = rs[0], lg = rs[1];
+				if (lg && lg.log) {
+					var lv = $('log-view');
+					lv.textContent = lg.log;
+					lv.scrollTop = lv.scrollHeight;
+				}
 				renderProgress(st);
 				if (st.stage === 'flashing') {
 					showRebootOverlay();
@@ -537,6 +545,7 @@
 		$('btn-refresh-log').addEventListener('click', refreshLog);
 		$('btn-reload').addEventListener('click', function () { location.reload(); });
 
+		refreshLog();
 		ubus('get_sysinfo').then(renderSysinfo).catch(function () { setText('cur-ver', '读取失败'); });
 		ubus('get_config').then(function (r) { fillConfig(r.settings || {}); }).catch(function (e) {
 			hint('config-hint', '❌ 读取配置失败: ' + e.message, 'err');
