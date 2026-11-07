@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.2.0">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.3.0">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -381,7 +381,7 @@
 					<span class="ou-step-number">2</span>
 					<label class="ou-step-label">选择目标固件文件</label>
 				</div>
-				<p class="ou-field-help">实时拉取该仓库最新 Release 产物附件，点选固件文件即可全自动生成匹配正则：</p>
+				<p class="ou-field-help">实时拉取该仓库最新 Release 产物附件（已自动过滤小于 15MB 的非固件小文件），点选固件文件即可全自动生成匹配正则：</p>
 				<div class="ou-input-group">
 					<button id="btn-fetch-assets" class="btn ou-btn ou-btn-default" type="button">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
@@ -571,6 +571,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.2.0"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.3.0"></script>
 
 {% include(`footer`) %}

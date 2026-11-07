@@ -335,6 +335,7 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
                     let size = a.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
                     Value::Obj(vec![
                         ("name".into(), Value::str(&name)),
+                        ("size".into(), Value::num(size)),
                         ("size_human".into(), Value::str(&human_size(size))),
                     ])
                 })

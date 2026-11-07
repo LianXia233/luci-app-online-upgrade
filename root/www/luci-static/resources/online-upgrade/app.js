@@ -499,6 +499,22 @@
 		updateSummary();
 	}
 
+	function getAssetSizeMB(a) {
+		if (typeof a.size === 'number' && a.size > 0) {
+			return a.size / (1024 * 1024);
+		}
+		if (typeof a.size_human === 'string') {
+			var str = a.size_human.trim();
+			var num = parseFloat(str);
+			if (isNaN(num)) return 0;
+			if (/GB$/i.test(str)) return num * 1024;
+			if (/MB$/i.test(str)) return num;
+			if (/KB$/i.test(str)) return num / 1024;
+			if (/B$/i.test(str)) return num / (1024 * 1024);
+		}
+		return 0;
+	}
+
 	function fetchAssets() {
 		var repo = $('cfg-repo').value.trim();
 		if (!repo) { hint('config-hint', '❌ 请先在①填写或识别仓库', 'err'); return; }
@@ -509,14 +525,47 @@
 				setText('asset-resolved', '最新 Release: ' + r.resolved_tag);
 				var sel = $('cfg-asset');
 				sel.innerHTML = '';
-				r.assets.forEach(function (a) {
+
+				var minSizeVal = $('cfg-minsize') ? parseInt($('cfg-minsize').value, 10) : 15;
+				var minSizeMB = isNaN(minSizeVal) ? 15 : (minSizeVal < 0 ? 0 : minSizeVal);
+
+				var rawAssets = r.assets || [];
+				var filteredAssets = rawAssets.filter(function (a) {
+					return getAssetSizeMB(a) >= minSizeMB;
+				});
+				var filteredCount = rawAssets.length - filteredAssets.length;
+
+				if (filteredAssets.length === 0) {
+					var o = document.createElement('option');
+					o.value = '';
+					o.disabled = true;
+					o.selected = true;
+					if (rawAssets.length > 0) {
+						o.textContent = '未发现 ≥ ' + minSizeMB + 'MB 固件 (' + rawAssets.length + ' 个文件均被过滤)';
+						hint('config-hint', '⚠️ 未发现 ≥ ' + minSizeMB + 'MB 的固件文件 (已过滤 ' + filteredCount + ' 个非固件附件)，可前往高级配置调整最小体积', 'warn');
+					} else {
+						o.textContent = '此 Release 无附件文件';
+						hint('config-hint', '⚠️ 该 Release 下未包含任何产物附件', 'warn');
+					}
+					sel.appendChild(o);
+					$('asset-box').style.display = '';
+					return;
+				}
+
+				filteredAssets.forEach(function (a) {
 					var o = document.createElement('option');
 					o.value = a.name;
 					o.textContent = a.name + ' (' + a.size_human + ')';
 					sel.appendChild(o);
 				});
 				$('asset-box').style.display = '';
-				hint('config-hint', '✅ 已获取 ' + r.assets.length + ' 个文件,点选你的固件后点「使用此文件」', 'ok');
+
+				var msg = '✅ 已获取 ' + filteredAssets.length + ' 个固件文件';
+				if (filteredCount > 0) {
+					msg += ' (已自动过滤 ' + filteredCount + ' 个小于 ' + minSizeMB + 'MB 的非固件小文件)';
+				}
+				msg += '，点选固件后点「使用此文件」';
+				hint('config-hint', msg, 'ok');
 			})
 			.catch(function (e) {
 				hint('config-hint', '❌ ' + e.message, 'err');
