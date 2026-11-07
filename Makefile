@@ -85,8 +85,8 @@ endef
 define Package/luci-app-online-upgrade/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	. /lib/functions/luci.sh
-	luci-reload
+	# ucode LuCI (26.x): no /lib/functions/luci.sh, no luci-reload —
+	# invalidating the dispatcher cache is all a menu/acl change needs
 	rm -f /tmp/luci-indexcache*
 	exit 0
 }
