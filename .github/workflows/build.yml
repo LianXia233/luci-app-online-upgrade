@@ -103,7 +103,12 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p /tmp/pkgs
-          find sdk/bin/ -name "luci-app-online-upgrade*.${{ matrix.ext }}" -exec cp {} /tmp/pkgs/ \;
+          # tag the arch onto the filename — both SDKs otherwise produce
+          # identically named apks and the release upload would overwrite one
+          find sdk/bin/packages -name "luci-app-online-upgrade*.${{ matrix.ext }}" | while read f; do
+            arch=$(basename "$(dirname "$f")")
+            cp "$f" "/tmp/pkgs/$(basename "$f" ".${{ matrix.ext }}")_${arch}.${{ matrix.ext }}"
+          done
           ls -lh /tmp/pkgs/
 
       - name: Upload package artifact
