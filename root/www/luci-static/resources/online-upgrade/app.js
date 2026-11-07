@@ -174,7 +174,7 @@
 		}
 		stopPoll();
 		ubus('check').then(function () {
-			pollTimer = setInterval(function () {
+			function checkTick() {
 				ubus('get_status').then(function (st) {
 					if (st.stage === 'check_done' && st.result) {
 						stopPoll();
@@ -188,7 +188,9 @@
 						setBusy('btn-check', false, '检查更新');
 					}
 				}).catch(function () { /* transient rpc errors during poll: ignore */ });
-			}, 1000);
+			}
+			checkTick();
+			pollTimer = setInterval(checkTick, 1000);
 		}).catch(function (e) {
 			hint('check-result', '❌ ' + e.message, 'err');
 			if (box) box.className = 'ou-notice-box err';
@@ -241,22 +243,22 @@
 	};
 
 	function updatePipeline(stage) {
-		var sEnv = $('step-env'), sBackup = $('step-backup'), sDl = $('step-dl'), sFlash = $('step-flash');
-		if (!sEnv || !sBackup || !sDl || !sFlash) return;
-		[sEnv, sBackup, sDl, sFlash].forEach(function (el) { el.className = 'ou-step-node'; });
+		var sEnv = $('step-env'), sDl = $('step-dl'), sBackup = $('step-backup'), sFlash = $('step-flash');
+		if (!sEnv || !sDl || !sBackup || !sFlash) return;
+		[sEnv, sDl, sBackup, sFlash].forEach(function (el) { el.className = 'ou-step-node'; });
 		if (stage === 'checking' || stage === 'check_done') {
 			sEnv.className = 'ou-step-node active';
-		} else if (stage === 'backing_up' || stage === 'backup_done') {
+		} else if (stage === 'downloading') {
 			sEnv.className = 'ou-step-node done';
-			sBackup.className = 'ou-step-node active';
-		} else if (stage === 'downloading' || stage === 'downloaded' || stage === 'saving') {
-			sEnv.className = 'ou-step-node done';
-			sBackup.className = 'ou-step-node done';
 			sDl.className = 'ou-step-node active';
+		} else if (stage === 'downloaded' || stage === 'saving' || stage === 'backing_up' || stage === 'backup_done') {
+			sEnv.className = 'ou-step-node done';
+			sDl.className = 'ou-step-node done';
+			sBackup.className = 'ou-step-node active';
 		} else if (stage === 'flashing' || stage === 'restore_done') {
 			sEnv.className = 'ou-step-node done';
-			sBackup.className = 'ou-step-node done';
 			sDl.className = 'ou-step-node done';
+			sBackup.className = 'ou-step-node done';
 			sFlash.className = 'ou-step-node active';
 		}
 	}
@@ -272,7 +274,7 @@
 
 	function pollUpgrade() {
 		stopPoll();
-		pollTimer = setInterval(function () {
+		function tick() {
 			Promise.all([ubus('get_status'), ubus('get_log')]).then(function (rs) {
 				var st = rs[0], lg = rs[1];
 				if (lg && lg.log) {
@@ -291,7 +293,9 @@
 					hint('check-result', '❌ 升级失败: ' + (st.error || '未知错误'), 'err');
 				}
 			}).catch(function () { /* keep polling; device may reboot mid-poll */ });
-		}, 1000);
+		}
+		tick();
+		pollTimer = setInterval(tick, 1000);
 	}
 
 	function startUpgrade(isForce) {
@@ -686,7 +690,7 @@
 				return;
 			}
 			if (st.stage === 'flashing') { showRebootOverlay(); return; }
-			if (st.stage === 'downloading' || st.stage === 'backing_up' || st.stage === 'saving') {
+			if (st.stage === 'downloading' || st.stage === 'downloaded' || st.stage === 'saving' || st.stage === 'backing_up' || st.stage === 'backup_done') {
 				renderProgress(st);
 				pollUpgrade();
 			}
