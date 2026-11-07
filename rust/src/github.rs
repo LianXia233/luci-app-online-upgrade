@@ -155,7 +155,19 @@ pub async fn check(client: &reqwest::Client) -> Value {
     };
 
     // Pick the newest release (in `latest` mode: newest first) whose assets
-    // contain a file matching the firmware pattern.
+    // contain a file matching the firmware pattern AND the minimum size floor
+    // (online-upgrade.settings.min_size_mb, default 15 MB, 0 = no floor).
+    let min_size_mb: u64 = uci::get("min_size_mb")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
+    let min_bytes = min_size_mb.saturating_mul(1024 * 1024);
+    let re = Regex::new(&cfg.pattern).map_err(|e| e.to_string()).ok();
+    let fallback_re = if use_latest {
+        None // x86 fallback makes no sense in latest mode
+    } else {
+        Regex::new(FALLBACK_PATTERN).ok()
+    };
+
     let mut resolved_tag: Option<String> = None;
     let mut file_name: Option<String> = None;
     let mut asset_ref: Option<&Value> = None;
@@ -164,23 +176,21 @@ pub async fn check(client: &reqwest::Client) -> Value {
             Some(a) if !a.is_empty() => a,
             _ => continue,
         };
-        let names: Vec<String> = assets
-            .iter()
-            .filter_map(|a| a.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
-            .collect();
-        let hit = match_asset(&names, &cfg.pattern).or({
-            if use_latest {
-                None // x86 fallback makes no sense in latest mode
-            } else {
-                match_asset(&names, FALLBACK_PATTERN)
-            }
-        });
-        if let Some(fname) = hit {
-            asset_ref = assets
-                .iter()
-                .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(fname.as_str()));
+        let hit = re
+            .as_ref()
+            .and_then(|r| pick_asset(assets, r, min_bytes))
+            .or_else(|| {
+                fallback_re
+                    .as_ref()
+                    .and_then(|r| pick_asset(assets, r, min_bytes))
+            });
+        if let Some(asset) = hit {
             resolved_tag = Some(tag_name);
-            file_name = Some(fname);
+            file_name = asset
+                .get("name")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string());
+            asset_ref = Some(asset);
             break;
         }
     }
@@ -190,8 +200,9 @@ pub async fn check(client: &reqwest::Client) -> Value {
         return check_error(
             &cfg,
             &format!(
-                "未找到匹配的固件文件(pattern: {}{})",
+                "未找到匹配的固件文件(pattern: {}, 大小≥{} MB{})",
                 cfg.pattern,
+                min_size_mb,
                 if use_latest { ", 最近 30 个 Release" } else { "" }
             ),
         );
@@ -354,11 +365,21 @@ fn check_error(cfg: &Cfg, msg: &str) -> Value {
     ])
 }
 
-/// ERE match against asset names via the regex crate (config keeps
-/// grep -E compatible patterns).
-fn match_asset(names: &[String], pattern: &str) -> Option<String> {
-    let re = Regex::new(pattern).ok()?;
-    names.iter().find(|n| re.is_match(n)).cloned()
+/// First asset matching `re` whose size is at least `min_bytes`
+/// (min_bytes == 0 disables the size floor).
+fn pick_asset<'a>(assets: &'a [Value], re: &Regex, min_bytes: u64) -> Option<&'a Value> {
+    assets.iter().find(|a| {
+        let name_ok = a
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|n| re.is_match(n))
+            .unwrap_or(false);
+        if !name_ok {
+            return false;
+        }
+        let size = a.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+        size >= min_bytes
+    })
 }
 
 pub fn read_distrib() -> (String, String, String) {
@@ -557,15 +578,43 @@ mod tests {
 
     #[test]
     fn asset_match() {
-        let names = vec![
-            "sha256sums".to_string(),
-            "immortalwrt-25.12.0-x86-64-generic-ext4-combined-efi.img.gz".to_string(),
-        ];
+        let parsed = parse(
+            r#"[{"name":"sha256sums","size":100},
+                {"name":"immortalwrt-25.12.0-x86-64-generic-ext4-combined-efi.img.gz","size":80000000}]"#,
+        ).unwrap();
+        let assets = parsed.as_arr().unwrap();
+        let re = Regex::new(r"combined-efi.*\.img\.gz").unwrap();
+        let hit = pick_asset(assets, &re, 0).unwrap();
         assert_eq!(
-            match_asset(&names, r"combined-efi.*\.img\.gz"),
-            Some("immortalwrt-25.12.0-x86-64-generic-ext4-combined-efi.img.gz".to_string())
+            hit.get("name").unwrap().as_str(),
+            Some("immortalwrt-25.12.0-x86-64-generic-ext4-combined-efi.img.gz")
         );
-        assert_eq!(match_asset(&names, "["), None); // invalid regex → None
+        // invalid regex → no match possible (check() reports a config error)
+        assert!(Regex::new("[").is_err());
+    }
+
+    #[test]
+    #[test]
+    fn pick_asset_size_floor() {
+        let v = parse(
+            r#"[{"name":"H5000M-Config.txt","size":345434},
+                {"name":"H5000M-sysupgrade.bin","size":77189386},
+                {"name":"manifest","size":12534}]"#,
+        )
+        .unwrap();
+        let assets = v.as_arr().unwrap();
+        let re = Regex::new(r"^H5000M-.*").unwrap();
+
+        // 15MB floor: skips the small H5000M-named config, picks the firmware
+        let hit = pick_asset(assets, &re, 15 * 1024 * 1024).unwrap();
+        assert_eq!(hit.get("name").unwrap().as_str(), Some("H5000M-sysupgrade.bin"));
+
+        // floor disabled: first name match wins (the small config)
+        let hit = pick_asset(assets, &re, 0).unwrap();
+        assert_eq!(hit.get("name").unwrap().as_str(), Some("H5000M-Config.txt"));
+
+        // impossible floor: nothing passes
+        assert!(pick_asset(assets, &re, 500 * 1024 * 1024).is_none());
     }
 
     #[test]

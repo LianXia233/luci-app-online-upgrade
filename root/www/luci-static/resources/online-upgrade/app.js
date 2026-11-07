@@ -372,6 +372,8 @@
 		$('cfg-repo').value = settings.repo || '';
 		$('cfg-tag').value = settings.tag || '';
 		$('cfg-pattern').value = settings.firmware_pattern || '';
+		$('cfg-minsize').value = (settings.min_size_mb == null || settings.min_size_mb === '')
+			? '15' : settings.min_size_mb;
 		$('cfg-proxy').value = settings.proxy || '';
 		$('cfg-workers').value = settings.dl_workers || '6';
 		$('cfg-chunk').value = settings.dl_chunk_mb || '4';
@@ -482,7 +484,8 @@
 			github_token: $('cfg-token').value
 		};
 		[['dl_workers', 'cfg-workers'], ['dl_chunk_mb', 'cfg-chunk'],
-		 ['dl_stall_sec', 'cfg-stall'], ['dl_retries', 'cfg-retries']].forEach(function (f) {
+		 ['dl_stall_sec', 'cfg-stall'], ['dl_retries', 'cfg-retries'],
+		 ['min_size_mb', 'cfg-minsize']].forEach(function (f) {
 			var v = parseInt($(f[1]).value, 10);
 			if (!isNaN(v)) cfg[f[0]] = v;
 		});

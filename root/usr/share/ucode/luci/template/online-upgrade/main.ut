@@ -100,6 +100,11 @@
 				<p class="ou-field-help">匹配 Release 附件文件名的正则(grep -E 语法);latest 模式下按时间倒序取第一个命中的 Release</p>
 			</div>
 			<div class="ou-form-row">
+				<label>最小固件大小(MB)</label>
+				<input type="number" id="cfg-minsize" class="cbi-input-text" min="0" max="512" step="1" placeholder="15">
+				<p class="ou-field-help">小于该大小的附件不视为固件(过滤 Config/manifest 等小文件);0 = 不限制,默认 15</p>
+			</div>
+			<div class="ou-form-row">
 				<label>GitHub Token</label>
 				<input type="password" id="cfg-token" class="cbi-input-text" placeholder="可选,提高 API 速率限制" spellcheck="false" autocomplete="off">
 			</div>

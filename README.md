@@ -85,7 +85,9 @@ config online-upgrade 'settings'
     option repo 'LianXia233/OpenWRT-CI'   # 示例:owner/repo
     option tag 'latest'           # latest=自动解析最新 Release;也可固定如 MT5700-26.11.07
     option proxy 'https://gh.acg2.mom/'
-    option firmware_pattern 'combined-efi.*\\.img\\.gz'
+    option firmware_pattern '^H5000M-.*sysupgrade\.bin$'  # 换 FM350 变体改成 H5000M-FM350
+    option min_size_mb '15'       # 小于该大小的附件不视为固件;0 = 不限制
+    option dl_workers '6'         # 下载并发;dl_chunk_mb/dl_stall_sec/dl_retries 同理可调
     option github_token ''        # 可选,提高 API 限速
     option keep_config '1'
 ```

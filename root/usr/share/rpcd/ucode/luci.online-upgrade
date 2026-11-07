@@ -258,12 +258,22 @@ const methods = {
 			dl_workers: 0,
 			dl_chunk_mb: 0,
 			dl_stall_sec: 0,
-			dl_retries: 0
+			dl_retries: 0,
+			min_size_mb: 0
 		},
 		call: function(request) {
 			let a = request.args ?? {};
 			let ctx = cursor();
 			let touched = 0;
+
+			// firmware minimum size floor in MB; 0 = no floor
+			if (type(a.min_size_mb) == 'int') {
+				let v = a.min_size_mb;
+				if (v < 0 || v > 512)
+					return { ok: false, error: 'min_size_mb 超出范围 (0-512)' };
+				ctx.set('online-upgrade', 'settings', 'min_size_mb', '' + v);
+				touched++;
+			}
 
 			// downloader advanced settings: accept 0 = reset to default
 			let int_opts = [
