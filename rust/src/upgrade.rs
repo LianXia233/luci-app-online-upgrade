@@ -14,6 +14,8 @@ use std::sync::Arc;
 const TMP_FIRMWARE: &str = "/tmp/firmware.img.gz";
 const TMP_FIRMWARE_TS: &str = "/tmp/firmware.img.gz.ts";
 const PKG_LIST: &str = "/root/.pkg-list.txt";
+const AUTO_REINSTALL_SCRIPT: &str = include_str!("../../root/etc/uci-defaults/90-online-upgrade-auto");
+const UCI_DEFAULTS_AUTO: &str = "/etc/uci-defaults/90-online-upgrade-auto";
 
 fn sh(cmd: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(cmd).args(args).output().ok()?;
@@ -305,6 +307,13 @@ pub async fn run(force: bool) -> i32 {
 
     // ---- Step 3: backup (sysupgrade -b, passed to -f later) ----
     status::set("backing_up", 94, "正在创建配置备份...");
+    let _ = std::fs::create_dir_all("/etc/uci-defaults");
+    let _ = std::fs::write(UCI_DEFAULTS_AUTO, AUTO_REINSTALL_SCRIPT);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(UCI_DEFAULTS_AUTO, std::fs::Permissions::from_mode(0o755));
+    }
     let stamp = now_stamp();
     let backup_tmp = format!("/tmp/pre-upgrade-backup-{stamp}.tar.gz");
     let backup_root = format!("/root/pre-upgrade-backup-{stamp}.tar.gz");
