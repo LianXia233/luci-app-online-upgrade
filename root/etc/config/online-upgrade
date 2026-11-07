@@ -2,9 +2,9 @@
 
 config online-upgrade 'settings'
 	option enabled '0'
-	option repo 'gooyjq/ImmortalWrt-Builder'
-	option tag 'Autobuild-x86-64'
-	option proxy 'https://ghfast.top/'
-	option firmware_pattern 'combined-efi.*\\.img\\.gz'
+	option repo ''
+	option tag 'latest'
+	option proxy 'https://gh.acg2.mom/'
+	option firmware_pattern ''
 	option keep_config '1'
 	option last_upgrade_version '0'

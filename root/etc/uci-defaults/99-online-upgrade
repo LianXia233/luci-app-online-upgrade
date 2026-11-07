@@ -1,14 +1,29 @@
 #!/bin/sh
+# Seed defaults + migrate away from v1 (shell/lua) leftovers.
 
-uci -q batch <<-EOF
-	set online-upgrade.settings.enabled='0'
-	set online-upgrade.settings.repo='gooyjq/ImmortalWrt-Builder'
-	set online-upgrade.settings.tag='Autobuild-x86-64'
-	set online-upgrade.settings.proxy='https://ghfast.top/'
-	set online-upgrade.settings.firmware_pattern='combined-efi.*\\.img\\.gz'
-	set online-upgrade.settings.keep_config='1'
-	set online-upgrade.settings.last_upgrade_version='0'
-	commit online-upgrade
-EOF
+# Seed neutral defaults only when the settings section does not exist yet,
+# so package upgrades never clobber user configuration.
+# NOTE: repo / firmware_pattern are intentionally NOT seeded — the update
+# source is a user decision, configured in the web UI (tag=latest tracks the
+# newest release automatically).
+if [ -z "$(uci -q get online-upgrade.settings)" ]; then
+	uci -q batch <<-EOF
+		set online-upgrade.settings.enabled='0'
+		set online-upgrade.settings.tag='latest'
+		set online-upgrade.settings.proxy='https://gh.acg2.mom/'
+		set online-upgrade.settings.keep_config='1'
+		set online-upgrade.settings.last_upgrade_version='0'
+		commit online-upgrade
+	EOF
+fi
+
+# ---- remove v1 files (shell backend / lua controller / cbi / legacy js / cgi) ----
+rm -f /usr/bin/online-upgrade.sh
+rm -f /usr/lib/lua/luci/controller/admin_system/online_upgrade.lua
+rm -f /usr/lib/lua/luci/model/cbi/admin_system/online_upgrade.lua
+rm -f /www/luci-static/resources/view/system/online-upgrade.js
+rm -f /www/luci-static/resources/view/system/online-upgrade-log.js
+rm -f /www/luci-static/resources/view/system/online-upgrade-progress.js
+rm -f /www/cgi-bin/online-upgrade-restore
 
 exit 0

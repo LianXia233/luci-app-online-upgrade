@@ -1,0 +1,328 @@
+'use strict';
+
+// rpcd ucode backend for luci-app-online-upgrade.
+// Thin bridge: all real logic lives in /usr/bin/online-upgrade (Rust).
+// Pattern follows luci.wolultra; ucode gotchas respected:
+//   - no join(), string concat only
+//   - no `undefined` references (null checks only)
+//   - helper functions defined before use
+
+import { popen, readfile, lsdir, stat, unlink } from 'fs';
+import { cursor } from 'uci';
+
+const BIN = '/usr/bin/online-upgrade';
+const STATUS_FILE = '/tmp/online-upgrade-status.json';
+const LOG_FILE = '/tmp/online-upgrade.log';
+const BACKUP_DIR = '/root';
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+function shellquote(s) {
+	return "'" + replace('' + s, "'", "'\\''") + "'";
+}
+
+// POSIX-ERE-safe "contains quote or whitespace" check: ucode regex has no
+// \s (it degrades to a literal 's'), so use split-based detection instead.
+function bad_field(s) {
+	if (type(s) != 'string')
+		return true;
+	return length(split(s, "'")) > 1 ||
+	       length(split(s, '"')) > 1 ||
+	       length(split(s, ' ')) > 1 ||
+	       length(split(s, '\t')) > 1 ||
+	       length(split(s, '\n')) > 1 ||
+	       length(split(s, '\r')) > 1;
+}
+
+function run_capture(cmd, args) {
+	let cmdline = cmd;
+	for (let a in (args ?? []))
+		cmdline += ' ' + shellquote(a);
+
+	let out = '';
+	let code = 126;
+	// stderr → app log file, keeps stdout clean JSON for parse_json_stdout()
+	let fd = popen(cmdline + ' 2>>/tmp/online-upgrade.log');
+	if (fd) {
+		out = fd.read('all') ?? '';
+		code = fd.close();
+	}
+	return { out: out, code: code };
+}
+
+function run_detached(cmd, args) {
+	let cmdline = 'setsid ' + cmd;
+	for (let a in (args ?? []))
+		cmdline += ' ' + shellquote(a);
+	system(cmdline + ' </dev/null >>/tmp/online-upgrade.log 2>&1 &');
+}
+
+function parse_json_stdout(text) {
+	// binary prints a single JSON object on stdout; log lines go to the log file
+	let trimmed = trim('' + text);
+	if (length(trimmed) == 0)
+		return null;
+	return json(trimmed);
+}
+
+function read_status() {
+	let content = readfile(STATUS_FILE);
+	if (!content)
+		return { stage: 'idle' };
+	let obj = json(content);
+	return type(obj) == 'object' ? obj : { stage: 'idle' };
+}
+
+function read_log() {
+	let content = readfile(LOG_FILE);
+	if (!content)
+		return { log: '' };
+	content = '' + content;
+	if (length(content) > 65536)
+		content = substr(content, length(content) - 65536);
+	return { log: content };
+}
+
+function list_backups() {
+	let entries = lsdir(BACKUP_DIR) ?? [];
+	let result = [];
+	for (let name in entries) {
+		if (match('' + name, /^pre-upgrade-backup-.*\.tar\.gz$/) == null)
+			continue;
+		let st = stat(BACKUP_DIR + '/' + name);
+		// NB: ucode arrays have no .push() method — use the global push()
+		push(result, {
+			name: '' + name,
+			path: BACKUP_DIR + '/' + name,
+			size: st ? st.size : 0,
+			mtime: st ? st.mtime : 0
+		});
+	}
+	// names embed a timestamp → lexicographic sort = newest first
+	sort(result, (a, b) => a.name > b.name ? -1 : a.name < b.name ? 1 : 0);
+	return { backups: result };
+}
+
+function sysinfo() {
+	let text = readfile('/etc/openwrt_release') ?? '';
+	// NB: ucode match() with a string pattern does LITERAL matching, not regex —
+	// parse lines manually instead.
+	let grab = function(key) {
+		let prefix = key + "='";
+		for (let line in split(text, '\n')) {
+			line = '' + line;
+			if (substr(line, 0, length(prefix)) == prefix)
+				return replace(substr(line, length(prefix)), /'.*$/, '');
+		}
+		return '';
+	};
+	return {
+		id: grab('DISTRIB_ID'),
+		release: grab('DISTRIB_RELEASE'),
+		revision: grab('DISTRIB_REVISION'),
+		target: grab('DISTRIB_TARGET'),
+		arch: grab('DISTRIB_ARCH')
+	};
+}
+
+function valid_pattern(p) {
+	// ERE for the firmware matcher; quotes/whitespace rejected POSIX-safely
+	return type(p) == 'string' && length(p) > 0 && length(p) < 512 &&
+		!bad_field(p);
+}
+
+function valid_optional_url(u) {
+	return type(u) == 'string' && length(u) < 512 &&
+		(length(u) == 0 || match(u, /^https?:\/\/[A-Za-z0-9_.:\/-]*$/) != null);
+}
+
+const methods = {
+	check: {
+		call: function() {
+			run_detached(BIN, ['check']);
+			return { ok: true };
+		}
+	},
+
+	start_upgrade: {
+		args: { force: 'boolean' },
+		call: function(request) {
+			let force = request.args?.force === true;
+			let args = force ? ['upgrade', '--force'] : ['upgrade'];
+			run_detached(BIN, args);
+			return { ok: true, force: force };
+		}
+	},
+
+	get_status: {
+		call: function() {
+			return read_status();
+		}
+	},
+
+	get_log: {
+		call: function() {
+			return read_log();
+		}
+	},
+
+	backup: {
+		call: function() {
+			let r = run_capture(BIN, ['backup']);
+			let obj = parse_json_stdout(r.out);
+			if (type(obj) == 'object')
+				return obj;
+			return { ok: false, error: trim(r.out) != '' ? trim(r.out) : '备份命令执行失败 (code ' + r.code + ')' };
+		}
+	},
+
+	list_backups: {
+		call: function() {
+			return list_backups();
+		}
+	},
+
+	restore: {
+		args: { path: 'string' },
+		call: function(request) {
+			let path = request.args?.path;
+			if (type(path) != 'string' ||
+			    (substr(path, 0, length(BACKUP_DIR) + 1) != BACKUP_DIR + '/' &&
+			     substr(path, 0, 5) != '/tmp/'))
+				return { ok: false, error: '不允许的路径' };
+			let r = run_capture(BIN, ['restore', path]);
+			let obj = parse_json_stdout(r.out);
+			if (type(obj) == 'object')
+				return obj;
+			return { ok: false, error: trim(r.out) != '' ? trim(r.out) : '恢复命令执行失败 (code ' + r.code + ')' };
+		}
+	},
+
+	probe_assets: {
+		// list the assets of an arbitrary repo's newest release — used by the
+		// web UI's "获取固件列表" helper; repo/tag come from arguments
+		args: { repo: '', tag: '' },
+		call: function(request) {
+			let repo = request.args?.repo;
+			let tag = request.args?.tag;
+			if (type(repo) != 'string' || match(repo, REPO_RE) == null)
+				return { ok: false, error: '仓库格式不正确(应为 owner/repo)' };
+			if (type(tag) != 'string' || length(tag) == 0)
+				tag = 'latest';
+			if (length(tag) > 160 || bad_field(tag))
+				return { ok: false, error: '标签格式不正确' };
+			let r = run_capture(BIN, ['probe', '--repo', repo, '--tag', tag]);
+			let obj = parse_json_stdout(r.out);
+			if (type(obj) == 'object')
+				return obj;
+			return { ok: false, error: trim(r.out) != '' ? trim(r.out) : '探测失败 (code ' + r.code + ')' };
+		}
+	},
+
+	delete_backup: {
+		args: { path: '' },
+		call: function(request) {
+			let path = request.args?.path;
+			// deletion is deliberately narrow: only our own /root/ backup files
+			if (type(path) != 'string' ||
+			    match(path, /^\/root\/pre-upgrade-backup-[0-9]{8}-[0-9]{6}\.tar\.gz$/) == null)
+				return { ok: false, error: '不允许删除该路径' };
+			if (!unlink(path))
+				return { ok: false, error: '删除失败(文件不存在或无权限)' };
+			return { ok: true };
+		}
+	},
+
+	get_sysinfo: {
+		call: function() {
+			return sysinfo();
+		}
+	},
+
+	get_config: {
+		call: function() {
+			let ctx = cursor();
+			let settings = ctx.get_all('online-upgrade', 'settings');
+			return { settings: type(settings) == 'object' ? settings : {} };
+		}
+	},
+
+	set_config: {
+		// NB: this rpcd-ucode build rejects { type: 'int' } object specs —
+		// default-value declarations (0/'' /false) make args optional instead.
+		args: {
+			repo: '',
+			tag: '',
+			pattern: '',
+			proxy: '',
+			github_token: '',
+			dl_workers: 0,
+			dl_chunk_mb: 0,
+			dl_stall_sec: 0,
+			dl_retries: 0
+		},
+		call: function(request) {
+			let a = request.args ?? {};
+			let ctx = cursor();
+			let touched = 0;
+
+			// downloader advanced settings: accept 0 = reset to default
+			let int_opts = [
+				['dl_workers', 1, 16, 6],
+				['dl_chunk_mb', 1, 32, 4],
+				['dl_stall_sec', 5, 600, 30],
+				['dl_retries', 1, 10, 3]
+			];
+			for (let idx, opt in int_opts) {
+				let key = opt[0], lo = opt[1], hi = opt[2], def = opt[3];
+				if (type(a[key]) == 'int') {
+					let v = a[key];
+					if (v == 0)
+						v = def;
+					if (v < lo || v > hi)
+						return { ok: false, error: key + ' 超出范围 (' + lo + '-' + hi + ')' };
+					ctx.set('online-upgrade', 'settings', key, '' + v);
+					touched++;
+				}
+			}
+
+			if (type(a.repo) == 'string' && length(a.repo) > 0) {
+				if (match(a.repo, REPO_RE) == null)
+					return { ok: false, error: '仓库格式不正确(应为 owner/repo)' };
+				ctx.set('online-upgrade', 'settings', 'repo', a.repo);
+				touched++;
+			}
+			if (type(a.tag) == 'string' && length(a.tag) > 0) {
+				// allow `latest@<regex>` (incl. CJK tag names); forbid quotes/whitespace
+				if (length(a.tag) > 160 || bad_field(a.tag))
+					return { ok: false, error: '标签格式不正确(不能含引号或空白)' };
+				ctx.set('online-upgrade', 'settings', 'tag', a.tag);
+				touched++;
+			}
+			if (type(a.pattern) == 'string' && length(a.pattern) > 0) {
+				if (!valid_pattern(a.pattern))
+					return { ok: false, error: '固件匹配模式不合法' };
+				ctx.set('online-upgrade', 'settings', 'firmware_pattern', a.pattern);
+				touched++;
+			}
+			if (type(a.proxy) == 'string') {
+				if (!valid_optional_url(a.proxy))
+					return { ok: false, error: '代理地址不合法' };
+				ctx.set('online-upgrade', 'settings', 'proxy', a.proxy);
+				touched++;
+			}
+			if (type(a.github_token) == 'string') {
+				if (length(a.github_token) > 256)
+					return { ok: false, error: 'token 过长' };
+				ctx.set('online-upgrade', 'settings', 'github_token', a.github_token);
+				touched++;
+			}
+
+			if (touched == 0)
+				return { ok: false, error: '没有可保存的配置' };
+			ctx.commit('online-upgrade');
+			return { ok: true };
+		}
+	}
+};
+
+return { 'luci.online-upgrade': methods };

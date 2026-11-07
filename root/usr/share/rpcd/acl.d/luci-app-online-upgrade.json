@@ -2,29 +2,22 @@
 	"luci-app-online-upgrade": {
 		"description": "Grant access to LuCI app online-upgrade",
 		"read": {
-			"cgi-io": [ "exec" ],
-			"file": {
-				"/tmp/online-upgrade-status": [ "read" ],
-				"/tmp/pre-upgrade-backup-*": [ "read" ],
-				"/root/pre-upgrade-backup-*": [ "read" ],
-				"/etc/openwrt_release": [ "read" ],
-				"/etc/config/online-upgrade": [ "read" ],
-				"/etc/config/sysupgrade.tgz": [ "read" ],
-				"/lib/upgrade/keep.d/online-upgrade": [ "read" ],
-				"/usr/bin/online-upgrade.sh": [ "exec" ],
-				"/bin/cat": [ "exec" ],
-				"/bin/sh": [ "exec" ],
-				"/bin/date": [ "exec" ],
-				"/bin/ls": [ "exec" ]
-			},
 			"ubus": {
-				"service": [ "list" ]
+				"luci.online-upgrade": [ "get_status", "get_log", "list_backups", "get_config", "get_sysinfo", "probe_assets" ]
+			},
+			"cgi-io": [ "download" ],
+			"file": {
+				"/root/pre-upgrade-backup-*": [ "read" ]
 			},
 			"uci": [ "online-upgrade" ]
 		},
 		"write": {
+			"ubus": {
+				"luci.online-upgrade": [ "check", "start_upgrade", "backup", "restore", "set_config", "delete_backup" ]
+			},
+			"cgi-io": [ "upload" ],
 			"file": {
-				"/etc/config/online-upgrade": [ "write" ]
+				"/tmp/restore-upload.tar.gz": [ "write" ]
 			},
 			"uci": [ "online-upgrade" ]
 		}

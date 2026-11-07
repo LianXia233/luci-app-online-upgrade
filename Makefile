@@ -7,16 +7,17 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=1.0.0
+PKG_VERSION:=2.0.0
 PKG_RELEASE:=1
-# 默认构建类型为 ipk，后续在 CI 中可通过修改 .config 生成 apk
-PKG_BUILD_TYPE ?= ipk
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
 PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 
-LUCI_DEPENDS:=+curl +jsonfilter
+# Rust backend ships its own HTTP stack (reqwest/rustls) — no curl needed.
+# The prebuilt binary must exist at ./root/usr/bin/online-upgrade before
+# packaging (see README "编译" — build via cargo zigbuild / cross-gcc, or CI).
+LUCI_DEPENDS:=+rpcd-mod-ucode +ucode-mod-fs +ucode-mod-uci
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/luci/luci.mk
@@ -25,15 +26,14 @@ define Package/luci-app-online-upgrade
 	SECTION:=luci
 	CATEGORY:=LuCI
 	SUBMENU:=3. Applications
-	TITLE:=Firmware online upgrade from GitHub
-	PKGARCH:=all
+	TITLE:=Firmware online upgrade from GitHub (Rust backend)
 	DEPENDS:=$(LUCI_DEPENDS)
 endef
 
 define Package/luci-app-online-upgrade/description
 	Automatically check and upgrade ImmortalWrt/OpenWrt firmware
-	from GitHub Releases. Supports custom repository, release tag,
-	download proxy, and configuration preservation.
+	from GitHub Releases. Tokio-powered segmented downloader,
+	ucode rpcd backend, native JS/CSS frontend.
 endef
 
 define Build/Prepare
@@ -47,10 +47,7 @@ endef
 
 define Package/luci-app-online-upgrade/install
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./root/usr/bin/online-upgrade.sh $(1)/usr/bin/online-upgrade.sh
-
-	$(INSTALL_DIR) $(1)/www/cgi-bin
-	$(INSTALL_BIN) ./root/www/cgi-bin/online-upgrade-restore $(1)/www/cgi-bin/online-upgrade-restore
+	$(INSTALL_BIN) ./root/usr/bin/online-upgrade $(1)/usr/bin/online-upgrade
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/online-upgrade $(1)/etc/config/online-upgrade
@@ -62,10 +59,6 @@ define Package/luci-app-online-upgrade/install
 	$(INSTALL_BIN) ./root/etc/uci-defaults/99-online-upgrade $(1)/etc/uci-defaults/99-online-upgrade
 	$(INSTALL_BIN) ./root/etc/uci-defaults/90-online-upgrade-auto $(1)/etc/uci-defaults/90-online-upgrade-auto
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller/admin_system
-	$(INSTALL_DATA) ./root/usr/lib/lua/luci/controller/admin_system/online_upgrade.lua \
-		$(1)/usr/lib/lua/luci/controller/admin_system/online_upgrade.lua
-
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-online-upgrade.json \
 		$(1)/usr/share/luci/menu.d/luci-app-online-upgrade.json
@@ -74,15 +67,19 @@ define Package/luci-app-online-upgrade/install
 	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-online-upgrade.json \
 		$(1)/usr/share/rpcd/acl.d/luci-app-online-upgrade.json
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi/admin_system
-	$(INSTALL_DATA) ./root/usr/lib/lua/luci/model/cbi/admin_system/online_upgrade.lua \
-		$(1)/usr/lib/lua/luci/model/cbi/admin_system/online_upgrade.lua
+	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
+	$(INSTALL_DATA) ./root/usr/share/rpcd/ucode/luci.online-upgrade \
+		$(1)/usr/share/rpcd/ucode/luci.online-upgrade
 
-	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/system
-	$(INSTALL_DATA) ./root/www/luci-static/resources/view/system/online-upgrade.js \
-		$(1)/www/luci-static/resources/view/system/online-upgrade.js
+	$(INSTALL_DIR) $(1)/usr/share/ucode/luci/template/online-upgrade
+	$(INSTALL_DATA) ./root/usr/share/ucode/luci/template/online-upgrade/main.ut \
+		$(1)/usr/share/ucode/luci/template/online-upgrade/main.ut
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/online-upgrade
+	$(INSTALL_DATA) ./root/www/luci-static/resources/online-upgrade/app.js \
+		$(1)/www/luci-static/resources/online-upgrade/app.js
+	$(INSTALL_DATA) ./root/www/luci-static/resources/online-upgrade/style.css \
+		$(1)/www/luci-static/resources/online-upgrade/style.css
 endef
 
 define Package/luci-app-online-upgrade/postinst
@@ -90,7 +87,7 @@ define Package/luci-app-online-upgrade/postinst
 [ -n "$${IPKG_INSTROOT}" ] || {
 	. /lib/functions/luci.sh
 	luci-reload
-	rm -f /tmp/luci-indexcache
+	rm -f /tmp/luci-indexcache*
 	exit 0
 }
 endef

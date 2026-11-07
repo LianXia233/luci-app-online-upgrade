@@ -9,103 +9,133 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # ---------- 1. Rust backend: cross-compile both targets ----------
+  rust:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            cc: gcc-aarch64-linux-gnu
+            cc_env: CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc
+          - target: x86_64-unknown-linux-musl
+            cc: musl-tools
+            cc_env: CC_x86_64_unknown_linux_musl=musl-gcc
     steps:
-      # ---------- 1. 检出源码 ----------
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install cross C toolchain (required by ring/rustls)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.cc }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build (static musl, rust-lld self-contained)
+        working-directory: rust
+        env:
+          RUSTFLAGS: "-C link-self-contained=yes -C linker=rust-lld"
+        run: |
+          # ring's build script reads the CC_* env when compiling its C sources
+          env ${{ matrix.cc_env }} cargo build --release --locked --target ${{ matrix.target }}
+          file target/${{ matrix.target }}/release/online-upgrade
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: online-upgrade-${{ matrix.target }}
+          path: rust/target/${{ matrix.target }}/release/online-upgrade
+
+  # ---------- 2. Package with ImmortalWrt SDKs ----------
+  package:
+    runs-on: ubuntu-latest
+    needs: rust
+    strategy:
+      matrix:
+        include:
+          - sdk_url: https://downloads.immortalwrt.org/releases/25.12.0/targets/mediatek/filogic/immortalwrt-sdk-25.12.0-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            bin_artifact: online-upgrade-aarch64-unknown-linux-musl
+            ext: apk
+          - sdk_url: https://downloads.immortalwrt.org/releases/25.12.0/targets/x86/64/immortalwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            bin_artifact: online-upgrade-x86_64-unknown-linux-musl
+            ext: apk
+    steps:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
           path: package-dir
 
-      # ---------- 2. 并行下载两个 SDK ----------
-      - name: Download SDKs (parallel)
+      - name: Download SDK
         run: |
-          SDK23_URL="https://downloads.immortalwrt.org/releases/23.05.4/targets/x86/64/immortalwrt-sdk-23.05.4-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz"
-          SDK25_URL="https://downloads.immortalwrt.org/releases/25.12.0/targets/x86/64/immortalwrt-sdk-25.12.0-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
-          # 并行下载
-          curl -sL --retry 5 --retry-delay 10 "$SDK23_URL" -o sdk23.tar.xz &
-          curl -sL --retry 5 --retry-delay 10 "$SDK25_URL" -o sdk25.tar.zst &
-          wait
-          echo "✅ SDKs downloaded"
-      - name: Extract SDKs
-        run: |
-          # 串行解压（避免移动时的竞态）
-          tar -xf sdk23.tar.xz && mv immortalwrt-sdk-* sdk23
-          tar --zstd -xf sdk25.tar.zst && mv immortalwrt-sdk-* sdk25
-          echo "✅ SDKs extracted"
+          curl -sL --retry 5 --retry-delay 10 "${{ matrix.sdk_url }}" -o sdk.tar
+          mkdir sdk && tar --zstd -xf sdk.tar -C sdk --strip-components=1
 
-      # ============================================================
-      # 编译 .ipk (opkg) - SDK 23.05
-      # ============================================================
-      - name: Copy package to SDK 23.05
-        run: |
-          mkdir -p sdk23/package/luci-app-online-upgrade
-          cp -r package-dir/* sdk23/package/luci-app-online-upgrade/
+      - name: Fetch Rust binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.bin_artifact }}
+          path: bin
 
-      - name: Install feeds (SDK 23.05)
+      - name: Place binary into package root
         run: |
-          cd sdk23
+          mkdir -p package-dir/root/usr/bin
+          install -m 0755 bin/online-upgrade package-dir/root/usr/bin/online-upgrade
+          file package-dir/root/usr/bin/online-upgrade
+
+      - name: Install feeds
+        working-directory: sdk
+        run: |
           ./scripts/feeds update luci --depth 1
           ./scripts/feeds install -a
           make defconfig
 
-      - name: Build .ipk
-        id: build_ipk
+      - name: Build package
+        working-directory: sdk
         run: |
-          cd sdk23
+          mkdir -p package/luci-app-online-upgrade
+          cp -r ../package-dir/* package/luci-app-online-upgrade/
           make -j$(nproc) package/luci-app-online-upgrade/compile V=s
-        continue-on-error: true
 
-      - name: Save .ipk
+      - name: Collect artifacts
         run: |
           mkdir -p /tmp/pkgs
-          find sdk23/bin/ -name "luci-app-online-upgrade*.ipk" -exec cp {} /tmp/pkgs/ \;
-          echo "=== .ipk artifacts ==="
-          ls -lh /tmp/pkgs/*.ipk 2>/dev/null || echo "(no .ipk)"
-
-      # ============================================================
-      # 编译 .apk (APK) - SDK 25.12
-      # ============================================================
-      - name: Copy package to SDK 25.12
-        run: |
-          mkdir -p sdk25/package/luci-app-online-upgrade
-          cp -r package-dir/* sdk25/package/luci-app-online-upgrade/
-
-      - name: Install feeds (SDK 25.12)
-        run: |
-          cd sdk25
-          ./scripts/feeds update luci --depth 1
-          ./scripts/feeds install -a
-          make defconfig
-
-      - name: Build .apk
-        id: build_apk
-        run: |
-          cd sdk25
-          make -j$(nproc) package/luci-app-online-upgrade/compile V=s
-        continue-on-error: true
-
-      - name: Save .apk
-        run: |
-          find sdk25/bin/ -name "luci-app-online-upgrade*.apk" -exec cp {} /tmp/pkgs/ \;
-          echo "=== All artifacts ==="
+          find sdk/bin/ -name "luci-app-online-upgrade*.${{ matrix.ext }}" -exec cp {} /tmp/pkgs/ \;
           ls -lh /tmp/pkgs/
 
-      # ============================================================
-      # 上传到 Release
-      # ============================================================
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.bin_artifact }}
+          path: /tmp/pkgs/*
+
+  # ---------- 3. Release ----------
+  release:
+    runs-on: ubuntu-latest
+    needs: package
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: /tmp/pkgs
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: v1.0.${{ github.run_number }}
+          tag_name: v2.0.${{ github.run_number }}
+          name: v2.0.${{ github.run_number }}
           body: |
-            自动编译的插件包
+            luci-app-online-upgrade v2 (Rust backend)
 
-            - ✅ .ipk (opkg) — 适用于 ImmortalWrt 23.05 及更早
-            - ✅ .apk (APK) — 适用于 ImmortalWrt 25.12+
+            - ✅ Tokio 多线程分段下载内核
+            - ✅ ucode rpcd 后端 + 原生 JS/CSS 前端(零 Lua)
+            - ✅ .apk (apk) — 适用于 ImmortalWrt 25.12+ / SNAPSHOT
+              - mediatek/filogic (aarch64) 与 x86/64 两个架构
           files: /tmp/pkgs/*
           token: ${{ github.token }}
           make_latest: true

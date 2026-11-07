@@ -1,0 +1,158 @@
+{% include(`themes/${theme}/header`) %}
+
+<!-- app stylesheet: a <link> inside <body> is valid HTML5 and provides the
+     theme-agnostic helpers (progress bar, terminal, kv grid) -->
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css">
+
+<div class="cbi-map">
+	<h2 class="cbi-page-title">固件在线升级</h2>
+
+	<!-- 固件状态 -->
+	<div class="cbi-section" id="card-status">
+		<div class="ou-card-head">
+			<h3><span class="ou-dot ok"></span>固件状态</h3>
+			<div class="ou-btn-row">
+				<button id="btn-check" class="btn cbi-button cbi-button-action" type="button">检查更新</button>
+				<button id="btn-upgrade" class="btn cbi-button cbi-button-action important" type="button" style="display:none">立即升级</button>
+				<button id="btn-force" class="btn cbi-button cbi-button-negative" type="button" title="即使已是最新版本也重新下载刷写" style="display:none">强制更新</button>
+			</div>
+		</div>
+		<div class="ou-kv-grid">
+			<div class="ou-kv"><span class="k">当前版本</span><span class="v" id="cur-ver">加载中...</span></div>
+			<div class="ou-kv"><span class="k">最新固件</span><span class="v" id="latest-name">—</span></div>
+			<div class="ou-kv"><span class="k">固件版本</span><span class="v" id="new-ver">—</span></div>
+			<div class="ou-kv"><span class="k">文件大小</span><span class="v" id="latest-size">—</span></div>
+			<div class="ou-kv"><span class="k">编译时间</span><span class="v" id="latest-time">—</span></div>
+			<div class="ou-kv"><span class="k">检测依据</span><span class="v" id="check-reason">—</span></div>
+		</div>
+		<p class="ou-hint" id="check-result"></p>
+	</div>
+
+	<!-- 升级进度 -->
+	<div class="cbi-section" id="card-progress" style="display:none">
+		<div class="ou-card-head"><h3><span class="ou-dot blue"></span>升级进度</h3></div>
+		<div class="ou-progress-track">
+			<div class="ou-progress-bar" id="progress-bar" style="width:0%"></div>
+			<div class="ou-progress-label" id="progress-pct">0%</div>
+		</div>
+		<p class="ou-hint" id="progress-text"></p>
+	</div>
+
+	<!-- 备份 & 恢复 -->
+	<div class="cbi-section" id="card-backup">
+		<div class="ou-card-head">
+			<h3><span class="ou-dot amber"></span>备份 &amp; 恢复</h3>
+			<div class="ou-btn-row">
+				<button id="btn-backup" class="btn cbi-button" type="button">📦 创建备份</button>
+				<button id="btn-download" class="btn cbi-button" type="button">⬇ 下载备份</button>
+				<button id="btn-auto-restore" class="btn cbi-button" type="button" title="从路由器本地最新备份恢复">🔄 自动恢复</button>
+				<button id="btn-manual-restore" class="btn cbi-button" type="button" title="上传本地备份文件恢复">📂 手动恢复</button>
+				<input type="file" id="manual-backup-file" accept=".tar.gz,.tgz,.gz" style="display:none">
+			</div>
+		</div>
+		<table class="table" id="backup-table">
+			<thead><tr><th>备份文件</th><th>大小</th><th>时间</th><th>操作</th></tr></thead>
+			<tbody><tr><td colspan="3" class="ou-empty">暂无备份</td></tr></tbody>
+		</table>
+		<p class="ou-hint" id="backup-hint"></p>
+	</div>
+
+	<!-- 仓库配置 -->
+	<div class="cbi-section" id="card-config">
+		<div class="ou-card-head"><h3><span class="ou-dot green"></span>仓库配置</h3></div>
+		<div class="ou-form-row">
+			<label>① 固件源(粘贴 GitHub Release 页 / 仓库页链接,或直接填 owner/repo)</label>
+			<div class="ou-input-group">
+				<input type="text" id="cfg-url" class="cbi-input-text" placeholder="https://github.com/owner/repo/releases/tag/xxx" spellcheck="false">
+				<button id="btn-parse-url" class="btn cbi-button" type="button">识别并填入</button>
+			</div>
+		</div>
+		<div class="ou-form-row">
+			<label>② 选择固件文件(拉取该仓库最新 Release 的附件列表,点选即可自动生成匹配规则)</label>
+			<div class="ou-input-group">
+				<button id="btn-fetch-assets" class="btn cbi-button" type="button">获取固件列表</button>
+				<span class="ou-hint" id="asset-resolved" style="margin:0"></span>
+			</div>
+			<div id="asset-box" style="display:none;margin-top:8px">
+				<select id="cfg-asset" class="cbi-input-select"></select>
+				<button id="btn-apply-asset" class="btn cbi-button cbi-button-action" type="button" style="margin-top:6px">使用此文件 → 自动生成匹配规则</button>
+			</div>
+		</div>
+		<div class="ou-form-row">
+			<label>③ 下载加速代理(国内网络建议保留默认)</label>
+			<input type="text" id="cfg-proxy" class="cbi-input-text" placeholder="https://gh.acg2.mom/(留空则直连 GitHub)" spellcheck="false">
+		</div>
+		<div class="ou-config-summary" id="config-summary"></div>
+		<details id="adv-box">
+			<summary>高级配置(仓库 / 标签 / 匹配规则 / 下载器调优)</summary>
+			<div class="ou-form-row">
+				<label>GitHub 仓库(owner/repo)</label>
+				<input type="text" id="cfg-repo" class="cbi-input-text" placeholder="owner/repo" spellcheck="false">
+			</div>
+			<div class="ou-form-row">
+				<label>Release 标签</label>
+				<input type="text" id="cfg-tag" class="cbi-input-text" placeholder="latest=自动跟最新,latest@^前缀=按标签过滤,或固定 tag" spellcheck="false">
+				<p class="ou-field-help">例如 latest@^自用 表示只在「自用-」开头的 Release 里追最新</p>
+			</div>
+			<div class="ou-form-row">
+				<label>固件匹配模式</label>
+				<input type="text" id="cfg-pattern" class="cbi-input-text" placeholder="例:^H5000M-.*sysupgrade\.bin$" spellcheck="false">
+				<p class="ou-field-help">匹配 Release 附件文件名的正则(grep -E 语法);latest 模式下按时间倒序取第一个命中的 Release</p>
+			</div>
+			<div class="ou-form-row">
+				<label>GitHub Token</label>
+				<input type="password" id="cfg-token" class="cbi-input-text" placeholder="可选,提高 API 速率限制" spellcheck="false" autocomplete="off">
+			</div>
+			<div class="ou-form-row">
+				<label>下载并发数</label>
+				<input type="number" id="cfg-workers" class="cbi-input-text" min="1" max="16" step="1" placeholder="6">
+				<p class="ou-field-help">分段下载并发连接数(1 = 单线程直下),默认 6</p>
+			</div>
+			<div class="ou-form-row">
+				<label>分块大小(MB)</label>
+				<input type="number" id="cfg-chunk" class="cbi-input-text" min="1" max="32" step="1" placeholder="4">
+				<p class="ou-field-help">每个分段工作单元的大小,默认 4 MB</p>
+			</div>
+			<div class="ou-form-row">
+				<label>停滞超时(秒)</label>
+				<input type="number" id="cfg-stall" class="cbi-input-text" min="5" max="600" step="1" placeholder="30">
+				<p class="ou-field-help">连接无数据超过该秒数即判停滞并重试,默认 30</p>
+			</div>
+			<div class="ou-form-row">
+				<label>分块重试次数</label>
+				<input type="number" id="cfg-retries" class="cbi-input-text" min="1" max="10" step="1" placeholder="3">
+				<p class="ou-field-help">单个分块下载失败后的最大重试次数,默认 3</p>
+			</div>
+		</details>
+		<div class="ou-card-foot">
+			<span class="ou-hint" id="config-hint"></span>
+			<button id="btn-save-config" class="btn cbi-button cbi-button-action" type="button">保存配置</button>
+		</div>
+	</div>
+
+	<!-- 运行日志 -->
+	<div class="cbi-section" id="card-log">
+		<div class="ou-card-head">
+			<h3><span class="ou-dot gray"></span>运行日志</h3>
+			<button id="btn-refresh-log" class="btn cbi-button" type="button">刷新</button>
+		</div>
+		<pre class="ou-terminal" id="log-view">日志为空</pre>
+	</div>
+</div>
+
+<!-- 重启遮罩 -->
+<div id="reboot-overlay" style="display:none">
+	<div class="ou-reboot-box">
+		<div class="ou-reboot-icon">🔄</div>
+		<h2>路由器正在重启</h2>
+		<p>固件刷写完成,配置将自动恢复,等待路由器上线...</p>
+		<div class="ou-countdown" id="reboot-countdown">120</div>
+		<p class="ou-hint">检测到设备恢复后自动刷新页面</p>
+		<button id="btn-reload" class="btn cbi-button cbi-button-positive" type="button">立即刷新</button>
+	</div>
+</div>
+
+<script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
+<script src="{{ resource }}/online-upgrade/app.js"></script>
+
+{% include(`footer`) %}

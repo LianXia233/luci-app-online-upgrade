@@ -1,0 +1,22 @@
+[package]
+name = "online-upgrade"
+version = "2.0.0"
+edition = "2021"
+
+# OpenWrt target: static musl binary.
+# Cross-compile needs a C toolchain for ring (rustls crypto provider):
+#   CI:      apt install gcc-aarch64-linux-gnu && CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc
+#   Windows: cargo zigbuild --target aarch64-unknown-linux-musl --release
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true
+codegen-units = 1
+
+[dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "fs", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "stream", "http2"] }
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+regex = "1"

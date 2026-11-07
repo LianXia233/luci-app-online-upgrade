@@ -1,68 +1,103 @@
 # luci-app-online-upgrade
 
-ImmortalWrt / OpenWrt LuCI 插件 - 从 GitHub Releases 在线升级固件。
+ImmortalWrt / OpenWrt LuCI 插件 — 从 GitHub Releases 在线升级固件。
+
+**v2 重构版**:Rust(Tokio)后端 + ucode rpcd 桥接 + 原生 JS/CSS 前端,零 Lua。
 
 ![Screenshot](screenshot.png)
 
+## 架构
+
+```
+浏览器(原生 JS + CSS,无框架)
+   │  fetch /ubus/  (uhttpd-mod-ubus JSON-RPC,会话鉴权)
+   ▼
+rpcd ucode 后端  /usr/share/rpcd/ucode/luci.online-upgrade
+   │  popen / setsid
+   ▼
+Rust 静态二进制  /usr/bin/online-upgrade  (aarch64 / x86_64 musl)
+   ├─ check    GitHub Release API(reqwest + rustls,代理回退 / 403 重试 / token)
+   ├─ upgrade  分段多线程下载(参考 FluxDown 内核架构)→ 备份 → sysupgrade
+   └─ 状态 JSON /tmp/online-upgrade-status.json(真实下载进度)
+```
+
+- **多线程下载器**:Range 探测 → 4MB 动态分块队列 → 最多 6 个 tokio worker
+  work-stealing(快连接自动接管慢段);每块独立重试 + 30s 停滞看门狗;
+  `.parts.json` 侧车断点续传;不支持 Range 自动退单流。
+- **页面**:菜单 `系统 → 在线升级`(独立裸页面,自带暗色主题);
+  备份上传/下载走 LuCI 标准 `cgi-upload`/`cgi-download`(带会话鉴权)。
+- **升级后自举**:`keep.d` 保留配置与备份;uci-defaults 自动重装丢失的包;
+  包列表存于 `/root/.pkg-list.txt`。
+
 ## 功能
 
-- 支持自定义 GitHub 仓库、Release 标签
-- 自动检测固件更新
-- 一键在线升级，保留系统配置
-- 支持 GitHub 下载加速代理
-- 升级前自动备份配置到 boot 分区
-- 强制更新：即使已是最新版本也可重新刷写
-- 自动检测路由器架构匹配固件文件
-- 同时编译 .ipk (opkg) 和 .apk (apk) 两种格式
+- 自定义 GitHub 仓库 / Release 标签;`tag=latest` 自动追踪最新 Release
+  (按时间倒序匹配第一个含目标固件的 Release,适配每日多产品线轮换源)
+- 自动检测固件更新(版本号 + 编译时间戳双重判定)
+- 一键在线升级,`sysupgrade -f` 自动保留配置
+- 多线程分段下载 + GitHub 加速代理(默认 `https://ghfast.top/`)
+- 升级前自动备份配置到 `/root/`,可下载 / 自动恢复 / 手动上传恢复
+- 强制更新:已最新也可重新刷写
+- 实时进度条(真实下载百分比,非模拟动画)
 
-## 使用方法
+## 依赖
 
-1. 安装后，在 LuCI 菜单 **系统 → 在线升级** 进入
-2. 粘贴 Release 地址自动解析，或手动配置仓库和标签
-3. 点击 **检查更新** 查看最新固件
-4. 点击 **立即升级** 或 **强制更新** 开始升级
-5. 路由器将自动备份配置 → 下载固件 → 刷写 → 重启
+- `rpcd-mod-ucode`、`ucode-mod-fs`、`ucode-mod-uci`(ucode 桥接)
+- LuCI 25.12+(ucode dispatcher + menu.d);包管理器 apk
+- **不再依赖** curl / jsonfilter(HTTP 栈内置于 Rust 二进制)
 
 ## 编译
 
+### Rust 后端(宿主机交叉编译,无需 OpenWrt SDK)
+
 ```bash
-# 将本插件放到 openwrt/package/luci-app-online-upgrade/
+# aarch64(musl 静态,ring 需要 C 工具链 → 用 zig)
+cargo install cargo-zigbuild
+cargo zigbuild --release --target aarch64-unknown-linux-musl
+cp target/aarch64-unknown-linux-musl/release/online-upgrade root/usr/bin/online-upgrade
+```
+
+CI(Ubuntu)使用 `gcc-aarch64-linux-gnu` / `musl-tools` +
+`RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld"`,见
+`.github/workflows/build.yml`(自动构建 mediatek/filogic 与 x86/64 双架构 apk 并发 Release)。
+
+### 打包
+
+```bash
+# 先编好二进制放到 root/usr/bin/online-upgrade,再:
 cd openwrt
 make package/luci-app-online-upgrade/compile V=s
 ```
 
 ## 手动安装
 
-**opkg (ImmortalWrt 23.05 及更早):**
 ```bash
-opkg install luci-app-online-upgrade_1.0.0_all.ipk
+apk add --allow-untrusted luci-app-online-upgrade-2.0.0-*.apk
 ```
-
-**apk (ImmortalWrt 25.12+):**
-```bash
-apk add --allow-untrusted luci-app-online-upgrade-1.0.0-r1.apk
-```
-
-## 依赖
-
-- curl
-- jsonfilter
-- LuCI (luci-base)
 
 ## 配置
 
-UCI 配置文件 `/etc/config/online-upgrade`：
+UCI 配置文件 `/etc/config/online-upgrade`:
 
 ```bash
+# 以下均为示例 — 插件不内置任何更新源,repo/tag/pattern 全部由用户在页面配置
 config online-upgrade 'settings'
-    option enabled '1'
-    option repo 'gooyjq/ImmortalWrt-Builder'
-    option tag 'Autobuild-x86-64'
-    option proxy 'https://ghfast.top/'
+    option repo 'LianXia233/OpenWRT-CI'   # 示例:owner/repo
+    option tag 'latest'           # latest=自动解析最新 Release;也可固定如 MT5700-26.11.07
+    option proxy 'https://gh.acg2.mom/'
     option firmware_pattern 'combined-efi.*\\.img\\.gz'
+    option github_token ''        # 可选,提高 API 限速
     option keep_config '1'
+```
+
+命令行调试:
+
+```bash
+online-upgrade check    # 输出 JSON 到状态文件,日志在 /tmp/online-upgrade.log
+online-upgrade status   # 查看当前状态 JSON
+ubus call luci.online-upgrade get_status
 ```
 
 ## 许可证
 
-GNU GENERAL PUBLIC LICENSE
+GNU GENERAL PUBLIC LICENSE v2

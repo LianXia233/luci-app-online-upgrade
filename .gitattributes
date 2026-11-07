@@ -1,0 +1,3 @@
+# OpenWrt package: everything must stay LF (Makefile/shell/ucode break with CRLF)
+* text eol=lf
+*.png binary
