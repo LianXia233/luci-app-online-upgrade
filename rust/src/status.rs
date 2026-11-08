@@ -38,6 +38,11 @@ pub fn write(st: State) {
             },
         ),
         ("ts".into(), Value::num(now())),
+        // The writer's pid lets the UI tell a fresh run apart from the terminal
+        // state left behind by a previous run: rpcd spawns check/upgrade
+        // detached, so the first poll after a click would otherwise read the
+        // old "failed"/"check_done" entry and stop polling immediately.
+        ("pid".into(), Value::num(std::process::id() as u64)),
     ];
     if let Some(r) = st.result {
         pairs.push(("result".into(), r));

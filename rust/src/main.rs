@@ -7,6 +7,7 @@ mod github;
 mod hash;
 mod http;
 mod json;
+mod lock;
 mod status;
 mod uci;
 mod upgrade;
@@ -43,6 +44,25 @@ fn usage() -> i32 {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("check");
+
+    // Mutating modes share one process lock: rpcd spawns each invocation
+    // detached, so without it two clicks can write the same temp firmware and
+    // the same status file. The loser exits without touching the status file,
+    // otherwise it would overwrite the progress of the process that owns the
+    // operation.
+    let needs_lock = matches!(mode, "check" | "upgrade" | "download" | "backup" | "restore");
+    let _guard = if needs_lock {
+        match lock::acquire(mode) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                status::log(&format!("[lock] {e}"));
+                eprintln!("[lock] {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
 
     let code = match mode {
         "check" => tokio::runtime::Builder::new_multi_thread()
