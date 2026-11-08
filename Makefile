@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=2.2.0
+PKG_VERSION:=2.3.0
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
@@ -17,7 +17,9 @@ PKG_LICENSE_FILES:=LICENSE
 # Rust backend ships its own HTTP stack (reqwest/rustls) — no curl needed.
 # The prebuilt binary must exist at ./root/usr/bin/online-upgrade before
 # packaging (see README "编译" — build via cargo zigbuild / cross-gcc, or CI).
-LUCI_DEPENDS:=+rpcd-mod-ucode +ucode-mod-fs +ucode-mod-uci
+# ca-bundle: uci-defaults 的自动重装脚本用 curl 走 HTTPS 拉取 release，
+# 没有 CA 根证书时 curl 会直接因证书校验失败而无法下载。
+LUCI_DEPENDS:=+rpcd-mod-ucode +ucode-mod-fs +ucode-mod-uci +ca-bundle
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/luci/luci.mk

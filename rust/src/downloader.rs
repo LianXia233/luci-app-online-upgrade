@@ -126,11 +126,31 @@ fn parts_path(out: &str) -> String {
     format!("{out}.parts.json")
 }
 
-fn load_parts(out: &str, url: &str, etag: &Option<String>, total: u64) -> Option<Parts> {
+/// A sidecar is only trustworthy when all three hold:
+/// 1. the data file it describes still exists with the expected length
+///    (a deleted/truncated firmware must never keep its "done" map);
+/// 2. the chunk grid is unchanged — changing `dl_chunk_mb` remaps indices to
+///    completely different byte ranges;
+/// 3. every recorded index is inside the current grid.
+/// Anything else is discarded, so a resume can never skip bytes that were
+/// never written.
+fn load_parts(
+    out: &str,
+    url: &str,
+    etag: &Option<String>,
+    total: u64,
+    chunk: u64,
+    n_chunks: usize,
+) -> Option<Parts> {
+    let len = std::fs::metadata(out).ok()?.len();
+    if len != total {
+        return None;
+    }
     let text = std::fs::read_to_string(parts_path(out)).ok()?;
     let v = crate::json::parse(&text).ok()?;
     let same = v.get("url").and_then(|x| x.as_str()) == Some(url)
         && v.get("total").and_then(|x| x.as_u64()) == Some(total)
+        && v.get("chunk").and_then(|x| x.as_u64()) == Some(chunk)
         && v.get("etag")
             .and_then(|x| x.as_str())
             .map(|s| Some(s.to_string()))
@@ -139,13 +159,17 @@ fn load_parts(out: &str, url: &str, etag: &Option<String>, total: u64) -> Option
     if !same {
         return None;
     }
-    let chunk = v.get("chunk").and_then(|x| x.as_u64())?;
-    let done = v
+    let mut done: Vec<usize> = v
         .get("done")
         .and_then(|x| x.as_arr())?
         .iter()
         .filter_map(|x| x.as_u64().map(|n| n as usize))
         .collect();
+    if done.iter().any(|&i| i >= n_chunks) {
+        return None;
+    }
+    done.sort_unstable();
+    done.dedup();
     Some(Parts {
         url: url.to_string(),
         etag: etag.clone().unwrap_or_default(),
@@ -235,7 +259,12 @@ pub async fn download(
     let all_chunks = build_chunks(total, dl.chunk_size);
 
     // resume state
-    let prev = load_parts(out, url, &p.etag, total);
+    let prev = load_parts(out, url, &p.etag, total, dl.chunk_size, all_chunks.len());
+    if prev.is_none() {
+        // untrusted sidecar (file gone, chunk grid changed, ...) must not
+        // linger next to a freshly started download
+        drop_parts(out);
+    }
     let mut queue: VecDeque<Chunk> = VecDeque::new();
     let mut already_done: u64 = 0;
     let mut resumed_chunks = 0usize;
@@ -356,12 +385,27 @@ pub async fn download(
     }
     let _ = rep_handle.abort();
     if let Some(e) = err {
-        drop_parts_done(out); // keep sidecar for resume
+        // Keep the sidecar only when the data file is still intact at full
+        // length; otherwise a later resume would trust a "done" map that no
+        // longer describes this file (the classic zero-filled hole bug).
+        keep_resumable(out, total);
         return Err(e);
+    }
+
+    // Every chunk must be marked done. Length alone cannot prove that: a
+    // preallocated file has the right length even with unwritten regions.
+    {
+        let flags = done_flags.lock().unwrap();
+        if let Some(missing) = flags.iter().position(|&d| !d) {
+            keep_resumable(out, total);
+            return Err(format!("分段 {} 未完成,已保留续传记录", missing));
+        }
     }
 
     let final_size = std::fs::metadata(out).map(|m| m.len()).unwrap_or(0);
     if final_size != total {
+        let _ = std::fs::remove_file(out);
+        drop_parts(out);
         return Err(format!("文件大小不匹配: 期望 {total}, 实际 {final_size}"));
     }
     report(total, total);
@@ -374,8 +418,19 @@ pub async fn download(
     })
 }
 
-fn drop_parts_done(_out: &str) {
-    // sidecar intentionally kept: retrying the download resumes from it
+/// On failure: keep the sidecar only if the file can actually be resumed from
+/// it, otherwise delete both so a retry starts from a clean slate.
+fn keep_resumable(out: &str, total: u64) {
+    let ok = std::fs::metadata(out)
+        .map(|m| m.len() == total)
+        .unwrap_or(false);
+    if ok {
+        crate::logline!("[download] 中断,已保留续传记录 {}", parts_path(out));
+    } else {
+        let _ = std::fs::remove_file(out);
+        drop_parts(out);
+        crate::logline!("[download] 中断且文件不可续传,已清理临时文件");
+    }
 }
 
 async fn fetch_range(
@@ -434,6 +489,30 @@ async fn single_stream(
     etag: Option<String>,
     report: Arc<dyn Fn(u64, u64) + Send + Sync>,
 ) -> Result<Downloaded, String> {
+    let res = single_stream_inner(client, url, out, total, etag, report).await;
+    match res {
+        Ok(d) => {
+            // no resume state applies to a single stream: make sure an old
+            // sidecar from a segmented attempt cannot be reused later
+            drop_parts(out);
+            Ok(d)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(out);
+            drop_parts(out);
+            Err(e)
+        }
+    }
+}
+
+async fn single_stream_inner(
+    client: &Client,
+    url: &str,
+    out: &str,
+    total: Option<u64>,
+    etag: Option<String>,
+    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
+) -> Result<Downloaded, String> {
     let resp = client
         .get(url)
         .header("Accept", "application/octet-stream")
@@ -467,6 +546,9 @@ async fn single_stream(
         }
     }
     file.flush().await.map_err(|e| format!("flush 失败: {e}"))?;
+    if total > 0 && done != total {
+        return Err(format!("下载不完整: 期望 {total}, 实际 {done}"));
+    }
     report(done, total.max(done));
     Ok(Downloaded {
         total: done,

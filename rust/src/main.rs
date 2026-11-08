@@ -7,10 +7,12 @@ mod github;
 mod hash;
 mod http;
 mod json;
+mod lock;
 mod status;
 mod uci;
 mod upgrade;
 mod util;
+mod version;
 
 use json::Value;
 
@@ -35,13 +37,32 @@ async fn cmd_check() -> i32 {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: online-upgrade <check|upgrade [--force]|backup|restore <file>|status|clear-log>");
+    eprintln!("usage: online-upgrade <check|upgrade [--force]|download|backup|restore <file>|status|clear-log>");
     2
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("check");
+
+    // Mutating modes share one process lock: rpcd spawns each invocation
+    // detached, so without it two clicks can write the same temp firmware and
+    // the same status file. The loser exits without touching the status file,
+    // otherwise it would overwrite the progress of the process that owns the
+    // operation.
+    let needs_lock = matches!(mode, "check" | "upgrade" | "download" | "backup" | "restore");
+    let guard = if needs_lock {
+        match lock::acquire(mode) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                status::log(&format!("[lock] {e}"));
+                eprintln!("[lock] {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
 
     let code = match mode {
         "check" => tokio::runtime::Builder::new_multi_thread()
@@ -105,5 +126,9 @@ fn main() {
         }
         _ => usage(),
     };
+    // process::exit skips destructors, so release the lock explicitly: a
+    // surviving lock file is only reclaimed through the stale-pid path, and a
+    // recycled pid would then keep the lock "alive" forever.
+    drop(guard);
     std::process::exit(code);
 }

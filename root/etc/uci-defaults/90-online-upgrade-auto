@@ -1,82 +1,196 @@
 #!/bin/sh
-# Auto-reinstall luci-app-online-upgrade after sysupgrade
-# Installed by /lib/upgrade/keep.d/ so it survives firmware upgrade
+# Auto-reinstall luci-app-online-upgrade after sysupgrade.
+# Kept across firmware upgrades via /lib/upgrade/keep.d/.
+#
+# 设计约束：不猜测。先按「本机完整架构」挑选，再退到架构家族；两者都挑不出
+# 明确候选时报错退出，只有「同架构多候选」才记录全部候选并按顺序取第一个。
+# 任何一步失败都会写 logger 并让脚本以非零码退出，便于事后排查。
 
-# 只在插件确实丢失时才运行 (v2 核心为 Rust 二进制 /usr/bin/online-upgrade)
 [ -x /usr/bin/online-upgrade ] && exit 0
 
-logger -t "online-upgrade" "检测到插件丢失，正在尝试自动重装..."
+FAIL=0
+log() { logger -t "online-upgrade" "$*"; }
+err() { logger -t "online-upgrade" "错误: $*"; FAIL=1; }
 
-# 1. 尝试从包列表恢复
+# ---- 包管理器与架构 ---------------------------------------------------------
+PKG_MGR=""
+ARCH=""
+# 优先用固件自报的打包架构：apk --print-arch 在 apk-tools 3 上返回的是家族名
+# （实测 aarch64），而包名用的是 aarch64_cortex-a53 这类完整架构，只拿家族名
+# 无法把 cortex-a53 与 cortex-a72 区分开。
+if [ -r /etc/openwrt_release ]; then
+	. /etc/openwrt_release 2>/dev/null
+	ARCH="${DISTRIB_ARCH:-}"
+fi
+if command -v apk >/dev/null 2>&1; then
+	PKG_MGR="apk"
+	[ -z "$ARCH" ] && ARCH=$(apk --print-arch 2>/dev/null)
+elif command -v opkg >/dev/null 2>&1; then
+	PKG_MGR="opkg"
+	[ -z "$ARCH" ] && ARCH=$(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }' | grep -v '^all$' | head -1)
+fi
+
+if [ -z "$PKG_MGR" ]; then
+	err "本机既没有 apk 也没有 opkg，无法自动重装"
+	exit $FAIL
+fi
+
+[ -z "$ARCH" ] && ARCH=$(uname -m)
+# musl 架构名形如 aarch64_cortex-a53，仅取家族前缀参与匹配，避免把具体 CPU
+# 型号写死；资产名里家族前缀可能写作 aarch64 / x86_64 / x86-64 等都算命中。
+ARCH_FAMILY=$(printf '%s' "$ARCH" | cut -d_ -f1)
+EXT="apk"
+[ "$PKG_MGR" = "opkg" ] && EXT="ipk"
+
+log "插件缺失，开始自动重装 (包管理器 $PKG_MGR, 架构 $ARCH, 家族 $ARCH_FAMILY)"
+
+# ---- 1. 按备份的软件包清单恢复 ---------------------------------------------
 if [ -f /root/.pkg-list.txt ]; then
-	logger -t "online-upgrade" "从包列表恢复中..."
+	log "尝试按 /root/.pkg-list.txt 恢复软件包"
 	while read -r pkg; do
 		[ -z "$pkg" ] && continue
-		# 跳过已存在的包
-		apk info -e "$pkg" 2>/dev/null && continue
-		apk add "$pkg" 2>/dev/null && logger -t "online-upgrade" "已安装: $pkg"
+		if [ "$PKG_MGR" = "apk" ]; then
+			apk info -e "$pkg" >/dev/null 2>&1 && continue
+			out=$(apk add "$pkg" 2>&1)
+			rc=$?
+		else
+			opkg list-installed 2>/dev/null | grep -q "^${pkg} " && continue
+			out=$(opkg install "$pkg" 2>&1)
+			rc=$?
+		fi
+		if [ $rc -eq 0 ]; then
+			log "已安装: $pkg"
+		else
+			err "安装 $pkg 失败: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"
+		fi
 	done < /root/.pkg-list.txt
 fi
 
-# 2. 如果插件还是没装上，从 GitHub 下载最新 Release
-if [ ! -x /usr/bin/online-upgrade ]; then
-	logger -t "online-upgrade" "从 GitHub 下载最新插件..."
+if [ -x /usr/bin/online-upgrade ]; then
+	rm -f /root/.pkg-list.txt
+	log "插件已通过包清单恢复，跳过 Release 下载"
+	exit $FAIL
+fi
 
-	PLUGIN_REPO=$(uci -q get online-upgrade.settings.plugin_repo)
-	[ -z "$PLUGIN_REPO" ] && PLUGIN_REPO="LianXia233/luci-app-online-upgrade"
+# ---- 2. 从 GitHub Release 下载安装包 ---------------------------------------
+REPO=$(uci -q get online-upgrade.settings.plugin_repo)
+[ -z "$REPO" ] && REPO="LianXia233/luci-app-online-upgrade"
 
-	PROXY=$(uci -q get online-upgrade.settings.proxy)
-
-	ARCH=$(uname -m)
-	case "$ARCH" in
-		aarch64|arm64)
-			PATT="aarch64.*\.apk$"
-			;;
-		x86_64|amd64)
-			PATT="x86_64.*\.apk$"
-			;;
-		*)
-			PATT="${ARCH}.*\.apk$"
-			;;
+# 镜像前缀归一化：后端会把前缀直接拼在地址前，缺结尾斜杠会拼成
+# "https://hosthttps://..."，这里统一补一个。
+PROXY=$(uci -q get online-upgrade.settings.proxy)
+if [ -n "$PROXY" ]; then
+	while [ "${PROXY%/}" != "$PROXY" ]; do PROXY="${PROXY%/}"; done
+	PROXY="${PROXY}/"
+	case "$PROXY" in
+		http://*|https://*) ;;
+		*) err "代理地址不合法，已忽略: $PROXY"; PROXY="" ;;
 	esac
+fi
 
-	# 查找最新 .apk 下载地址
-	RELEASE_JSON=$(curl -sL --connect-timeout 10 \
-		"https://api.github.com/repos/${PLUGIN_REPO}/releases/latest" 2>/dev/null)
-	APK_URL=$(echo "$RELEASE_JSON" | jsonfilter -e "@.assets[*].browser_download_url" 2>/dev/null | grep -E "$PATT" | head -1)
+if [ "$FAIL" -ne 0 ]; then
+	log "上一步已出错，但继续尝试从 Release 安装"
+fi
 
-	# 若架构匹配未找到，尝试匹配任意 .apk
-	if [ -z "$APK_URL" ]; then
-		APK_URL=$(echo "$RELEASE_JSON" | jsonfilter -e "@.assets[*].browser_download_url" 2>/dev/null | grep -E '\.apk$' | head -1)
-	fi
+if ! command -v curl >/dev/null 2>&1; then
+	err "缺少 curl，无法下载安装包"
+	rm -f /root/.pkg-list.txt
+	exit $FAIL
+fi
 
-	if [ -n "$APK_URL" ]; then
-		DOWNLOAD_URL="${PROXY}${APK_URL}"
-		logger -t "online-upgrade" "正在下载: $DOWNLOAD_URL"
-		curl -sL --connect-timeout 30 -o /tmp/luci-app-online-upgrade.apk "$DOWNLOAD_URL" 2>/dev/null
-		# 若代理下载失败，回退到直连下载
-		if [ ! -s /tmp/luci-app-online-upgrade.apk ] && [ -n "$PROXY" ]; then
-			logger -t "online-upgrade" "代理下载失败，尝试直连下载..."
-			curl -sL --connect-timeout 30 -o /tmp/luci-app-online-upgrade.apk "$APK_URL" 2>/dev/null
-		fi
+RELEASE_JSON=$(curl -sL --connect-timeout 10 --max-time 40 \
+	"https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null)
+if [ -z "$RELEASE_JSON" ]; then
+	err "无法获取 ${REPO} 的最新 Release（网络不可达或仓库不存在）"
+	rm -f /root/.pkg-list.txt
+	exit $FAIL
+fi
 
-		if [ -s /tmp/luci-app-online-upgrade.apk ]; then
-			apk add --allow-untrusted /tmp/luci-app-online-upgrade.apk 2>/dev/null
-			rm -f /tmp/luci-app-online-upgrade.apk
-			if [ -x /usr/bin/online-upgrade ]; then
-				logger -t "online-upgrade" "✅ 自动重装成功"
-			else
-				logger -t "online-upgrade" "❌ 自动重装失败"
-			fi
-		else
-			logger -t "online-upgrade" "❌ 下载安装包失败"
-		fi
+ASSET_LIST=""
+if command -v jsonfilter >/dev/null 2>&1; then
+	ASSET_LIST=$(printf '%s' "$RELEASE_JSON" | jsonfilter -e '@.assets[*].browser_download_url' 2>/dev/null)
+fi
+if [ -z "$ASSET_LIST" ]; then
+	# jsonfilter 缺失（精简固件常见）时的等效提取，不能把「没有 jsonfilter」
+	# 当成「Release 里没有资产」而静默跳过。
+	ASSET_LIST=$(printf '%s' "$RELEASE_JSON" | grep -o '"browser_download_url":"[^"]*"' | sed 's/.*:"//; s/"$//')
+fi
+
+if [ -z "$ASSET_LIST" ]; then
+	err "Release 正文里没有可用的资产下载地址"
+	rm -f /root/.pkg-list.txt
+	exit $FAIL
+fi
+
+# 先按完整架构挑选（aarch64_cortex-a53 这类），挑到再退到家族前缀；
+# 否则家族前缀会把 cortex-a53 与 cortex-a72 混为一类，取第一个就有装错包的风险。
+ARCH_ERE=$(printf '%s' "$ARCH" | sed 's/[][\.^$*+?(){}|/]/\\&/g')
+CAND=""
+if [ -n "$ARCH_ERE" ]; then
+	CAND=$(printf '%s\n' "$ASSET_LIST" | grep -E "[^/]*${ARCH_ERE}[^/]*\\.${EXT}$")
+fi
+if [ -z "$CAND" ]; then
+	ASSET_RE="[^/]*${ARCH_FAMILY}[^/]*\\.${EXT}$"
+	CAND=$(printf '%s\n' "$ASSET_LIST" | grep -E "$ASSET_RE")
+fi
+if [ -z "$CAND" ]; then
+	TOTAL=$(printf '%s\n' "$ASSET_LIST" | grep -cE "\\.${EXT}$")
+	if [ "$TOTAL" -eq 1 ]; then
+		CAND=$(printf '%s\n' "$ASSET_LIST" | grep -E "\\.${EXT}$")
+		log "没有资产名声明架构 ${ARCH}，但该 Release 只有一个 .${EXT}，按唯一候选处理"
 	else
-		logger -t "online-upgrade" "⚠️ 无法获取最新 Release，跳过自动重装"
+		err "在 ${REPO} 的最新 Release 里找不到声明本机架构 ${ARCH} 的 .${EXT}（共 ${TOTAL} 个同格式资产）"
+		rm -f /root/.pkg-list.txt
+		exit $FAIL
 	fi
 fi
 
-# 3. 清理包列表（避免下次重复执行）
+CAND_N=$(printf '%s\n' "$CAND" | grep -c .)
+PKG_URL=$(printf '%s\n' "$CAND" | head -1)
+if [ "$CAND_N" -gt 1 ]; then
+	# 开机恢复阶段没有交互界面可让用户选择，明确记录全部候选再取第一个，
+	# 而不是悄悄取第一个。
+	log "有 ${CAND_N} 个资产同时匹配架构 ${ARCH}，按顺序取第一个: $(printf '%s' "$CAND" | tr '\n' ' ')"
+fi
+
+TMP="/tmp/$(basename "$PKG_URL")"
+DL_OK=0
+if [ -n "$PROXY" ]; then
+	curl -fsSL --connect-timeout 30 --max-time 600 -o "$TMP" "${PROXY}${PKG_URL}" 2>/dev/null
+	[ -s "$TMP" ] && DL_OK=1
+	if [ "$DL_OK" -eq 0 ]; then
+		log "镜像下载失败，回退直连: $PKG_URL"
+	fi
+fi
+if [ "$DL_OK" -eq 0 ]; then
+	curl -fsSL --connect-timeout 30 --max-time 600 -o "$TMP" "$PKG_URL" 2>/dev/null
+	[ -s "$TMP" ] && DL_OK=1
+fi
+
+if [ "$DL_OK" -eq 0 ]; then
+	err "下载安装包失败: $PKG_URL"
+	rm -f "$TMP" /root/.pkg-list.txt
+	exit $FAIL
+fi
+
+if [ "$PKG_MGR" = "apk" ]; then
+	out=$(apk add --allow-untrusted "$TMP" 2>&1)
+	rc=$?
+else
+	out=$(opkg install "$TMP" 2>&1)
+	rc=$?
+fi
+rm -f "$TMP"
 rm -f /root/.pkg-list.txt
 
-exit 0
+if [ $rc -ne 0 ]; then
+	err "安装失败($PKG_MGR): $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+	exit $FAIL
+fi
+if [ ! -x /usr/bin/online-upgrade ]; then
+	err "安装命令返回成功，但 /usr/bin/online-upgrade 仍不可执行"
+	exit $FAIL
+fi
+
+log "自动重装成功"
+exit $FAIL
