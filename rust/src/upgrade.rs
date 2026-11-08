@@ -308,7 +308,11 @@ pub async fn download_only() -> i32 {
         );
         status::set("verifying", 90, "复用已下载固件,正在重新校验...");
     } else {
-        cleanup_download();
+        // Do not wipe the firmware + sidecar here: load_parts() already rejects
+        // a sidecar whose url/etag/total/chunk grid no longer matches, and a
+        // surviving sidecar is exactly what makes a download interrupted in a
+        // previous process resumable. Wiping it forced every restart to begin
+        // from byte 0.
         status::set("downloading", 5, "正在下载固件...");
         let total_hint = asset.size;
         let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
@@ -343,7 +347,7 @@ pub async fn download_only() -> i32 {
             Err(e) => {
                 status::set_error("failed", 100, "固件下载失败", &e);
                 logline!("[download] failed: {e}");
-                cleanup_download();
+                // keep whatever the downloader judged resumable
                 return 1;
             }
         }
@@ -457,7 +461,8 @@ pub async fn run(force: bool) -> i32 {
         logline!("[upgrade] 复用上一轮已校验的固件副本,跳过传输({})", name);
         status::set("downloaded", 90, "复用已下载固件,正在重新校验...");
     } else {
-        cleanup_download();
+        // See download_only(): the sidecar is what enables resume across
+        // processes, and load_parts() already validates it.
         status::set("downloading", 5, "正在下载固件...");
         let total_hint = size_hint;
         let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
@@ -490,7 +495,7 @@ pub async fn run(force: bool) -> i32 {
             Err(e) => {
                 status::set_error("failed", 100, "固件下载失败", &e);
                 logline!("[upgrade] download failed: {e}");
-                cleanup_download();
+                // keep whatever the downloader judged resumable
                 return 1;
             }
         }
