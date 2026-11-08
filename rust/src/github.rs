@@ -322,6 +322,25 @@ fn decide(
     }
 }
 
+/// Parse the `latest@<regex>` channel filter.
+///
+/// An invalid regex must be a configuration error, never "no filter": silently
+/// dropping it would make `release_candidates` look at every recent release
+/// and possibly pick one from an unintended channel. A typo in the channel
+/// selector is exactly the kind of silent degradation this plugin refuses to
+/// do elsewhere, so it fails loudly here as well.
+fn parse_tag_filter(tag: &str) -> Result<Option<Regex>, String> {
+    match tag.strip_prefix("latest@") {
+        Some(p) => match Regex::new(p) {
+            Ok(re) => Ok(Some(re)),
+            Err(e) => Err(format!(
+                "标签过滤正则无效 [{p}]: {e}（请修正「Release 标签追踪策略」或改回 latest）"
+            )),
+        },
+        None => Ok(None),
+    }
+}
+
 /// Full check flow. Returns the result object (also written into the status file
 /// by the caller).
 pub async fn check(client: &reqwest::Client) -> Value {
@@ -332,13 +351,10 @@ pub async fn check(client: &reqwest::Client) -> Value {
     // `latest` tracks the newest release; `latest@<regex>` restricts candidates
     // to releases whose tag name matches the regex (e.g. `latest@^自用`).
     let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
-    let tag_filter = cfg
-        .tag
-        .strip_prefix("latest@")
-        .map(|p| Regex::new(p))
-        .transpose()
-        .ok()
-        .flatten();
+    let tag_filter = match parse_tag_filter(&cfg.tag) {
+        Ok(f) => f,
+        Err(e) => return check_error(&cfg, &e),
+    };
     let api = if use_latest {
         format!("https://api.github.com/repos/{}/releases?per_page=30", cfg.repo)
     } else {
@@ -686,13 +702,15 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
         ]);
     }
     let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
-    let tag_filter = cfg
-        .tag
-        .strip_prefix("latest@")
-        .map(|p| Regex::new(p))
-        .transpose()
-        .ok()
-        .flatten();
+    let tag_filter = match parse_tag_filter(&cfg.tag) {
+        Ok(f) => f,
+        Err(e) => {
+            return Value::Obj(vec![
+                ("ok".into(), Value::Bool(false)),
+                ("error".into(), Value::str(&e)),
+            ])
+        }
+    };
     let api = if use_latest {
         format!("https://api.github.com/repos/{}/releases?per_page=30", cfg.repo)
     } else {
@@ -895,6 +913,16 @@ mod tests {
             Some("24.10.0")
         );
         assert!(crate::version::pick("no-version-here.img.gz").is_none());
+    }
+
+    #[test]
+    fn tag_filter_rejects_invalid_regex() {
+        // 不配置过滤时保持「不过滤」语义
+        assert!(parse_tag_filter("latest").unwrap().is_none());
+        assert!(parse_tag_filter("latest@^自用").unwrap().is_some());
+        // 非法正则必须是错误，不能被吞成 None 后退化为「全通道最新」
+        let err = parse_tag_filter("latest@^(自用").unwrap_err();
+        assert!(err.contains("标签过滤正则无效"));
     }
 
     #[test]
