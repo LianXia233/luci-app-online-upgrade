@@ -152,7 +152,11 @@ const methods = {
 	},
 
 	start_upgrade: {
-		args: { force: 'boolean' },
+		// rpcd derives the blobmsg policy from the *type of this value*, not from
+		// a type name: the string 'boolean' falls through to BLOBMSG_TYPE_STRING,
+		// so a JSON true/false argument is rejected with UBUS_STATUS_INVALID_ARGUMENT.
+		// A literal false yields BLOBMSG_TYPE_INT8 (= BLOBMSG_TYPE_BOOL).
+		args: { force: false },
 		call: function(request) {
 			let force = request.args?.force === true;
 			let args = force ? ['upgrade', '--force'] : ['upgrade'];
@@ -263,8 +267,9 @@ const methods = {
 	},
 
 	set_config: {
-		// NB: this rpcd-ucode build rejects { type: 'int' } object specs —
-		// default-value declarations (0/'' /false) make args optional instead.
+		// Type hints are literal default values, never type-name strings or
+		// { type: '...' } specs: 0 → int32, '' → string, {} → table. Arguments
+		// absent from the request stay absent, so every key here is optional.
 		args: {
 			repo: '',
 			tag: '',

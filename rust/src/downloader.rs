@@ -65,6 +65,9 @@ struct Probe {
 async fn probe(client: &Client, url: &str) -> Result<Probe, String> {
     let resp = client
         .get(url)
+        // Required by api.github.com/releases/assets/<id>: without it the API
+        // answers with JSON metadata instead of redirecting to the file.
+        .header("Accept", "application/octet-stream")
         .header("Range", "bytes=0-0")
         .timeout(Duration::from_secs(30))
         .send()
@@ -386,6 +389,7 @@ async fn fetch_range(
 ) -> Result<(), String> {
     let resp = client
         .get(url)
+        .header("Accept", "application/octet-stream")
         .header("Range", format!("bytes={start}-{end}"))
         .send()
         .await
@@ -432,6 +436,7 @@ async fn single_stream(
 ) -> Result<Downloaded, String> {
     let resp = client
         .get(url)
+        .header("Accept", "application/octet-stream")
         .timeout(Duration::from_secs(3600))
         .send()
         .await
