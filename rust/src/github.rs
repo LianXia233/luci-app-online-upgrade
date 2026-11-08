@@ -245,6 +245,13 @@ pub async fn check(client: &reqwest::Client) -> Value {
         .and_then(|u| u.as_str())
         .unwrap_or("")
         .to_string();
+    // API asset endpoint: redirects to a signed release-assets CDN URL, so it
+    // still serves the file when github.com's web frontend is unavailable.
+    let api_url = asset
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let fw_version = extract_fw_version(&file_name);
     let (cur_id, cur_release, cur_revision) = read_distrib();
@@ -314,6 +321,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
     latest.push(("updated_local".into(), Value::str(&utc_to_local(&updated))));
     latest.push(("version".into(), Value::str(&fw_version)));
     latest.push(("url".into(), Value::str(&url)));
+    latest.push(("api_url".into(), Value::str(&api_url)));
     latest.push(("sha256".into(), Value::str(&sha256_hash)));
 
     let compat = crate::compat::evaluate_asset(&device, &file_name);

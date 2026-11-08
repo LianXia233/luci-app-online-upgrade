@@ -62,6 +62,7 @@
 - **动态切片与 Work-Stealing**：自动探测 HTTP Range 支持，按 4MB 动态切片并分派给多达 6 个 Tokio 异步 Worker 并发拉取，快连接自动偷取慢连接分块，拉满带宽潜能。
 - **断点续传与故障恢复**：内置 `.parts.json` 侧车机制，意外断网无缝续传；支持块级独立重试与 30 秒停滞看门狗（Stall Watchdog），遇不支持分段的目标自动平滑降级单流传输。
 - **内置常用镜像代理**：预置快捷镜像节点（`gh.acg2.mom`、`ghfast.top`、`moeyy.xyz` 等），一键切换 GitHub 加速或直连模式。
+- **下载线路自动回退**：优先使用所选镜像/直连的 Release 下载地址；当 `github.com` 网页前端返回 5xx 或超时时，自动回退到 GitHub API 资产直链（`api.github.com/repos/<owner>/<repo>/releases/assets/<id>` → 签名 CDN），网页前端故障期间仍能完成升级。
 
 ### 🛡️ 6. 固件哈希校验与配置容灾安全升级
 - **固件 SHA-256 完整性校验**：自动探查 Release 产物中的校验单（`sha256sums` / `sha256sums.txt` / `<firmware>.sha256` 等）或 Release 页面说明提取 SHA256 哈希值进行比对校验；亦支持在高级配置中自定义期望哈希。下载后自动核验，若哈希不符立即终止刷写并清理固件，确保绝不刷入损坏镜像。
@@ -421,6 +422,11 @@ ubus call luci.online-upgrade probe_assets '{"repo":"owner/repo","tag":"latest"}
 <summary><b>Q3: 国内网络访问 GitHub Releases API 偶尔超时怎么办？</b></summary>
 1. 可以在插件的「第 3 步」选用预置的国内反代加速节点（如 <code>gh.acg2.mom</code>、<code>ghfast.top</code> 等）；<br>
 2. 如果提示 API 限速（403 Rate Limit），可在「高级配置」中填入您自己的 GitHub Token（仅需 <code>public_repo</code> 只读权限）。
+</details>
+
+<details>
+<summary><b>Q4: 能检查到新版本，但一点「立即升级」就下载失败（如 HTTP 504）？</b></summary>
+这通常是 <code>github.com</code> 网页前端自身故障——Release 下载地址就由它提供。插件会先用你选择的镜像/直连地址，失败后自动回退到 GitHub API 资产直链（走 <code>release-assets.githubusercontent.com</code> 签名 CDN），两条线路都失败才报错。若回退也失败，说明 GitHub API 同时不可用，稍后重试即可。可先在 SSH 里执行 <code>online-upgrade download</code> 单独验证下载链路——它只下载与校验，<b>不会刷机</b>。
 </details>
 
 ---

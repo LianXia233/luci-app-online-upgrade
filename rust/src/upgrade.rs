@@ -36,11 +36,45 @@ fn full_url(cfg: &Cfg, url: &str) -> String {
 
 struct Asset {
     url: String,
+    api_url: String,
     updated: String,
     version: String,
     name: String,
     size: u64,
     sha256: String,
+}
+
+/// Try the configured proxy route first, then GitHub's API asset endpoint.
+/// `browser_download_url` is served by github.com's web frontend, which can
+/// return 504 while the API + release-assets CDN path still serves the file.
+async fn fetch_firmware(
+    client: &reqwest::Client,
+    asset: &Asset,
+    out: &str,
+    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
+) -> Result<downloader::Downloaded, String> {
+    let mut candidates = vec![full_url(&github::load_cfg(), &asset.url)];
+    if !asset.api_url.is_empty() {
+        candidates.push(asset.api_url.clone());
+    }
+    let mut last = String::from("没有可用的下载地址");
+    for (i, url) in candidates.iter().enumerate() {
+        if i > 0 {
+            logline!("[download] 上一线路失败({last}),回退到 GitHub API 资产直链");
+            // the sidecar is keyed by URL, but a half-written file from another
+            // route must not be mistaken for resumable progress
+            let _ = std::fs::remove_file(out);
+            let _ = std::fs::remove_file(format!("{out}.parts.json"));
+        }
+        // byte-slicing can panic on a non-ASCII URL (e.g. a custom proxy host)
+        let shown = url.get(..url.len().min(90)).unwrap_or(url);
+        logline!("[download] 线路{}: {}", i + 1, shown);
+        match downloader::download(client, url, out, report.clone()).await {
+            Ok(d) => return Ok(d),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
@@ -64,6 +98,11 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
     }
     Ok(Asset {
         url,
+        api_url: latest
+            .get("api_url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string(),
         updated: latest
             .get("updated")
             .and_then(|u| u.as_str())
@@ -140,7 +179,6 @@ pub async fn download_only() -> i32 {
             return 1;
         }
     };
-    let download_url = full_url(&github::load_cfg(), &asset.url);
 
     let skip = std::fs::metadata(TMP_FIRMWARE).map(|m| m.len()).unwrap_or(0) > 0
         && std::fs::read_to_string(TMP_FIRMWARE_TS)
@@ -153,7 +191,6 @@ pub async fn download_only() -> i32 {
     }
 
     status::set("downloading", 5, "正在下载固件...");
-    logline!("[download] {}", &download_url[..download_url.len().min(90)]);
     let total_hint = asset.size;
     let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
         let total_eff = if total > 0 { total } else { total_hint };
@@ -172,7 +209,7 @@ pub async fn download_only() -> i32 {
             ),
         );
     });
-    match downloader::download(&client, &download_url, TMP_FIRMWARE, report).await {
+    match fetch_firmware(&client, &asset, TMP_FIRMWARE, report).await {
         Ok(d) => {
             logline!(
                 "[download] 完成 {} (分段 {} 并发, 续传 {} 块)",
@@ -214,12 +251,10 @@ pub async fn run(force: bool) -> i32 {
             return 1;
         }
     };
-    let url = asset.url.clone();
     let updated = asset.updated.clone();
     let fw_version = asset.version.clone();
     let name = asset.name.clone();
     let size_hint = asset.size;
-    let download_url = full_url(&github::load_cfg(), &url);
 
     let device = crate::compat::DeviceProfile::current();
     let compat = crate::compat::evaluate_asset(&device, &name);
@@ -252,7 +287,6 @@ pub async fn run(force: bool) -> i32 {
         let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
         let _ = std::fs::remove_file(format!("{TMP_FIRMWARE}.parts.json"));
         status::set("downloading", 5, "正在下载固件...");
-        logline!("[upgrade] 下载: {}", &download_url[..download_url.len().min(90)]);
         let total_hint = size_hint;
         let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
             let total_eff = if total > 0 { total } else { total_hint };
@@ -271,7 +305,7 @@ pub async fn run(force: bool) -> i32 {
                 ),
             );
         });
-        match downloader::download(&client, &download_url, TMP_FIRMWARE, report).await {
+        match fetch_firmware(&client, &asset, TMP_FIRMWARE, report).await {
             Ok(d) => {
                 logline!(
                     "[upgrade] 下载完成 {} (分段 {} 并发, 续传 {} 块)",
