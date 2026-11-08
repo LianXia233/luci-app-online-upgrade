@@ -138,14 +138,44 @@ function valid_pattern(p) {
 		!bad_field(p);
 }
 
-function valid_optional_url(u) {
-	return type(u) == 'string' && length(u) < 512 &&
-		(length(u) == 0 || match(u, /^https?:\/\/[A-Za-z0-9_.:\/-]*$/) != null);
+// 镜像前缀归一化：后端会把 proxy 直接拼在资产地址前面，若用户填
+// "https://host" 而没有结尾斜杠，拼接结果会变成 "https://hosthttps://..."。
+// 返回 '' 表示直连、成功时返回归一化后的前缀、非法时返回 null。
+// ucode 正则限制：不支持非捕获分组、不支持 \s、不支持区间量词。
+function normalize_proxy(u) {
+	if (type(u) != 'string' || length(u) >= 512)
+		return null;
+	let s = replace(trim('' + u), /\/+$/, '');
+	if (length(s) == 0)
+		return '';
+	let has_path = match(s, /^https?:\/\/[A-Za-z0-9_.:-]+\/[A-Za-z0-9_.:~%\/-]*$/) != null;
+	let host_only = match(s, /^https?:\/\/[A-Za-z0-9_.:-]+$/) != null;
+	if (!has_path && !host_only)
+		return null;
+	return s + '/';
+}
+
+// 快速失败：权威互斥由 Rust 二进制里的锁文件负责，但它以 detached 方式运行，
+// 第二次点击若只交给后端就会先返回 ok，然后静默什么都不做。
+// 返回正在执行任务的 pid 字符串，空闲或锁文件陈旧时返回 ''。
+function busy_pid() {
+	let content = readfile('/tmp/online-upgrade.lock');
+	if (!content)
+		return '';
+	let s = trim('' + content);
+	if (match(s, /^[0-9]+$/) == null)
+		return '';
+	if (length(s) == 0 || !readfile('/proc/' + s + '/cmdline'))
+		return ''; // 崩溃残留的锁文件，后端会自行回收
+	return s;
 }
 
 const methods = {
 	check: {
 		call: function() {
+			let pid = busy_pid();
+			if (length(pid) > 0)
+				return { ok: false, error: '已有任务正在执行(pid ' + pid + ')，请等待完成后再试' };
 			run_detached(BIN, ['check']);
 			return { ok: true };
 		}
@@ -158,6 +188,9 @@ const methods = {
 		// A literal false yields BLOBMSG_TYPE_INT8 (= BLOBMSG_TYPE_BOOL).
 		args: { force: false },
 		call: function(request) {
+			let pid = busy_pid();
+			if (length(pid) > 0)
+				return { ok: false, error: '已有升级任务正在执行(pid ' + pid + ')，请等待完成后再试' };
 			let force = request.args?.force === true;
 			let args = force ? ['upgrade', '--force'] : ['upgrade'];
 			run_detached(BIN, args);
@@ -330,16 +363,19 @@ const methods = {
 				ctx.set('online-upgrade', 'settings', 'tag', a.tag);
 				touched++;
 			}
-			if (type(a.pattern) == 'string' && length(a.pattern) > 0) {
-				if (!valid_pattern(a.pattern))
+			// 空字符串表示显式清空匹配规则（此时后端只接受结构化比对判定为
+			// 兼容的资产，不再按正则选取）
+			if (type(a.pattern) == 'string') {
+				if (length(a.pattern) > 0 && !valid_pattern(a.pattern))
 					return { ok: false, error: '固件匹配模式不合法' };
 				ctx.set('online-upgrade', 'settings', 'firmware_pattern', a.pattern);
 				touched++;
 			}
 			if (type(a.proxy) == 'string') {
-				if (!valid_optional_url(a.proxy))
-					return { ok: false, error: '代理地址不合法' };
-				ctx.set('online-upgrade', 'settings', 'proxy', a.proxy);
+				let p = normalize_proxy(a.proxy);
+				if (p == null)
+					return { ok: false, error: '代理地址不合法(需 http(s)://主机[:端口][/路径])' };
+				ctx.set('online-upgrade', 'settings', 'proxy', p);
 				touched++;
 			}
 			if (type(a.github_token) == 'string') {

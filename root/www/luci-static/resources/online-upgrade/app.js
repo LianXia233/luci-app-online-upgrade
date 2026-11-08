@@ -103,115 +103,231 @@
 		}
 	}
 
+	/* ---------------- detached run freshness ---------------- */
+
+	// rpcd 以 detached 方式启动 check/upgrade，点击后第一次轮询读到的往往还是
+	// 上一次运行留下的终态（failed / check_done）。用「写入者 pid」判断新旧：
+	// 新进程必然会写入不同的 pid，而浏览器与路由器的时钟可能不一致，不能用
+	// 客户端时间戳比较。pid 缺失（旧版本写入的状态文件）时退化为时间戳比较。
+	var pollBaseline = { pid: null, ts: 0 };
+	var pollFilter = false;
+
+	function snapshotStatus() {
+		return ubus('get_status').then(function (st) {
+			pollBaseline = {
+				pid: (st && st.pid != null) ? st.pid : null,
+				ts: Number((st && st.ts) || 0)
+			};
+		}).catch(function () {
+			pollBaseline = { pid: null, ts: 0 };
+		});
+	}
+
+	function isFreshRun(st) {
+		if (!st) return false;
+		if (st.pid != null && pollBaseline.pid != null)
+			return st.pid !== pollBaseline.pid;
+		return Number(st.ts || 0) > pollBaseline.ts;
+	}
+
 	/* ---------------- status card ---------------- */
 
 	var lastCheck = null;
+
+	// 判定矩阵的每一档都给出用户可读文案，界面上既能看出命中哪条规则，
+	// 也能看出是哪一步没通过（机型未匹配 / 架构未声明 / 架构冲突）。
+	var ARCH_CHECK_TEXT = {
+		ok: '架构一致',
+		conflict: '架构冲突',
+		undeclared: '资产未声明架构',
+		unknown: '本机架构未知'
+	};
+	var MODEL_CHECK_TEXT = {
+		exact: '机型匹配',
+		partial: '机型部分匹配',
+		rule: '命中配置规则',
+		unmatched: '未匹配机型'
+	};
+	var RELATION_TEXT = {
+		newer: '目标版本更高',
+		same: '同版本',
+		older: '目标版本更低',
+		unknown: '版本无法比较'
+	};
+	var HASH_SOURCE_TEXT = {
+		expected_sha256: '配置中的自定义校验值',
+		release_asset: 'Release 校验清单',
+		release_body: 'Release 说明正文',
+		none: '未提供校验依据'
+	};
+
+	function compatLevel(ci) {
+		if (!ci) return 'compatible';
+		return ci.level || (ci.can_upgrade ? 'compatible' : 'incompatible');
+	}
+
+	function renderCompatDetail(ci, res) {
+		var html = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
+		if (ci) {
+			var lv = compatLevel(ci);
+			var chipCls = lv === 'compatible' ? 'ou-chip-ok'
+				: (lv === 'warning' || lv === 'unknown') ? 'ou-chip-warn' : 'ou-chip-err';
+			html += '<span class="ou-tag-chip ' + chipCls + '" title="' + esc(ci.reason || '') + '">' +
+				esc(ci.badge || '适配评估') + '</span>';
+			var checks = ci.checks || {};
+			html += '<span class="ou-tag-chip" title="资产架构 ' + esc(ci.asset_arch || '未声明') +
+				' / 本机架构 ' + esc(ci.device_arch || '未知') + '">架构: ' +
+				esc(ARCH_CHECK_TEXT[checks.arch] || checks.arch || '未比对') + '</span>';
+			html += '<span class="ou-tag-chip" title="' + esc(ci.reason || '') + '">机型: ' +
+				esc(MODEL_CHECK_TEXT[checks.model] || checks.model || '未比对') + '</span>';
+		html += '<span class="ou-tag-chip" title="本机标识 ' + esc(ci.detected_model || '') +
+				' / 架构 ' + esc(ci.detected_arch || '') + '">本机: ' +
+				esc(ci.detected_model || '未知') + ' / ' + esc(ci.detected_arch || '未知') + '</span>';
+		}
+		if (ci && ci.matched_rule) {
+			html += '<span class="ou-tag-chip ou-chip-ok" title="' + esc(ci.matched_rule) + '">规则: ' +
+				esc(ci.matched_rule) + '</span>';
+		}
+		var ver = res.version || null;
+		if (ver && ver.relation) {
+			html += '<span class="ou-tag-chip">' + esc(RELATION_TEXT[ver.relation] || ver.relation) + '</span>';
+		}
+		if (res.latest && res.latest.sha256) {
+			html += '<span class="ou-tag-chip" title="完整 SHA256: ' + esc(res.latest.sha256) + '">SHA256: ' +
+				esc(res.latest.sha256.substring(0, 10)) + '...</span>';
+		}
+		if (res.release_url) {
+			html += '<a href="' + esc(res.release_url) + '" target="_blank" rel="noopener" class="ou-ext-link">' +
+				'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-ext-svg"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+				'<span>查看 Release 发布页</span></a>';
+		}
+		if (ci && ci.basis && ci.basis.length) {
+			html += '<div class="ou-basis-list">';
+			ci.basis.forEach(function (b) {
+				html += '<div class="ou-basis-item">' + esc(b) + '</div>';
+			});
+			html += '</div>';
+		}
+		return html;
+	}
 
 	function renderCheckResult(res) {
 		lastCheck = res;
 		var badge = $('status-badge');
 		var box = $('check-result-box');
 		if (!res || res.ok !== true) {
-			setText('check-result', '❌ ' + (res && res.error ? res.error : '检测失败'));
-			hint('check-result', (res && res.error ? res.error : '检测失败'), 'err');
+			var errText = (res && res.error) ? res.error : '检测失败';
+			hint('check-result', errText, 'err');
 			if (box) box.className = 'ou-notice-box err';
 			if (badge) {
 				badge.className = 'ou-status-pill err';
 				badge.innerHTML = '<span class="ou-dot err"></span> 检测异常';
 			}
-			setText('check-reason', (res && res.error) ? res.error : '检测异常');
-			$('btn-force').style.display = '';
-			$('btn-upgrade').style.display = 'none';
+			setText('check-reason', errText);
+			if ($('btn-force')) $('btn-force').style.display = '';
+			if ($('btn-upgrade')) $('btn-upgrade').style.display = 'none';
 			return;
 		}
-		setText('latest-name', res.latest.name);
-		var verDisplay = res.latest.version ? ('v' + res.latest.version) : (res.resolved_tag || '最新构建');
-		setText('new-ver', verDisplay);
-		setText('latest-size', res.latest.size_human);
-		setText('latest-time', res.latest.updated_local);
-		if (res.latest.sha256) {
-			var h = res.latest.sha256;
-			var shortH = h.substring(0, 8) + '...' + h.substring(h.length - 8);
-			setText('latest-hash-status', '🔒 SHA256: ' + shortH);
-			if ($('latest-hash-status')) $('latest-hash-status').title = '完整 SHA256: ' + h;
-		} else {
-			setText('latest-hash-status', '🛡️ SHA256 完整性自动校验');
-			if ($('latest-hash-status')) $('latest-hash-status').title = '下载后自动执行完整性与兼容性哈希校验';
+
+		var latest = res.latest || {};
+		setText('latest-name', latest.name);
+		setText('new-ver', latest.version || res.resolved_tag || '未解析版本');
+		setText('latest-size', latest.size_human);
+		setText('latest-time', latest.updated_local);
+
+		var hashStatus = $('latest-hash-status');
+		if (hashStatus) {
+			if (latest.sha256) {
+				var shortH = latest.sha256.substring(0, 8) + '...' +
+					latest.sha256.substring(latest.sha256.length - 8);
+					hashStatus.textContent = 'SHA256: ' + shortH;
+					hashStatus.title = '完整 SHA256: ' + latest.sha256 + ' (来源: ' +
+						(HASH_SOURCE_TEXT[latest.sha256_source] || latest.sha256_source || '未知') + ')';
+			} else {
+				// 上游既没有校验单也没有正文哈希时，下载后只能记录本地哈希，
+				// 不能对外宣称「已校验」，否则等于给出虚假的安全承诺。
+				hashStatus.textContent = '无校验依据，仅记录本地哈希';
+				hashStatus.title = '上游未提供校验清单或期望哈希，下载后只记录本地 SHA256，无法比对校验';
+			}
 		}
 
-		// Update compatibility badge in Card 2
+		var ci = res.compatibility || null;
+		var lv = compatLevel(ci);
 		var compatBadgeEl = $('latest-compat-badge');
-		var isCompatible = true;
-		var compatInfo = res.compatibility;
-		if (compatInfo && compatBadgeEl) {
-			var cLevel = compatInfo.level || (compatInfo.can_upgrade ? 'compatible' : 'incompatible');
-			var cls = cLevel === 'compatible' ? 'ok' : cLevel === 'warning' ? 'warn' : 'err';
-			var icon = cLevel === 'compatible' ? '🟢' : cLevel === 'warning' ? '🟡' : '🔴';
-			compatBadgeEl.innerHTML = '<span class="ou-compat-chip ' + cls + '">' + icon + ' ' + esc(compatInfo.badge || '适配评估') + '</span>';
-			compatBadgeEl.title = compatInfo.reason || '';
-			isCompatible = compatInfo.can_upgrade !== false;
-		} else if (compatBadgeEl) {
-			compatBadgeEl.textContent = '目标 Release 适配产物';
+		if (compatBadgeEl) {
+			if (ci) {
+				var cls = lv === 'compatible' ? 'ok'
+					: (lv === 'warning' || lv === 'unknown') ? 'warn' : 'err';
+				compatBadgeEl.innerHTML = '<span class="ou-compat-chip ' + cls + '">' +
+					esc(ci.badge || '适配评估') + '</span>';
+				compatBadgeEl.title = ci.reason || '';
+			} else {
+				compatBadgeEl.textContent = '未经适配判定';
+			}
 		}
 
-		// Render Detection Reason with full details (Reason, Compatibility chip, Resolved Tag, and direct GitHub Link)
 		var reasonEl = $('check-reason');
-		if (reasonEl) {
-			var reasonHtml = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
-			if (compatInfo) {
-				var cLevel = compatInfo.level || (compatInfo.can_upgrade ? 'compatible' : 'incompatible');
-				var chipCls = cLevel === 'compatible' ? 'ou-chip-ok' : cLevel === 'warning' ? 'ou-chip-warn' : 'ou-chip-err';
-				var chipIcon = cLevel === 'compatible' ? '✅' : cLevel === 'warning' ? '⚠️' : '❌';
-				reasonHtml += '<span class="ou-tag-chip ' + chipCls + '" title="' + esc(compatInfo.reason) + '">' + chipIcon + ' ' + esc(compatInfo.badge) + '</span>';
-			}
-			if (res.resolved_tag) {
-				reasonHtml += '<span class="ou-tag-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-chip-svg"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>目标 Release: ' + esc(res.resolved_tag) + '</span>';
-			}
-			if (res.latest.sha256) {
-				reasonHtml += '<span class="ou-tag-chip" title="SHA256: ' + esc(res.latest.sha256) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-chip-svg"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>SHA256: ' + esc(res.latest.sha256.substring(0, 10)) + '...</span>';
-			}
-			if (res.release_url) {
-				reasonHtml += '<a href="' + esc(res.release_url) + '" target="_blank" rel="noopener" class="ou-ext-link">' +
-					'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-ext-svg"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
-					'<span>查看 Release 发布页 ↗</span></a>';
-			}
-			reasonEl.innerHTML = reasonHtml;
-		}
+		if (reasonEl) reasonEl.innerHTML = renderCompatDetail(ci, res);
 
 		var hasUpdate = res.has_update === true;
-		if (!isCompatible) {
-			// Incompatible firmware: Block upgrade!
-			var conflictMsg = (compatInfo && compatInfo.reason) ? compatInfo.reason : '检测到固件与当前设备硬件架构或型号不匹配，严禁刷写！';
-			setText('check-result', '❌ ' + conflictMsg);
-			hint('check-result', '❌ ' + conflictMsg, 'err');
-			if (box) box.className = 'ou-notice-box err';
+		var msg;
+		var lvl;
+
+		if (lv === 'incompatible') {
+			msg = '固件与本机不匹配，已阻止升级: ' + (ci.reason || '');
+			lvl = 'err';
 			if (badge) {
 				badge.className = 'ou-status-pill err';
 				badge.innerHTML = '<span class="ou-dot err"></span> 固件不匹配';
 			}
-			$('btn-upgrade').style.display = 'none';
-			$('btn-force').style.display = '';
-			return;
-		}
-
-		setText('check-result', hasUpdate ? '🎉 固件兼容，发现新版本可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason));
-		hint('check-result', hasUpdate ? '🎉 固件兼容，发现新版本可用，请点击「立即升级」开始更新！' : ('✓ ' + res.reason), hasUpdate ? 'ok' : '');
-		if (box) box.className = 'ou-notice-box' + (hasUpdate ? ' ok' : '');
-		if (badge) {
-			if (hasUpdate) {
+		} else if (lv === 'warning') {
+			msg = '需人工核对后才可升级: ' + (ci.reason || '') +
+				'。确认无误后可用「强制更新」继续。';
+			lvl = 'warn';
+			if (badge) {
+				badge.className = 'ou-status-pill update';
+				badge.innerHTML = '<span class="ou-dot update"></span> 需人工核对';
+			}
+		} else if (lv === 'unknown') {
+			msg = '无法确认是否适配本机，未自动判定为可升级: ' + (ci.reason || '') +
+				'。如确认该文件适用于本机，可用「强制更新」并显式确认。';
+			lvl = 'warn';
+			if (badge) {
+				badge.className = 'ou-status-pill update';
+				badge.innerHTML = '<span class="ou-dot update"></span> 无法确认适配';
+			}
+		} else if (hasUpdate) {
+			msg = '固件兼容，发现新版本可用，可点击「立即升级」开始更新。';
+			lvl = 'ok';
+			if (badge) {
 				badge.className = 'ou-status-pill update';
 				badge.innerHTML = '<span class="ou-dot update"></span> 有新版本';
-			} else {
+			}
+		} else {
+			msg = res.reason || '已是最新版本';
+			lvl = 'ok';
+			if (badge) {
 				badge.className = 'ou-status-pill ok';
 				badge.innerHTML = '<span class="ou-dot ok"></span> 已是最新';
 			}
 		}
-		$('btn-upgrade').style.display = hasUpdate ? '' : 'none';
-		$('btn-force').style.display = '';
+
+		hint('check-result', msg, lvl);
+		if (box) box.className = 'ou-notice-box' + (lvl === 'ok' ? ' ok' : (lvl === 'err' ? ' err' : ''));
+		if ($('btn-upgrade'))
+			$('btn-upgrade').style.display = (lv === 'compatible' && hasUpdate) ? '' : 'none';
+		if ($('btn-force')) {
+			$('btn-force').style.display = '';
+			$('btn-force').title = lv === 'compatible'
+				? '即使已是最新版本也重新下载刷写'
+				: '跳过适配判定与版本方向检查，强制下载并刷写';
+		}
 	}
 
 	function runCheck() {
 		setBusy('btn-check', true, '检查中...');
+		setBusy('btn-upgrade', true);
+		setBusy('btn-force', true);
 		hint('check-result', '正在连接云端检查固件更新...');
 		var box = $('check-result-box');
 		if (box) box.className = 'ou-notice-box';
@@ -221,28 +337,46 @@
 			badge.innerHTML = '<span class="ou-dot update"></span> 检测中';
 		}
 		stopPoll();
-		ubus('check').then(function () {
+		var skipped = 0;
+
+		function finishCheck() {
+			stopPoll();
+			refreshLog();
+			setBusy('btn-check', false, '检查更新');
+			setBusy('btn-upgrade', false, '立即升级');
+			setBusy('btn-force', false, '强制更新');
+		}
+
+		snapshotStatus().then(function () {
+			pollFilter = true;
+			return ubus('check');
+		}).then(function () {
 			function checkTick() {
+				if (skipped > 20) {
+					hint('check-result', '未读取到本次检测的状态，可能有另一个操作正在进行，详见运行日志', 'err');
+					finishCheck();
+					return;
+				}
 				ubus('get_status').then(function (st) {
+					if (pollFilter) {
+						if (!isFreshRun(st)) { skipped++; return; }
+						pollFilter = false;
+					}
 					if (st.stage === 'check_done' && st.result) {
-						stopPoll();
 						renderCheckResult(st.result);
-						refreshLog();
-						setBusy('btn-check', false, '检查更新');
+						finishCheck();
 					} else if (st.stage === 'check_failed' || st.stage === 'failed') {
-						stopPoll();
 						renderCheckResult({ ok: false, error: st.error || st.msg || '检测失败' });
-						refreshLog();
-						setBusy('btn-check', false, '检查更新');
+						finishCheck();
 					}
 				}).catch(function () { /* transient rpc errors during poll: ignore */ });
 			}
 			checkTick();
 			pollTimer = setInterval(checkTick, 1000);
 		}).catch(function (e) {
-			hint('check-result', '❌ ' + e.message, 'err');
+			hint('check-result', '检测请求失败: ' + e.message, 'err');
 			if (box) box.className = 'ou-notice-box err';
-			setBusy('btn-check', false, '检查更新');
+			finishCheck();
 		});
 	}
 
@@ -316,15 +450,26 @@
 		$('card-progress').style.display = '';
 		$('progress-bar').style.width = (st.pct || 0) + '%';
 		$('progress-pct').textContent = (st.pct || 0) + '%';
-		$('progress-text').textContent = (st.error ? ('❌ ' + st.error) : (st.msg || STAGE_TEXT[st.stage] || st.stage));
+		$('progress-text').textContent = (st.error ? (' ' + st.error) : (st.msg || STAGE_TEXT[st.stage] || st.stage));
 		updatePipeline(st.stage);
 	}
 
 	function pollUpgrade() {
 		stopPoll();
+		var skipped = 0;
 		function tick() {
 			Promise.all([ubus('get_status'), ubus('get_log')]).then(function (rs) {
 				var st = rs[0], lg = rs[1];
+				if (pollFilter) {
+					if (!isFreshRun(st)) {
+						if (++skipped > 20) {
+							stopPoll();
+							hint('check-result', '未读取到本次任务的状态，可能有另一个操作正在进行，详见运行日志', 'err');
+						}
+						return;
+					}
+					pollFilter = false;
+				}
 				if (lg && lg.log) {
 					var lv = $('log-view');
 					var text = lg.log;
@@ -340,7 +485,7 @@
 					setBusy('btn-check', false, '检查更新');
 					$('btn-force').style.display = '';
 					$('card-progress').style.display = 'none';
-					hint('check-result', '❌ 升级失败: ' + (st.error || '未知错误'), 'err');
+					hint('check-result', '升级失败: ' + (st.error || '未知错误'), 'err');
 				}
 			}).catch(function () { /* keep polling; device may reboot mid-poll */ });
 		}
@@ -349,18 +494,34 @@
 	}
 
 	function startUpgrade(isForce) {
+		var ci = lastCheck && lastCheck.compatibility;
+		var lv = compatLevel(ci);
+		if (!isForce && lv !== 'compatible') {
+			hint('check-result', '当前目标固件未通过适配判定，需用「强制更新」并显式确认后才能继续', 'warn');
+			return;
+		}
 		var msg = isForce
-			? '确定强制更新固件?\n\n即使已是最新版本也会重新下载并刷写。\n配置将自动备份并在刷写后恢复。\n请勿断电!'
-			: '确定执行在线固件升级?\n\n系统将自动:备份配置 → 多线程下载固件 → 刷写(自动恢复配置) → 重启。\n请勿断电!';
+			? '确定强制更新固件?\n\n强制模式会跳过适配判定与版本方向检查(目标固件可能无法确认是否适配本机,或版本低于当前)。\n系统仍会备份配置、下载并校验固件后再刷写。\n请勿断电!'
+			: '确定执行在线固件升级?\n\n系统将自动:备份配置 → 多线程下载固件 → 校验 → 刷写(自动恢复配置) → 重启。\n请勿断电!';
 		if (!confirm(msg)) return;
 
-		ubus('start_upgrade', { force: isForce === true }).then(function () {
+		setBusy('btn-upgrade', true, '启动中...');
+		setBusy('btn-force', true, '启动中...');
+		stopPoll();
+		snapshotStatus().then(function () {
+			pollFilter = true;
+			return ubus('start_upgrade', { force: isForce === true });
+		}).then(function () {
 			$('btn-upgrade').style.display = 'none';
 			$('btn-force').style.display = 'none';
+			setBusy('btn-upgrade', false, '立即升级');
+			setBusy('btn-force', false, '强制更新');
 			$('card-progress').style.display = '';
 			pollUpgrade();
 		}).catch(function (e) {
-			hint('check-result', '❌ ' + e.message, 'err');
+			setBusy('btn-upgrade', false, '立即升级');
+			setBusy('btn-force', false, '强制更新');
+			hint('check-result', '升级请求失败: ' + e.message, 'err');
 		});
 	}
 
@@ -395,18 +556,18 @@
 			});
 			hint('backup-hint', '最新备份: ' + r.backups[0].path, 'ok');
 		}).catch(function (e) {
-			hint('backup-hint', '❌ ' + e.message, 'err');
+			hint('backup-hint', ' ' + e.message, 'err');
 		});
 	}
 
 	function runBackup() {
 		setBusy('btn-backup', true, '备份中...');
 		ubus('backup').then(function (r) {
-			if (r && r.ok) hint('backup-hint', '✅ 备份成功: ' + r.path + ' (' + r.size_human + ', ' + r.files + ' 个文件)', 'ok');
-			else hint('backup-hint', '❌ ' + (r && r.error ? r.error : '备份失败'), 'err');
+			if (r && r.ok) hint('backup-hint', ' 备份成功: ' + r.path + ' (' + r.size_human + ', ' + r.files + ' 个文件)', 'ok');
+			else hint('backup-hint', ' ' + (r && r.error ? r.error : '备份失败'), 'err');
 			refreshBackups();
 		}).catch(function (e) {
-			hint('backup-hint', '❌ ' + e.message, 'err');
+			hint('backup-hint', ' ' + e.message, 'err');
 		}).finally(function () {
 			setBusy('btn-backup', false, '创建备份');
 		});
@@ -415,11 +576,11 @@
 	function deleteBackup(path) {
 		if (!confirm('确定删除备份?\n\n' + path + '\n\n删除后不可恢复!')) return;
 		ubus('delete_backup', { path: path }).then(function (r) {
-			if (r && r.ok) hint('backup-hint', '✅ 已删除 ' + path, 'ok');
-			else hint('backup-hint', '❌ ' + (r && r.error ? r.error : '删除失败'), 'err');
+			if (r && r.ok) hint('backup-hint', ' 已删除 ' + path, 'ok');
+			else hint('backup-hint', ' ' + (r && r.error ? r.error : '删除失败'), 'err');
 			refreshBackups();
 		}).catch(function (e) {
-			hint('backup-hint', '❌ ' + e.message, 'err');
+			hint('backup-hint', ' ' + e.message, 'err');
 		});
 	}
 
@@ -442,7 +603,7 @@
 			form.submit();
 			setTimeout(function () { form.remove(); }, 5000);
 		}).catch(function (e) {
-			hint('backup-hint', '❌ ' + e.message, 'err');
+			hint('backup-hint', ' ' + e.message, 'err');
 		});
 	}
 
@@ -456,15 +617,15 @@
 			if (!confirm('确定从备份恢复配置?\n\n' + b.path + '\n\n将使用 tar 解压覆盖 / 下所有配置文件,建议恢复后重启。')) return;
 			setBusy('btn-auto-restore', true, '恢复中...');
 			ubus('restore', { path: b.path }).then(function (res) {
-				if (res && res.ok) hint('backup-hint', '✅ 配置已恢复,建议重启路由器', 'ok');
-				else hint('backup-hint', '❌ ' + (res && res.error ? res.error : '恢复失败'), 'err');
+				if (res && res.ok) hint('backup-hint', ' 配置已恢复,建议重启路由器', 'ok');
+				else hint('backup-hint', ' ' + (res && res.error ? res.error : '恢复失败'), 'err');
 			}).catch(function (e) {
-				hint('backup-hint', '❌ ' + e.message, 'err');
+				hint('backup-hint', ' ' + e.message, 'err');
 			}).finally(function () {
 				setBusy('btn-auto-restore', false, '自动恢复');
 			});
 		}).catch(function (e) {
-			hint('backup-hint', '❌ ' + e.message, 'err');
+			hint('backup-hint', ' ' + e.message, 'err');
 		});
 	}
 
@@ -475,7 +636,7 @@
 		ev.target.value = '';
 		if (!file) return;
 		if (!/\.(tar\.gz|tgz|gz)$/i.test(file.name)) {
-			hint('backup-hint', '❌ 请选择 .tar.gz 格式的备份文件', 'err');
+			hint('backup-hint', ' 请选择 .tar.gz 格式的备份文件', 'err');
 			return;
 		}
 		if (!confirm('确定上传并恢复配置?\n\n文件: ' + file.name + ' (' + fmtSize(file.size) + ')')) return;
@@ -495,11 +656,11 @@
 				return ubus('restore', { path: '/tmp/restore-upload.tar.gz' });
 			})
 			.then(function (res) {
-				if (res && res.ok) hint('backup-hint', '✅ 配置已从上传的备份恢复,建议重启路由器', 'ok');
-				else hint('backup-hint', '❌ ' + (res && res.error ? res.error : '恢复失败'), 'err');
+				if (res && res.ok) hint('backup-hint', ' 配置已从上传的备份恢复,建议重启路由器', 'ok');
+				else hint('backup-hint', ' ' + (res && res.error ? res.error : '恢复失败'), 'err');
 			})
 			.catch(function (e) {
-				hint('backup-hint', '❌ ' + e.message, 'err');
+				hint('backup-hint', ' ' + e.message, 'err');
 			})
 			.finally(function () {
 				setBusy('btn-manual-restore', false, '手动恢复');
@@ -549,10 +710,10 @@
 			repo = v;
 			tag = 'latest';
 		}
-		if (!repo) { hint('config-hint', '❌ 无法识别,支持:Release 链接 / 仓库链接 / owner/repo', 'err'); return; }
+		if (!repo) { hint('config-hint', ' 无法识别,支持:Release 链接 / 仓库链接 / owner/repo', 'err'); return; }
 		$('cfg-repo').value = repo;
 		$('cfg-tag').value = tag || 'latest';
-		hint('config-hint', '✅ 已识别:仓库 ' + repo + ',标签 ' + (tag || 'latest') + '(可点「获取固件列表」选择固件文件)', 'ok');
+		hint('config-hint', ' 已识别:仓库 ' + repo + ',标签 ' + (tag || 'latest') + '(可点「获取固件列表」选择固件文件)', 'ok');
 		updateSummary();
 	}
 
@@ -574,7 +735,7 @@
 
 	function fetchAssets() {
 		var repo = $('cfg-repo').value.trim();
-		if (!repo) { hint('config-hint', '❌ 请先在①填写或识别仓库', 'err'); return; }
+		if (!repo) { hint('config-hint', ' 请先在①填写或识别仓库', 'err'); return; }
 		setBusy('btn-fetch-assets', true, '获取中...');
 		ubus('probe_assets', { repo: repo, tag: $('cfg-tag').value.trim() || 'latest' })
 			.then(function (r) {
@@ -599,10 +760,10 @@
 					o.selected = true;
 					if (rawAssets.length > 0) {
 						o.textContent = '未发现 ≥ ' + minSizeMB + 'MB 固件 (' + rawAssets.length + ' 个文件均被过滤)';
-						hint('config-hint', '⚠️ 未发现 ≥ ' + minSizeMB + 'MB 的固件文件 (已过滤 ' + filteredCount + ' 个非固件附件)，可前往高级配置调整最小体积', 'warn');
+						hint('config-hint', ' 未发现 ≥ ' + minSizeMB + 'MB 的固件文件 (已过滤 ' + filteredCount + ' 个非固件附件)，可前往高级配置调整最小体积', 'warn');
 					} else {
 						o.textContent = '此 Release 无附件文件';
-						hint('config-hint', '⚠️ 该 Release 下未包含任何产物附件', 'warn');
+						hint('config-hint', ' 该 Release 下未包含任何产物附件', 'warn');
 					}
 					sel.appendChild(o);
 					$('asset-box').style.display = '';
@@ -616,11 +777,11 @@
 					var prefix = '';
 					if (a.compat) {
 						if (a.compat.level === 'compatible') {
-							prefix = '🟢 [推荐] ';
+							prefix = ' [推荐] ';
 						} else if (a.compat.level === 'warning') {
-							prefix = '🟡 [需核对] ';
+							prefix = ' [需核对] ';
 						} else if (a.compat.level === 'incompatible') {
-							prefix = '🔴 [不匹配] ';
+							prefix = ' [不匹配] ';
 						}
 					}
 					o.textContent = prefix + a.name + ' (' + a.size_human + ')';
@@ -635,7 +796,7 @@
 				$('asset-box').style.display = '';
 				onAssetSelected();
 
-				var msg = '✅ 已获取 ' + filteredAssets.length + ' 个固件文件';
+				var msg = ' 已获取 ' + filteredAssets.length + ' 个固件文件';
 				if (filteredCount > 0) {
 					msg += ' (已自动过滤 ' + filteredCount + ' 个小于 ' + minSizeMB + 'MB 的非固件小文件)';
 				}
@@ -643,7 +804,7 @@
 				hint('config-hint', msg, 'ok');
 			})
 			.catch(function (e) {
-				hint('config-hint', '❌ ' + e.message, 'err');
+				hint('config-hint', ' ' + e.message, 'err');
 			})
 			.finally(function () {
 				setBusy('btn-fetch-assets', false, '获取固件列表');
@@ -658,11 +819,11 @@
 		var level = opt.getAttribute('data-level');
 		var reason = opt.getAttribute('data-reason');
 		if (level === 'incompatible') {
-			hint('config-hint', '⚠️ 警告：' + reason, 'err');
+			hint('config-hint', ' 警告：' + reason, 'err');
 		} else if (level === 'compatible') {
-			hint('config-hint', '✅ 兼容评估：' + reason + '，可点「使用此文件」生成匹配规则', 'ok');
+			hint('config-hint', ' 兼容评估：' + reason + '，可点「使用此文件」生成匹配规则', 'ok');
 		} else if (level === 'warning') {
-			hint('config-hint', '🟡 需人工核对：' + reason, 'warn');
+			hint('config-hint', ' 需人工核对：' + reason, 'warn');
 		}
 	}
 
@@ -674,7 +835,7 @@
 		var name = $('cfg-asset').value;
 		if (!name) return;
 		$('cfg-pattern').value = '^' + escapeRegex(name) + '$';
-		hint('config-hint', '✅ 已按所选文件生成匹配规则(文件名固定匹配;如文件名会变化可在高级配置放宽)', 'ok');
+		hint('config-hint', ' 已按所选文件生成匹配规则(文件名固定匹配;如文件名会变化可在高级配置放宽)', 'ok');
 		updateSummary();
 	}
 
@@ -710,13 +871,13 @@
 		});
 		ubus('set_config', cfg).then(function (r) {
 			if (r && r.ok) {
-				hint('config-hint', '✅ 配置已保存', 'ok');
+				hint('config-hint', ' 配置已保存', 'ok');
 				updateSummary();
 			} else {
-				hint('config-hint', '❌ ' + (r && r.error ? r.error : '保存失败'), 'err');
+				hint('config-hint', ' ' + (r && r.error ? r.error : '保存失败'), 'err');
 			}
 		}).catch(function (e) {
-			hint('config-hint', '❌ ' + e.message, 'err');
+			hint('config-hint', ' ' + e.message, 'err');
 		}).finally(function () {
 			setBusy('btn-save-config', false, '保存配置');
 		});
@@ -803,7 +964,7 @@
 		refreshLog();
 		ubus('get_sysinfo').then(renderSysinfo).catch(function () { setText('cur-ver', '读取失败'); });
 		ubus('get_config').then(function (r) { fillConfig(r.settings || {}); }).catch(function (e) {
-			hint('config-hint', '❌ 读取配置失败: ' + e.message, 'err');
+			hint('config-hint', ' 读取配置失败: ' + e.message, 'err');
 		});
 		refreshBackups();
 

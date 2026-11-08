@@ -542,6 +542,30 @@
 	border-color: #fecaca !important;
 }
 
+/* 判定依据逐条列出：命中哪条规则、比对哪个标识、哪一步没通过 */
+.ou-basis-list {
+	width: 100%;
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px dashed #e2e8f0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.ou-basis-item {
+	font-size: 11.5px;
+	font-weight: 500;
+	color: #475569;
+	line-height: 1.5;
+	word-break: break-word;
+}
+
+.ou-basis-item::before {
+	content: "· ";
+	color: #94a3b8;
+}
+
 .ou-compat-chip {
 	display: inline-flex;
 	align-items: center;
