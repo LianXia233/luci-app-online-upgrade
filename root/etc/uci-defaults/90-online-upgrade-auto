@@ -2,8 +2,8 @@
 # Auto-reinstall luci-app-online-upgrade after sysupgrade.
 # Kept across firmware upgrades via /lib/upgrade/keep.d/.
 #
-# 设计约束：不猜测。找不到与「本机包管理器 + 本机架构」匹配的安装包时明确报错，
-# 不再回落成「取第一个包」——那会把错误架构的装到设备上。
+# 设计约束：不猜测。先按「本机完整架构」挑选，再退到架构家族；两者都挑不出
+# 明确候选时报错退出，只有「同架构多候选」才记录全部候选并按顺序取第一个。
 # 任何一步失败都会写 logger 并让脚本以非零码退出，便于事后排查。
 
 [ -x /usr/bin/online-upgrade ] && exit 0
@@ -15,12 +15,19 @@ err() { logger -t "online-upgrade" "错误: $*"; FAIL=1; }
 # ---- 包管理器与架构 ---------------------------------------------------------
 PKG_MGR=""
 ARCH=""
+# 优先用固件自报的打包架构：apk --print-arch 在 apk-tools 3 上返回的是家族名
+# （实测 aarch64），而包名用的是 aarch64_cortex-a53 这类完整架构，只拿家族名
+# 无法把 cortex-a53 与 cortex-a72 区分开。
+if [ -r /etc/openwrt_release ]; then
+	. /etc/openwrt_release 2>/dev/null
+	ARCH="${DISTRIB_ARCH:-}"
+fi
 if command -v apk >/dev/null 2>&1; then
 	PKG_MGR="apk"
-	ARCH=$(apk --print-arch 2>/dev/null)
+	[ -z "$ARCH" ] && ARCH=$(apk --print-arch 2>/dev/null)
 elif command -v opkg >/dev/null 2>&1; then
 	PKG_MGR="opkg"
-	ARCH=$(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }' | grep -v '^all$' | head -1)
+	[ -z "$ARCH" ] && ARCH=$(opkg print-architecture 2>/dev/null | awk '$1 == "arch" { print $2 }' | grep -v '^all$' | head -1)
 fi
 
 if [ -z "$PKG_MGR" ]; then
@@ -115,8 +122,17 @@ if [ -z "$ASSET_LIST" ]; then
 	exit $FAIL
 fi
 
-ASSET_RE="[^/]*${ARCH_FAMILY}[^/]*\\.${EXT}$"
-CAND=$(printf '%s\n' "$ASSET_LIST" | grep -E "$ASSET_RE")
+# 先按完整架构挑选（aarch64_cortex-a53 这类），挑到再退到家族前缀；
+# 否则家族前缀会把 cortex-a53 与 cortex-a72 混为一类，取第一个就有装错包的风险。
+ARCH_ERE=$(printf '%s' "$ARCH" | sed 's/[][\.^$*+?(){}|/]/\\&/g')
+CAND=""
+if [ -n "$ARCH_ERE" ]; then
+	CAND=$(printf '%s\n' "$ASSET_LIST" | grep -E "[^/]*${ARCH_ERE}[^/]*\\.${EXT}$")
+fi
+if [ -z "$CAND" ]; then
+	ASSET_RE="[^/]*${ARCH_FAMILY}[^/]*\\.${EXT}$"
+	CAND=$(printf '%s\n' "$ASSET_LIST" | grep -E "$ASSET_RE")
+fi
 if [ -z "$CAND" ]; then
 	TOTAL=$(printf '%s\n' "$ASSET_LIST" | grep -cE "\\.${EXT}$")
 	if [ "$TOTAL" -eq 1 ]; then

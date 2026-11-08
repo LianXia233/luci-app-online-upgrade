@@ -23,7 +23,7 @@
 - **代理前缀拼接错误**：`https://host` 这类没有结尾斜杠的前缀会被拼成 `https://hosthttps://...`。现在统一归一化（去尾斜杠后补一个 `/`）并校验主机非空；ucode 层与 uci-defaults 自动重装脚本使用同一规则，非法代理降级为直连并记日志。
 - **校验单出现多个哈希时取第一个**：多条目校验单里取的应该是与固件 basename 匹配的那一行；只有全文仅存在一个去重哈希时才接受单哈希解析，避免拿别的文件的哈希做比对而永久不匹配。
 - **备份失败后留下错误的“已升级”标记**：现在先记录版本再备份，备份失败则回滚 `last_upgrade_ts` / `last_upgrade_version` 并中止，不再让下一次检测误判成“已是最新”；`/root` 备份复制失败也从“静默忽略”改为报错退出。
-- **自动重装脚本吞掉错误且只支持 apk**：`90-online-upgrade-auto` 现在同时支持 `apk` 与 `opkg`，按本机真实包管理器架构筛选安装包（不再“取第一个”），缺 `jsonfilter` 时用等效文本提取兜底，缺 `curl`、下载失败、安装失败都会写 syslog 并以非零码退出；代理前缀同样做归一化。
+- **自动重装脚本吞掉错误且只支持 apk**：`90-online-upgrade-auto` 现在同时支持 `apk` 与 `opkg`，按本机真实包管理器架构筛选安装包（不再“取第一个”），缺 `jsonfilter` 时用等效文本提取兜底，缺 `curl`、下载失败、安装失败都会写 syslog 并以非零码退出；代理前缀同样做归一化。真机复测又发现：`apk --print-arch` 在 apk-tools 3 上返回的是家族名 `aarch64`，而包名用的是 `aarch64_cortex-a53`，按家族名筛会把 cortex-a53 与 cortex-a72 的包一起命中、再取第一个就可能装错；现在优先读 `/etc/openwrt_release` 的 `DISTRIB_ARCH` 做完整架构匹配，家族名只作兜底，同架构多候选时把全部候选写进日志。
 - **`app.js` 缓存版本与包版本漂移**：`app.js?v=` / `style.css?v=` 曾写死为 `2.7.0` 而 `PKG_VERSION` 为 `2.2.0`，导致升级后浏览器仍用旧脚本。现在统一为 `2.3.0`，并在 CI 增加一致性校验（Makefile / Cargo.toml / 模板）。
 - **README 与真实配置键不一致**：示例里的 `config online-upgrade 'main'` / `online-upgrade.main.*` 与代码实际使用的 `settings` 段不符，照抄会写坏配置；已全部改为 `settings`，并修正示例正则的重复转义。
 
