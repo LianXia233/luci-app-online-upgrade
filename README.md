@@ -189,6 +189,14 @@
 | 同一 Release 有多个 sysupgrade 变体 | 按架构/机型/规则打分排序，只接受 Compatible 的最高分；最高分并列多个时**报歧义错误**并列出候选，要求你配置更精确的正则或手动指定，不会取第一个 |
 | tag 不是 `vX.Y.Z`（如 `自用构建`、`20261107`、`latest`） | tag 只用于定位 Release；版本优先从资产文件名解析。tag 无法解析且文件名也无版本时，判定为 `unknown`，按 Release 发布时间提示，不做降级/升级的强行判断 |
 
+## 并发保护与撞锁行为
+
+- 后端进程互斥用的是 `/tmp/online-upgrade.lock`，内容为 `<pid> <owner> <时间戳>`。
+- 判定顺序：先按 PID 做存活探测（`/proc/<pid>`），进程已不存在或 PID 就是自己时才回收；PID 存活且不是自己则直接返回「已有任务正在运行 (pid N, owner)」。
+- **锁的新鲜度**：如果锁文件存在但读不出 PID（典型情况是另一个进程刚 `create_new` 建好文件、还没来得及写入 PID，或首行只写了一半），在 **2 秒宽限期内一律按“忙”处理**，超过 2 秒仍不可读才当作崩溃残留回收。这样既能避免两个进程同时持锁去写同一份固件与状态文件，也不会让“建锁后立即崩溃”的残留永久占锁。
+- rpcd 层还有一次快速失败探测（读锁文件首个字段做 `/proc` 探测），第二次点击立即拿到明确错误，而不是排队等待。
+- **前端表现**：`check` / `start_upgrade` 拿到 `{ok:false, error}`（撞锁）时立即在面板上显示后端返回的错误、恢复两个升级按钮、**不进入轮询**，也不会显示上一次任务的进度卡片；只有真正启动成功才隐藏按钮并开始轮询。
+
 ---
 
 ## 安装与部署
@@ -243,7 +251,7 @@ make package/luci-app-online-upgrade/compile V=s
 | :--- | :--- | :--- | :--- |
 | `enabled` | bool | `0` | 是否启用在线升级配置：`1` 为启用，`0` 为禁用 |
 | `repo` | string | 空 | GitHub 仓库路径，格式为 `owner/repo`（如 `LianXia233/OpenWRT-CI`） |
-| `tag` | string | `latest` | Release 追踪策略：<br>• `latest`：追踪最新发布的 Release；<br>• `latest@^前缀`：按前缀过滤目标机型最新 Release（如 `latest@^H5000M`）；<br>• 具体 Tag 名（如 `v2026.11`） |
+| `tag` | string | `latest` | Release 追踪策略：<br>• `latest`：追踪最新发布的 Release；<br>• `latest@^前缀`：按前缀过滤目标机型最新 Release（如 `latest@^H5000M`）；正则写错会**直接报错并中止检测**（不会退化成“不过滤”而在全部 Release 里挑）；<br>• 具体 Tag 名（如 `v2026.11`） |
 | `firmware_pattern` | string | 空 | 目标固件文件名匹配的正则表达式（如 `immortalwrt-.*-sysupgrade\.bin`） |
 | `proxy` | string | `https://gh.acg2.mom/` | GitHub 文件与 API 加速反代节点，留空则直连 GitHub |
 | `min_size_mb` | integer | `15` | **最小固件体积阈值 (MB)**：获取列表与检测匹配时自动忽略小于此体积的文件（过滤 metadata/txt/sha256），设为 `0` 则不限制 |

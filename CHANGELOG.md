@@ -26,6 +26,9 @@
 - **自动重装脚本吞掉错误且只支持 apk**：`90-online-upgrade-auto` 现在同时支持 `apk` 与 `opkg`，按本机真实包管理器架构筛选安装包（不再“取第一个”），缺 `jsonfilter` 时用等效文本提取兜底，缺 `curl`、下载失败、安装失败都会写 syslog 并以非零码退出；代理前缀同样做归一化。真机复测又发现：`apk --print-arch` 在 apk-tools 3 上返回的是家族名 `aarch64`，而包名用的是 `aarch64_cortex-a53`，按家族名筛会把 cortex-a53 与 cortex-a72 的包一起命中、再取第一个就可能装错；现在优先读 `/etc/openwrt_release` 的 `DISTRIB_ARCH` 做完整架构匹配，家族名只作兜底，同架构多候选时把全部候选写进日志。
 - **`app.js` 缓存版本与包版本漂移**：`app.js?v=` / `style.css?v=` 曾写死为 `2.7.0` 而 `PKG_VERSION` 为 `2.2.0`，导致升级后浏览器仍用旧脚本。现在统一为 `2.3.0`，并在 CI 增加一致性校验（Makefile / Cargo.toml / 模板）。
 - **README 与真实配置键不一致**：示例里的 `config online-upgrade 'main'` / `online-upgrade.main.*` 与代码实际使用的 `settings` 段不符，照抄会写坏配置；已全部改为 `settings`，并修正示例正则的重复转义。
+- **非法 `latest@` 正则被静默忽略**：`Regex::new` 的编译错误被 `.ok()` 吞成 `None`，`release_candidates` 因此不做任何过滤，等于在全部最近 Release 里挑，可能选中非预期渠道的产物。现在 `check` 与 `probe` 两处都走同一个 `parse_tag_filter`，非法正则按配置错误明确报错并中止，不再退化为“不过滤”。
+- **空锁或半写锁被当陈旧锁回收**：锁文件先 `create_new` 建好、后写入 PID，并发进程在两步之间读到空锁时，旧逻辑直接删锁重试，两个进程于是同时持锁写同一份固件与状态文件。现在按锁文件 mtime 判定新鲜度：2 秒宽限期内不可读一律按“忙”返回，超过宽限期才回收，避免崩溃残留永久占锁。
+- **撞锁时前端把 `ok:false` 当成“已启动”**：ubus 在 `result[0]==0` 时直接 resolve 业务 payload，`{ok:false,error}` 不会 reject。原实现继续进入轮询并隐藏两个升级按钮（`check` 则白等 20 秒给泛化提示），用户只能刷新页面。现在两处都先判 `ok`，立即显示后端错误、恢复按钮、不进入轮询。
 
 ### Added
 
