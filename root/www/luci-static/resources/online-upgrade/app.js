@@ -195,6 +195,16 @@
 		return sameVersionChecked() ? FORCE_LABEL_SAME : '强制更新';
 	}
 
+	// .ou-container .ou-btn 带 display:inline-flex !important，inline 的 display:none 会被压过，
+	// 所以按钮显隐统一走 is-hidden 类，同版本时才能真正把「立即升级」收起来。
+	function showBtn(id, on) {
+		var el = $(id);
+		if (!el) return;
+		if (on) el.classList.remove('is-hidden');
+		else el.classList.add('is-hidden');
+		el.style.display = on ? '' : 'none';
+	}
+
 	function renderCompatDetail(ci, res) {
 		var html = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
 		if (ci) {
@@ -271,8 +281,8 @@
 				badge.innerHTML = '<span class="ou-dot err"></span> 检测异常';
 			}
 			setText('check-reason', errText);
-			if ($('btn-force')) $('btn-force').style.display = '';
-			if ($('btn-upgrade')) $('btn-upgrade').style.display = 'none';
+			showBtn('btn-force', true);
+			showBtn('btn-upgrade', false);
 			return;
 		}
 
@@ -330,16 +340,24 @@
 				badge.innerHTML = '<span class="ou-dot err"></span> 固件不匹配';
 			}
 		} else if (lv === 'warning') {
-			msg = '需人工核对后才可升级: ' + (ci.reason || '') +
-				'。确认无误后可用「强制更新」继续。';
+			msg = (sameVersion
+				? '需人工核对后才可重装本机固件(同版本重装): '
+				: '需人工核对后才可升级: ') + (ci.reason || '') +
+				(sameVersion
+					? '。确认无误后可用「强制升级」重装。'
+					: '。确认无误后可用「强制更新」继续。');
 			lvl = 'warn';
 			if (badge) {
 				badge.className = 'ou-status-pill update';
 				badge.innerHTML = '<span class="ou-dot update"></span> 需人工核对';
 			}
 		} else if (lv === 'unknown') {
-			msg = '无法确认是否适配本机，未自动判定为可升级: ' + (ci.reason || '') +
-				'。如确认该文件适用于本机，可用「强制更新」并显式确认。';
+			msg = (sameVersion
+				? '无法确认该固件是否适配本机，已是最新同版本: '
+				: '无法确认是否适配本机，未自动判定为可升级: ') + (ci.reason || '') +
+				(sameVersion
+					? '。如确认该文件适用于本机，可用「强制升级」重装。'
+					: '。如确认该文件适用于本机，可用「强制更新」并显式确认。');
 			lvl = 'warn';
 			if (badge) {
 				badge.className = 'ou-status-pill update';
@@ -394,10 +412,9 @@
 
 		hint('check-result', msg, lvl);
 		if (box) box.className = 'ou-notice-box' + (lvl === 'ok' ? ' ok' : (lvl === 'err' ? ' err' : ''));
-		if ($('btn-upgrade'))
-			$('btn-upgrade').style.display = (lv === 'compatible' && hasUpdate && !sameVersion) ? '' : 'none';
+		showBtn('btn-upgrade', lv === 'compatible' && hasUpdate && !sameVersion);
 		if ($('btn-force')) {
-			$('btn-force').style.display = '';
+			showBtn('btn-force', true);
 			$('btn-force').title = sameVersion
 				? '当前固件与 Release 同版本：这是同版本重装，不是升级，仅在你需要重刷固件时手动使用'
 				: (lv === 'compatible'
@@ -575,7 +592,7 @@
 				} else if (st.stage === 'failed') {
 					stopPoll();
 					setBusy('btn-check', false, '检查更新');
-					$('btn-force').style.display = '';
+					showBtn('btn-force', true);
 					$('card-progress').style.display = 'none';
 					hint('check-result', '升级失败: ' + (st.error || '未知错误'), 'err');
 				}
@@ -616,16 +633,16 @@
 			// 继续，两个按钮会被隐藏并进入对别的任务的无效轮询，页面卡死只能刷新。
 			if (r && r.ok === false) {
 				// 撞锁失败恢复按钮时也要维持「同版本不摆普通升级入口」的口径
-				$('btn-upgrade').style.display = same ? 'none' : '';
-				$('btn-force').style.display = '';
+				showBtn('btn-upgrade', !same);
+				showBtn('btn-force', true);
 				setBusy('btn-upgrade', false, '立即升级');
 				setBusy('btn-force', false, forceLabel());
 				$('card-progress').style.display = 'none';
 				hint('check-result', r.error || '升级未能启动', 'err');
 				return;
 			}
-			$('btn-upgrade').style.display = 'none';
-			$('btn-force').style.display = 'none';
+			showBtn('btn-upgrade', false);
+			showBtn('btn-force', false);
 			setBusy('btn-upgrade', false, '立即升级');
 			setBusy('btn-force', false, forceLabel());
 			$('card-progress').style.display = '';

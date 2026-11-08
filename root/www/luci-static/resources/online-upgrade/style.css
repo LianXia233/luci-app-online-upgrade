@@ -273,6 +273,12 @@
 	flex-wrap: wrap;
 }
 
+/* .ou-container .ou-btn 用了 display:inline-flex !important，inline 的 style="display:none"
+   压不过它；显隐统一由这个类负责，否则「立即升级」按钮永远收不起来。 */
+.ou-container .ou-btn.is-hidden {
+	display: none !important;
+}
+
 .ou-container .ou-btn {
 	display: inline-flex !important;
 	align-items: center !important;
