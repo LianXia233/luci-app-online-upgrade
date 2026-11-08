@@ -37,7 +37,7 @@ async fn cmd_check() -> i32 {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: online-upgrade <check|upgrade [--force]|backup|restore <file>|status|clear-log>");
+    eprintln!("usage: online-upgrade <check|upgrade [--force]|download|backup|restore <file>|status|clear-log>");
     2
 }
 
@@ -51,7 +51,7 @@ fn main() {
     // otherwise it would overwrite the progress of the process that owns the
     // operation.
     let needs_lock = matches!(mode, "check" | "upgrade" | "download" | "backup" | "restore");
-    let _guard = if needs_lock {
+    let guard = if needs_lock {
         match lock::acquire(mode) {
             Ok(g) => Some(g),
             Err(e) => {
@@ -126,5 +126,9 @@ fn main() {
         }
         _ => usage(),
     };
+    // process::exit skips destructors, so release the lock explicitly: a
+    // surviving lock file is only reclaimed through the stale-pid path, and a
+    // recycled pid would then keep the lock "alive" forever.
+    drop(guard);
     std::process::exit(code);
 }

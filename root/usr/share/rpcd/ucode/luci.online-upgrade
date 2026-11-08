@@ -158,16 +158,20 @@ function normalize_proxy(u) {
 // 快速失败：权威互斥由 Rust 二进制里的锁文件负责，但它以 detached 方式运行，
 // 第二次点击若只交给后端就会先返回 ok，然后静默什么都不做。
 // 返回正在执行任务的 pid 字符串，空闲或锁文件陈旧时返回 ''。
+// 锁文件内容是 "<pid> <mode> <timestamp>" 三个字段，因此只能取首个字段比对整行
+// （曾经用 /^[0-9]+$/ 匹配整行，永远匹配失败，导致这个快速失败形同虚设）。
 function busy_pid() {
 	let content = readfile('/tmp/online-upgrade.lock');
 	if (!content)
 		return '';
-	let s = trim('' + content);
-	if (match(s, /^[0-9]+$/) == null)
+	let head = match(trim('' + content), /^[0-9]+/);
+	if (head == null)
 		return '';
-	if (length(s) == 0 || !readfile('/proc/' + s + '/cmdline'))
+	let pid = head[0];
+	let alive = readfile('/proc/' + pid + '/cmdline');
+	if (alive == null || type(alive) != 'string')
 		return ''; // 崩溃残留的锁文件，后端会自行回收
-	return s;
+	return pid;
 }
 
 const methods = {
