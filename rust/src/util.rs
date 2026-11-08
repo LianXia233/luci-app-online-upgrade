@@ -41,10 +41,29 @@ pub fn backup() -> i32 {
         print_result(false, "error", "sysupgrade -b 执行失败");
         return 1;
     }
-    let _ = std::fs::copy(&tmp, &root);
+    // The /root copy is what survives a /tmp cleanup and what README promises
+    // as the restore source: a failed copy must not be reported as success.
+    if let Err(e) = std::fs::copy(&tmp, &root) {
+        let msg = format!("备份已生成于 {tmp},但复制到 {root} 失败: {e}");
+        status::set_error("failed", 100, "备份保存失败", &msg);
+        logline!("[backup] {msg}");
+        print_result(false, "error", &msg);
+        return 1;
+    }
     let files = run("sh", &["-c", &format!("tar tzf {tmp} 2>/dev/null | wc -l")]).unwrap_or_default();
     let size = std::fs::metadata(&root).map(|m| m.len()).unwrap_or(0);
-    status::set("backup_done", 100, "备份完成");
+    logline!("[backup] 完成 {root} ({files} 个文件)");
+    status::set_result(
+        "backup_done",
+        100,
+        "备份完成",
+        Value::Obj(vec![
+            ("path".into(), Value::str(&root)),
+            ("size".into(), Value::num(size)),
+            ("size_human".into(), Value::str(&crate::github::human_size(size))),
+            ("files".into(), Value::str(&files)),
+        ]),
+    );
     println!(
         "{}",
         Value::Obj(vec![

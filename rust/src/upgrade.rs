@@ -1,11 +1,12 @@
 // Upgrade orchestration: check → download (segmented, real progress) →
-// record version → backup → package list → sysupgrade.
+// verify SHA256 + image integrity → record version → backup → package list →
+// sysupgrade.
 
 use crate::downloader;
 use crate::github::{self, Cfg};
 use crate::json::Value;
-use crate::status;
 use crate::logline;
+use crate::status;
 use crate::uci;
 use std::io::Write;
 use std::process::Command;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 
 const TMP_FIRMWARE: &str = "/tmp/firmware.img.gz";
 const TMP_FIRMWARE_TS: &str = "/tmp/firmware.img.gz.ts";
+const TMP_FIRMWARE_PARTS: &str = "/tmp/firmware.img.gz.parts.json";
 const PKG_LIST: &str = "/root/.pkg-list.txt";
 const AUTO_REINSTALL_SCRIPT: &str = include_str!("../../root/etc/uci-defaults/90-online-upgrade-auto");
 const UCI_DEFAULTS_AUTO: &str = "/etc/uci-defaults/90-online-upgrade-auto";
@@ -31,7 +33,16 @@ fn now_stamp() -> String {
 }
 
 fn full_url(cfg: &Cfg, url: &str) -> String {
-    format!("{}{}", cfg.proxy, url)
+    github::prefixed(&cfg.proxy, url)
+}
+
+/// Remove every artefact of a download attempt (firmware, timestamp marker and
+/// resume sidecar). A sidecar left behind after the firmware was deleted is
+/// exactly what produces a zero-filled "successful" download on the retry.
+fn cleanup_download() {
+    let _ = std::fs::remove_file(TMP_FIRMWARE);
+    let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
+    let _ = std::fs::remove_file(TMP_FIRMWARE_PARTS);
 }
 
 struct Asset {
@@ -39,8 +50,18 @@ struct Asset {
     api_url: String,
     updated: String,
     version: String,
+    version_source: String,
+    relation: String,
     name: String,
     size: u64,
+    sha256: String,
+    sha256_source: String,
+    rule: Option<String>,
+}
+
+struct Integrity {
+    verified: bool,
+    source: String,
     sha256: String,
 }
 
@@ -96,6 +117,12 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
     if url.is_empty() {
         return Err("下载地址为空".into());
     }
+    let relation = info
+        .get("version")
+        .and_then(|v| v.get("relation"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("unknown")
+        .to_string();
     Ok(Asset {
         url,
         api_url: latest
@@ -111,8 +138,14 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
         version: latest
             .get("version")
             .and_then(|u| u.as_str())
-            .unwrap_or("0")
+            .unwrap_or("")
             .to_string(),
+        version_source: latest
+            .get("version_source")
+            .and_then(|u| u.as_str())
+            .unwrap_or("none")
+            .to_string(),
+        relation,
         name: latest
             .get("name")
             .and_then(|u| u.as_str())
@@ -124,53 +157,81 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
             .and_then(|u| u.as_str())
             .unwrap_or("")
             .to_string(),
+        sha256_source: latest
+            .get("sha256_source")
+            .and_then(|u| u.as_str())
+            .unwrap_or("none")
+            .to_string(),
+        rule: info
+            .get("matched_rule")
+            .and_then(|r| r.as_str())
+            .map(|s| s.to_string()),
     })
 }
 
-fn verify_firmware_integrity(device: &crate::compat::DeviceProfile, asset: &Asset, force: bool) -> Result<(), String> {
+fn verify_firmware_integrity(
+    device: &crate::compat::DeviceProfile,
+    asset: &Asset,
+    force: bool,
+) -> Result<Integrity, String> {
     status::set("verifying", 91, "正在校验固件 SHA256 哈希完整性...");
-    let actual_sha256 = crate::hash::sha256_file(TMP_FIRMWARE)
-        .map_err(|e| format!("SHA256 计算失败: {e}"))?;
+    let actual_sha256 =
+        crate::hash::sha256_file(TMP_FIRMWARE).map_err(|e| format!("SHA256 计算失败: {e}"))?;
 
     logline!("[verify] 固件实际 SHA256: {actual_sha256}");
 
-    // Check custom UCI expected_sha256 first, then release asset's sha256
-    let manual_expected = uci::get("expected_sha256").unwrap_or_default().trim().to_lowercase();
-    let expected = if !manual_expected.is_empty() {
-        manual_expected
+    // Explicit UCI value first, then whatever the release published.
+    let manual_expected = uci::get("expected_sha256")
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let (expected, source) = if !manual_expected.is_empty() {
+        (manual_expected, "config")
     } else {
-        asset.sha256.trim().to_lowercase()
+        (asset.sha256.trim().to_lowercase(), asset.sha256_source.as_str())
     };
 
-    if !expected.is_empty() {
+    let verified = if !expected.is_empty() {
         if actual_sha256 != expected {
             let err = format!("SHA256 校验不匹配! 期望: {expected}, 实际: {actual_sha256}");
-            logline!("[verify] ❌ {err}");
-            let _ = std::fs::remove_file(TMP_FIRMWARE);
-            let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
+            logline!("[verify] {err}");
+            cleanup_download();
             return Err(err);
         }
-        logline!("[verify] ✅ SHA256 校验一致 (匹配通过: {expected})");
+        logline!("[verify] SHA256 校验一致 (来源 {source}: {expected})");
+        true
     } else {
-        logline!("[verify] ℹ️ 云端未提供校验单，已完成本地完整性记录 (SHA256: {actual_sha256})");
-    }
+        // No expected hash anywhere. Do not claim "verified": the UI and the
+        // status text must say "recorded but not verified".
+        logline!(
+            "[verify] 未提供校验依据(配置/校验单/Release 正文均无哈希),仅记录本地 SHA256: {actual_sha256}"
+        );
+        false
+    };
 
     // Hardware & sysupgrade -T image compatibility verification
     if let Err(e) = crate::compat::verify_downloaded_image(device, TMP_FIRMWARE) {
         if !force {
-            let _ = std::fs::remove_file(TMP_FIRMWARE);
-            let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
+            cleanup_download();
             return Err(e);
         }
-        logline!("[verify] ⚠️ 强制模式生效，跳过固件兼容性预检未通过继续执行");
+        logline!("[verify] 强制模式生效，跳过未通过的固件兼容性预检: {e}");
     }
 
-    Ok(())
+    Ok(Integrity {
+        verified,
+        source: source.to_string(),
+        sha256: actual_sha256,
+    })
 }
 
-/// `online-upgrade download` — check + segmented download only (no backup/flash).
+/// `online-upgrade download` — check + segmented download + verification only.
+/// Never touches flash, backup or sysupgrade.
 pub async fn download_only() -> i32 {
+    status::trim_log();
     let client = crate::http::client();
+    let device = crate::compat::DeviceProfile::current();
+
     let asset = match fetch_asset(&client).await {
         Ok(a) => a,
         Err(e) => {
@@ -195,7 +256,7 @@ pub async fn download_only() -> i32 {
     let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
         let total_eff = if total > 0 { total } else { total_hint };
         let pct = if total_eff > 0 {
-            5 + ((done as f64 / total_eff as f64) * 95.0).min(95.0) as u32
+            5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
         } else {
             5
         };
@@ -217,19 +278,47 @@ pub async fn download_only() -> i32 {
                 d.segments,
                 d.resumed_chunks
             );
-            status::set("downloaded", 100, "固件下载完成");
             let _ = std::fs::write(TMP_FIRMWARE_TS, &asset.updated);
-            let device = crate::compat::DeviceProfile::current();
-            if let Err(e) = verify_firmware_integrity(&device, &asset, false) {
-                status::set_error("failed", 100, "固件校验或兼容性预检失败", &e);
-                return 1;
-            }
+            let integrity = match verify_firmware_integrity(&device, &asset, false) {
+                Ok(i) => i,
+                Err(e) => {
+                    status::set_error("failed", 100, "固件校验或兼容性预检失败", &e);
+                    return 1;
+                }
+            };
+            let compat = crate::compat::evaluate_asset(&device, &asset.name);
+            let msg = if integrity.verified {
+                "固件下载完成,SHA256 校验一致(未执行任何升级操作)"
+            } else {
+                "固件下载完成,但无校验依据,仅记录本地 SHA256(未校验,未执行任何升级操作)"
+            };
+            status::set_result(
+                "downloaded",
+                100,
+                msg,
+                Value::Obj(vec![
+                    ("firmware".into(), Value::str(&asset.name)),
+                    ("size".into(), Value::num(d.total)),
+                    ("size_human".into(), Value::str(&github::human_size(d.total))),
+                    ("sha256".into(), Value::str(&integrity.sha256)),
+                    ("verified".into(), Value::Bool(integrity.verified)),
+                    ("hash_source".into(), Value::str(&integrity.source)),
+                    ("version".into(), Value::str(&asset.version)),
+                    ("version_source".into(), Value::str(&asset.version_source)),
+                    ("relation".into(), Value::str(&asset.relation)),
+                    (
+                        "compatibility".into(),
+                        compat.to_json(),
+                    ),
+                    ("dry_run".into(), Value::Bool(true)),
+                ]),
+            );
             0
         }
         Err(e) => {
             status::set_error("failed", 100, "固件下载失败", &e);
             logline!("[download] failed: {e}");
-            let _ = std::fs::remove_file(TMP_FIRMWARE);
+            cleanup_download();
             1
         }
     }
@@ -257,9 +346,12 @@ pub async fn run(force: bool) -> i32 {
     let size_hint = asset.size;
 
     let device = crate::compat::DeviceProfile::current();
-    let compat = crate::compat::evaluate_asset(&device, &name);
+    let compat = match asset.rule.as_deref() {
+        Some(rule) => crate::compat::evaluate_with_rule(&device, &name, rule),
+        None => crate::compat::evaluate_asset(&device, &name),
+    };
     logline!(
-        "[upgrade] 本地设备: {} ({} / {}), 目标固件: {}, 兼容判定: {} [{}]",
+        "[upgrade] 本地设备: {} ({} / {}), 目标固件: {}, 识别判定: {} [{}]",
         device.model,
         device.uname_arch,
         device.target,
@@ -267,10 +359,25 @@ pub async fn run(force: bool) -> i32 {
         compat.badge,
         compat.reason
     );
+    for line in &compat.basis {
+        logline!("[upgrade] 识别依据: {line}");
+    }
     if !compat.can_upgrade && !force {
-        let err = format!("固件架构或机型与当前设备冲突 ({}): 拒绝刷写以防变砖！", compat.reason);
-        logline!("[upgrade] ❌ {err}");
+        let err = format!(
+            "固件机型或架构未确认匹配 ({}): 拒绝刷写以防变砖",
+            compat.reason
+        );
+        logline!("[upgrade] {err}");
         status::set_error("failed", 100, "固件不兼容，已拒绝刷机", &err);
+        return 1;
+    }
+    if asset.relation == "older" && !force {
+        let err = format!(
+            "目标版本 v{} 低于当前系统版本，已拒绝降级(如需降级请强制升级)",
+            fw_version
+        );
+        logline!("[upgrade] {err}");
+        status::set_error("failed", 100, "拒绝降级", &err);
         return 1;
     }
 
@@ -283,9 +390,7 @@ pub async fn run(force: bool) -> i32 {
         logline!("[upgrade] 固件已下载,跳过({})", name);
         status::set("downloaded", 90, "固件已下载,跳过");
     } else {
-        let _ = std::fs::remove_file(TMP_FIRMWARE);
-        let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
-        let _ = std::fs::remove_file(format!("{TMP_FIRMWARE}.parts.json"));
+        cleanup_download();
         status::set("downloading", 5, "正在下载固件...");
         let total_hint = size_hint;
         let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
@@ -319,25 +424,42 @@ pub async fn run(force: bool) -> i32 {
             Err(e) => {
                 status::set_error("failed", 100, "固件下载失败", &e);
                 logline!("[upgrade] download failed: {e}");
-                let _ = std::fs::remove_file(TMP_FIRMWARE);
+                cleanup_download();
                 return 1;
             }
         }
     }
 
     // ---- Step 1.5: verify SHA256 checksum and image integrity ----
-    if let Err(e) = verify_firmware_integrity(&device, &asset, force) {
-        status::set_error("failed", 100, "固件校验或预检失败", &e);
-        return 1;
-    }
+    let integrity = match verify_firmware_integrity(&device, &asset, force) {
+        Ok(i) => i,
+        Err(e) => {
+            status::set_error("failed", 100, "固件校验或预检失败", &e);
+            return 1;
+        }
+    };
+    logline!(
+        "[upgrade] 校验结果: verified={} source={} sha256={}",
+        integrity.verified,
+        integrity.source,
+        integrity.sha256
+    );
 
-    // ---- Step 2: record version (before backup so the backup contains it) ----
+    // ---- Step 2: record version after a successful backup ----
+    // Order matters: writing first would leave a wrong "already upgraded"
+    // marker when the backup fails, and writing after the backup without
+    // rollback would do the same on flash failure below.
+    let prev_ts = uci::get("last_upgrade_ts");
+    let prev_ver = uci::get("last_upgrade_version");
     status::set("saving", 92, "记录固件版本...");
     uci::set("last_upgrade_ts", &updated);
     uci::set("last_upgrade_version", &fw_version);
     uci::commit();
     let _ = sh("sync", &[]);
-    logline!("[upgrade] 已记录版本 v{fw_version} ({})", github::utc_to_local(&updated));
+    logline!(
+        "[upgrade] 已记录版本 v{fw_version} ({})",
+        github::utc_to_local(&updated)
+    );
 
     // ---- Step 3: backup (sysupgrade -b, passed to -f later) ----
     status::set("backing_up", 94, "正在创建配置备份...");
@@ -346,7 +468,10 @@ pub async fn run(force: bool) -> i32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(UCI_DEFAULTS_AUTO, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::set_permissions(
+            UCI_DEFAULTS_AUTO,
+            std::fs::Permissions::from_mode(0o755),
+        );
     }
     let stamp = now_stamp();
     let backup_tmp = format!("/tmp/pre-upgrade-backup-{stamp}.tar.gz");
@@ -357,27 +482,61 @@ pub async fn run(force: bool) -> i32 {
         tokio::task::spawn_blocking(move || sh("sysupgrade", &["-b", &backup_tmp])).await
     };
     let backup_ok = matches!(r, Ok(Some(_)))
-        && std::fs::metadata(&backup_tmp).map(|m| m.len() > 0).unwrap_or(false);
+        && std::fs::metadata(&backup_tmp)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
     if !backup_ok {
+        // Roll the version marker back: no backup means no upgrade happened.
+        match &prev_ts {
+            Some(v) => uci::set("last_upgrade_ts", v),
+            None => uci::unset("last_upgrade_ts"),
+        };
+        match &prev_ver {
+            Some(v) => uci::set("last_upgrade_version", v),
+            None => uci::unset("last_upgrade_version"),
+        };
+        uci::commit();
         status::set_error("failed", 100, "升级失败", "配置备份失败(sysupgrade -b)");
-        logline!("[upgrade] backup failed");
+        logline!("[upgrade] backup failed, version marker rolled back");
         return 1;
     }
-    let files = sh("sh", &["-c", &format!("tar tzf {backup_tmp} 2>/dev/null | wc -l")]).unwrap_or_default();
-    if std::fs::copy(&backup_tmp, &backup_root).is_ok() {
-        logline!(
+    let files = sh(
+        "sh",
+        &["-c", &format!("tar tzf {backup_tmp} 2>/dev/null | wc -l")],
+    )
+    .unwrap_or_default();
+    match std::fs::copy(&backup_tmp, &backup_root) {
+        Ok(_) => logline!(
             "[upgrade] 备份成功: {backup_root} ({}) 包含 {files} 个文件",
             github::human_size(std::fs::metadata(&backup_root).map(|m| m.len()).unwrap_or(0))
-        );
+        ),
+        Err(e) => logline!(
+            "[upgrade] 警告: 备份已生成于 {backup_tmp},但复制到 {backup_root} 失败: {e} (刷机仍会使用临时备份)"
+        ),
     }
 
     // ---- Step 4: save installed package list (for post-upgrade auto reinstall) ----
-    let pkg_cmd = if which("apk") { "apk info" } else { "opkg list-installed" };
-    if let Some(list) = sh("sh", &["-c", &format!("{pkg_cmd} 2>/dev/null")]) {
-        if let Ok(mut f) = std::fs::File::create(PKG_LIST) {
-            let _ = f.write_all(list.as_bytes());
-            let _ = f.flush();
+    // Package names only (no versions): the reinstall script must not depend
+    // on a specific package manager's output format.
+    let pkg_cmd = if which("apk") {
+        "apk info"
+    } else {
+        "opkg list-installed | cut -d' ' -f1"
+    };
+    match sh("sh", &["-c", &format!("{pkg_cmd} 2>/dev/null")]) {
+        Some(list) if !list.is_empty() => {
+            if let Ok(mut f) = std::fs::File::create(PKG_LIST) {
+                let _ = f.write_all(list.as_bytes());
+                let _ = f.flush();
+                logline!(
+                    "[upgrade] 已保存 {} 个已安装软件包清单",
+                    list.lines().count()
+                );
+            } else {
+                logline!("[upgrade] 警告: 无法写入软件包清单 {PKG_LIST}");
+            }
         }
+        _ => logline!("[upgrade] 警告: 读取已安装软件包列表失败,升级后将无法自动重装插件"),
     }
     let _ = sh("sync", &[]);
 
@@ -386,17 +545,26 @@ pub async fn run(force: bool) -> i32 {
     logline!("[upgrade] 执行: sysupgrade -f {backup_tmp} {TMP_FIRMWARE}");
     let _ = sh("sync", &[]);
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let _ = Command::new("/sbin/sysupgrade").args(["-f", &backup_tmp, TMP_FIRMWARE]).status();
+    let _ = Command::new("/sbin/sysupgrade")
+        .args(["-f", &backup_tmp, TMP_FIRMWARE])
+        .status();
 
     // if sysupgrade returned, it failed
     logline!("[upgrade] sysupgrade 执行失败!");
     status::set_error("failed", 100, "升级失败", "sysupgrade 执行失败");
-    uci::unset("last_upgrade_ts");
-    uci::unset("last_upgrade_version");
+    match &prev_ts {
+        Some(v) => uci::set("last_upgrade_ts", v),
+        None => uci::unset("last_upgrade_ts"),
+    };
+    match &prev_ver {
+        Some(v) => uci::set("last_upgrade_version", v),
+        None => uci::unset("last_upgrade_version"),
+    };
     uci::commit();
     1
 }
 
 fn which(cmd: &str) -> bool {
-    sh("sh", &["-c", &format!("command -v {cmd} >/dev/null 2>&1 && echo y")]).as_deref() == Some("y")
+    sh("sh", &["-c", &format!("command -v {cmd} >/dev/null 2>&1 && echo y")]).as_deref()
+        == Some("y")
 }
