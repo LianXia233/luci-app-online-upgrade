@@ -154,6 +154,23 @@
 		older: '目标版本更低',
 		unknown: '版本无法比较'
 	};
+	// 版本判定的三种状态：可信可判定 / 弱依据可疑 / 确实无法比较。
+	// 无法比较不等于阻断，只是把依据说清楚后按「升级到该发布版本」处理。
+	var STATE_TEXT = {
+		decidable: '版本可判定',
+		suspect: '判定依据较弱',
+		incomparable: '版本无法比较'
+	};
+	var STATE_DESC = {
+		decidable: '本地与目标都取到了可信版本号，可直接比较版本方向',
+		suspect: '本地版本来自构建时间、修订号或包版本等弱依据，方向仅供参考',
+		incomparable: '取不到可比较的本地版本号，按「将升级到该发布版本」处理；机型、架构与哈希校验仍然生效'
+	};
+	var CONFIDENCE_TEXT = {
+		strong: '可信',
+		weak: '弱',
+		none: '无'
+	};
 	var HASH_SOURCE_TEXT = {
 		expected_sha256: '配置中的自定义校验值',
 		release_asset: 'Release 校验清单',
@@ -191,6 +208,24 @@
 		var ver = res.version || null;
 		if (ver && ver.relation) {
 			html += '<span class="ou-tag-chip">' + esc(RELATION_TEXT[ver.relation] || ver.relation) + '</span>';
+		}
+		if (ver && (ver.local || ver.local_source_text)) {
+			// 本地版本与来源必须一起给出：用户才知道「当前版本」这个结论是怎么来的。
+			var srcTitle = (ver.local_source_text || ver.local_source || '来源未知') +
+				(ver.local_confidence ? '（可信度：' + (CONFIDENCE_TEXT[ver.local_confidence] || ver.local_confidence) + '）' : '');
+			var localCls = ver.local_confidence === 'strong' ? 'ou-chip-ok'
+				: (ver.local_confidence === 'weak' ? 'ou-chip-warn' : '');
+			html += '<span class="ou-tag-chip ' + localCls + '" title="' + esc(srcTitle) + '">本地版本: ' +
+				esc(ver.local || '无法取到') + '</span>';
+			if (ver.local_source_text) {
+				html += '<span class="ou-tag-chip" title="' + esc(srcTitle) + '">依据: ' +
+					esc(ver.local_source_text) + '</span>';
+			}
+		}
+		if (ver && ver.state) {
+			html += '<span class="ou-tag-chip ' + (ver.state === 'decidable' ? 'ou-chip-ok' : 'ou-chip-warn') +
+				'" title="' + esc(STATE_DESC[ver.state] || '') + '">' +
+				esc(STATE_TEXT[ver.state] || ver.state) + '</span>';
 		}
 		if (res.latest && res.latest.sha256) {
 			html += '<span class="ou-tag-chip" title="完整 SHA256: ' + esc(res.latest.sha256) + '">SHA256: ' +
@@ -297,11 +332,32 @@
 				badge.innerHTML = '<span class="ou-dot update"></span> 无法确认适配';
 			}
 		} else if (hasUpdate) {
-			msg = '固件兼容，发现新版本可用，可点击「立即升级」开始更新。';
-			lvl = 'ok';
-			if (badge) {
-				badge.className = 'ou-status-pill update';
-				badge.innerHTML = '<span class="ou-dot update"></span> 有新版本';
+			var v = res.version || {};
+			if (v.state === 'incomparable') {
+				// 取不到本地版本号不等于「不能升级」：明确说明依据后放行，
+				// 但把仍然生效的安全闸一起讲清楚，避免用户以为跳过了校验。
+				msg = (res.reason || ('将升级到 ' + (v.target || '该发布版本'))) +
+					'。这不会跳过任何安全检查：机型匹配、架构匹配与 SHA-256 校验照旧生效。';
+				lvl = 'warn';
+				if (badge) {
+					badge.className = 'ou-status-pill update';
+					badge.innerHTML = '<span class="ou-dot update"></span> 有新版本（版本无法比较）';
+				}
+			} else if (v.state === 'suspect') {
+				msg = (res.reason || '发现新版本') +
+					'。本地版本依据较弱，建议核对后再升级。';
+				lvl = 'warn';
+				if (badge) {
+					badge.className = 'ou-status-pill update';
+					badge.innerHTML = '<span class="ou-dot update"></span> 有新版本（依据较弱）';
+				}
+			} else {
+				msg = '固件兼容，发现新版本可用，可点击「立即升级」开始更新。';
+				lvl = 'ok';
+				if (badge) {
+					badge.className = 'ou-status-pill update';
+					badge.innerHTML = '<span class="ou-dot update"></span> 有新版本';
+				}
 			}
 		} else {
 			msg = res.reason || '已是最新版本';

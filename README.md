@@ -146,7 +146,7 @@
 | :--- | :--- | :--- |
 | 机型 | `/tmp/sysinfo/board_name`、`/tmp/sysinfo/model`、`/etc/board.json` 的 `model.id`，缺失时才执行 `ubus call system board` | 文件名里的机型令牌，与上面这些标识逐段比对（归一化后比较；平台词、SoC 词、架构词、发行版词、镜像类型词一律**不**作为机型证据） |
 | 架构 | `DISTRIB_ARCH`（`/etc/openwrt_release`）→ `apk --print-arch` → `opkg print-architecture` → `uname -m` | 文件名里的架构/SoC 词表（`aarch64/arm64/cortex-a53/mt7981/rk3568`…、`x86/x86-64/x86_64/amd64`、`mipsel/mt7621`…、`armv7/armhf`…） |
-| 版本 | `DISTRIB_RELEASE`（如 `24.10.0`；`SNAPSHOT` 表示不可比较） | 文件名版本（优先）或 Release tag；通用解析：多段数字 + 可选 `-rc/-beta/-alpha` 后缀 + 可选 `v` 前缀，取最后一个候选避免把厂商/SOC 数字当版本 |
+| 版本 | 按可信度依次尝试：构建写入的版本文件（`/etc/online-upgrade-version`、`/etc/build-version`、`/etc/firmware-version`、`/etc/version`）→ `DISTRIB_VERSION` / `DISTRIB_RELEASE` / os-release 的 `VERSION_ID` → `DISTRIB_DESCRIPTION` / `DISTRIB_REVISION` / `BUILD_ID` / `/etc/openwrt_version` → `base-files` 包版本 → 固件构建时间（`/etc/openwrt_release` 的修改时间）。命中的来源会随结果一起返回并在界面显示，详见「3.1 本机版本从哪来」 | 文件名版本（优先）或 Release tag；通用解析：多段数字 + 可选 `-rc/-beta/-alpha` 后缀 + 可选 `v` 前缀，取最后一个候选避免把厂商/SOC 数字当版本 |
 
 ### 2. 机型 × 架构判定矩阵
 
@@ -166,13 +166,35 @@
 
 ### 3. 版本判定矩阵
 
-| 当前固件版本 | 目标版本 | 判定 | 行为 |
+#### 3.1 本机版本从哪来
+
+自用构建的 SNAPSHOT 固件通常没有 `DISTRIB_RELEASE=24.10.0` 这类版本号（`DISTRIB_RELEASE` 字面就是 `SNAPSHOT`）。直接放弃会让版本方向永远落到「无法比较」，所以插件按可信度从高到低依次尝试，并把命中的来源一并返回（`version.local` / `version.local_source` / `version.local_source_text` / `version.local_confidence`）：
+
+| 顺序 | 来源 | 可信度 | 典型值 |
 | :--- | :--- | :--- | :--- |
-| 可解析 | 高于当前 | 有更新（`newer`） | 允许升级 |
-| 可解析 | 等于当前 | 同版本（`same`） | 默认提示「已是最新」；同一版本号但 Release 更新时间变化（重新构建）时提示可重刷 |
-| 可解析 | 低于当前 | 降级（`older`） | 默认拒绝，需强制模式并记录原因 |
-| 不可解析（如 `SNAPSHOT`、纯文字 tag） | 任意 | 无法比较（`unknown`） | 按 Release 发布时间提示，不假装比较出大小 |
-| 任意 | 无法解析 | 无法比较（`unknown`） | 按发布时间提示 |
+| 1 | 构建写入的版本文件：`/etc/online-upgrade-version`、`/etc/build-version`、`/etc/firmware-version`、`/etc/version` | 可信 | CI 打进去的自用 tag，如 `26.11.08` |
+| 2 | `/etc/openwrt_release` 的 `DISTRIB_VERSION`、`DISTRIB_RELEASE`；`/etc/os-release` 的 `VERSION_ID` | 可信 | `24.10.0` |
+| 3 | `DISTRIB_DESCRIPTION`（内嵌版本号时） | 可信 | `ImmortalWrt 24.10.0 r28000-…` |
+| 4 | `DISTRIB_REVISION`、`BUILD_ID`、`/etc/openwrt_version`、`base-files` 包版本 | 弱 | `r0-23a1cd3`、`0~23a1cd3` |
+| 5 | 固件构建时间（`/etc/openwrt_release` 的修改时间，UTC+8） | 弱 | `26.11.07`（仅能与 `YY.MM.DD` 形态的标签按日期比较；目标标签是 `YYYY.MM.DD` 时自动对齐位数） |
+
+`SNAPSHOT` 这类非版本文本不会被当成版本号；拿不到任何来源时，结果里明确写「无法比较」，不会伪造版本。
+
+#### 3.2 判定状态
+
+版本判定分三种状态，只有降级才需要用户二次确认，不确定本身不构成阻断：
+
+| 本机版本 | 目标版本 | 关系 | 状态 | 行为 |
+| :--- | :--- | :--- | :--- | :--- |
+| 可解析（可信来源） | 高于当前 | `newer` | `decidable` | 允许升级 |
+| 可解析（可信来源） | 等于当前 | `same` | `decidable` | 提示「已是最新」；同一版本号但 Release 更新时间变化（重新构建）时提示可重刷 |
+| 可解析（可信来源） | 低于当前 | `older` | `decidable` | 拒绝（`confirm_required=true`），需强制模式并记录原因 |
+| 只有弱依据（构建时间、修订号、包版本） | 高于当前 | `newer` | `suspect` | 允许升级，界面标注「依据较弱」并给出取到的版本与来源 |
+| 只有弱依据 | 等于 / 低于当前 | `same` / `older` | `suspect` | 同版本提示已是最新；降级仍拒绝并需强制确认 |
+| 确实取不到（如 `SNAPSHOT` 且无任何其他来源） | 任意 | `unknown` | `incomparable` | **放行**：按「将升级到该发布版本」处理，界面说明原因；机型匹配、架构匹配与 SHA-256 校验全部照旧生效 |
+| 任意 | 无法解析 | `unknown` | `incomparable` | 按 Release 发布时间提示 |
+
+界面上除了关系结论，还会显示「本地版本」「依据」「判定状态」三个标签，用户能看出这个结论是基于哪个来源、哪一次比较得出的（`version.confirm_required` 同时提供给 API 调用方）。
 
 ### 4. 「自用构建」兜底路径
 
