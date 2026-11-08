@@ -350,7 +350,16 @@
 		snapshotStatus().then(function () {
 			pollFilter = true;
 			return ubus('check');
-		}).then(function () {
+		}).then(function (r) {
+			// ubus 在 result[0]==0 时直接 resolve 业务 payload，撞锁的
+			// {ok:false,error} 不会 reject；不判 ok 就会把「没启动」当成「已启动」，
+			// 白等 20 秒后只给一句泛化提示。
+			if (r && r.ok === false) {
+				hint('check-result', r.error || '检测未能启动', 'err');
+				if (box) box.className = 'ou-notice-box err';
+				finishCheck();
+				return;
+			}
 			function checkTick() {
 				if (skipped > 20) {
 					hint('check-result', '未读取到本次检测的状态，可能有另一个操作正在进行，详见运行日志', 'err');
@@ -511,7 +520,18 @@
 		snapshotStatus().then(function () {
 			pollFilter = true;
 			return ubus('start_upgrade', { force: isForce === true });
-		}).then(function () {
+		}).then(function (r) {
+			// 同上：撞锁时后端返回 {ok:false,error}，ubus 不会 reject。若按「已启动」
+			// 继续，两个按钮会被隐藏并进入对别的任务的无效轮询，页面卡死只能刷新。
+			if (r && r.ok === false) {
+				$('btn-upgrade').style.display = '';
+				$('btn-force').style.display = '';
+				setBusy('btn-upgrade', false, '立即升级');
+				setBusy('btn-force', false, '强制更新');
+				$('card-progress').style.display = 'none';
+				hint('check-result', r.error || '升级未能启动', 'err');
+				return;
+			}
 			$('btn-upgrade').style.display = 'none';
 			$('btn-force').style.display = 'none';
 			setBusy('btn-upgrade', false, '立即升级');
