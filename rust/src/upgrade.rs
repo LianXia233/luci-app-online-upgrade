@@ -45,6 +45,57 @@ fn cleanup_download() {
     let _ = std::fs::remove_file(TMP_FIRMWARE_PARTS);
 }
 
+/// Reuse a firmware file left over from a previous run only when the marker
+/// proves the bytes on disk are exactly the ones that run finished with.
+///
+/// Length is not evidence: the downloader pre-allocates with `set_len`, so a
+/// half-written file can have the right size while its tail is still zero
+/// filled. The marker therefore stores the asset `updated` stamp *and* the
+/// SHA256 of the completed file; a marker without the hash (an older run) is
+/// never trusted. Callers must still run the full verification afterwards —
+/// reuse skips the network transfer, not the hash check.
+fn reuse_download(updated: &str, size: u64) -> bool {
+    let meta = match std::fs::metadata(TMP_FIRMWARE) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if meta.len() == 0 || (size > 0 && meta.len() != size) {
+        return false;
+    }
+    let marker = match std::fs::read_to_string(TMP_FIRMWARE_TS) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let mut lines = marker.lines().map(|l| l.trim()).filter(|l| !l.is_empty());
+    let stamp = lines.next().unwrap_or("");
+    let recorded = lines.next().unwrap_or("").to_lowercase();
+    if stamp != updated || recorded.len() != 64 {
+        logline!("[download] 拒绝对磁盘上的固件复用: 标记缺少哈希或时间戳不符");
+        return false;
+    }
+    match crate::hash::sha256_file(TMP_FIRMWARE) {
+        Ok(actual) => {
+            if actual == recorded {
+                logline!("[download] 固件复用判定通过: 标记哈希与磁盘一致 ({actual})");
+                true
+            } else {
+                logline!("[download] 拒绝对磁盘上的固件复用: 标记哈希不符(标记 {recorded}, 实际 {actual})");
+                false
+            }
+        }
+        Err(e) => {
+            logline!("[download] 固件复用判定失败: 无法计算磁盘 SHA256: {e}");
+            false
+        }
+    }
+}
+
+/// Marker format: line 1 = asset `updated` stamp, line 2 = local SHA256 of the
+/// finished file. Written only after the file passed verification.
+fn write_download_marker(updated: &str, sha256: &str) {
+    let _ = std::fs::write(TMP_FIRMWARE_TS, format!("{updated}\n{sha256}\n"));
+}
+
 struct Asset {
     url: String,
     api_url: String,
@@ -241,87 +292,104 @@ pub async fn download_only() -> i32 {
         }
     };
 
-    let skip = std::fs::metadata(TMP_FIRMWARE).map(|m| m.len()).unwrap_or(0) > 0
-        && std::fs::read_to_string(TMP_FIRMWARE_TS)
-            .map(|s| s.trim() == asset.updated)
-            .unwrap_or(false);
-    if skip {
-        logline!("[download] 固件已下载,跳过({})", asset.name);
-        status::set("downloaded", 100, "固件已下载,跳过");
-        return 0;
+    let total: u64;
+    let mut segments = 0usize;
+    let mut resumed_chunks = 0usize;
+    if reuse_download(&asset.updated, asset.size) {
+        // A leftover file is reused only when its marker carries the hash of
+        // the completed bytes; the hash is re-checked below either way.
+        total = std::fs::metadata(TMP_FIRMWARE)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        logline!(
+            "[download] 复用上一轮已校验的固件副本 {} ({}),跳过传输但仍重新校验哈希",
+            asset.name,
+            github::human_size(total)
+        );
+        status::set("verifying", 90, "复用已下载固件,正在重新校验...");
+    } else {
+        cleanup_download();
+        status::set("downloading", 5, "正在下载固件...");
+        let total_hint = asset.size;
+        let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
+            let total_eff = if total > 0 { total } else { total_hint };
+            let pct = if total_eff > 0 {
+                5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
+            } else {
+                5
+            };
+            status::set(
+                "downloading",
+                pct,
+                &format!(
+                    "正在下载固件... {:.1}/{:.1} MB",
+                    done as f64 / 1048576.0,
+                    total_eff as f64 / 1048576.0
+                ),
+            );
+        });
+        match fetch_firmware(&client, &asset, TMP_FIRMWARE, report).await {
+            Ok(d) => {
+                total = d.total;
+                segments = d.segments;
+                resumed_chunks = d.resumed_chunks;
+                logline!(
+                    "[download] 完成 {} (分段 {} 并发, 续传 {} 块)",
+                    github::human_size(d.total),
+                    d.segments,
+                    d.resumed_chunks
+                );
+            }
+            Err(e) => {
+                status::set_error("failed", 100, "固件下载失败", &e);
+                logline!("[download] failed: {e}");
+                cleanup_download();
+                return 1;
+            }
+        }
     }
 
-    status::set("downloading", 5, "正在下载固件...");
-    let total_hint = asset.size;
-    let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
-        let total_eff = if total > 0 { total } else { total_hint };
-        let pct = if total_eff > 0 {
-            5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
-        } else {
-            5
-        };
-        status::set(
-            "downloading",
-            pct,
-            &format!(
-                "正在下载固件... {:.1}/{:.1} MB",
-                done as f64 / 1048576.0,
-                total_eff as f64 / 1048576.0
-            ),
-        );
-    });
-    match fetch_firmware(&client, &asset, TMP_FIRMWARE, report).await {
-        Ok(d) => {
-            logline!(
-                "[download] 完成 {} (分段 {} 并发, 续传 {} 块)",
-                github::human_size(d.total),
-                d.segments,
-                d.resumed_chunks
-            );
-            let _ = std::fs::write(TMP_FIRMWARE_TS, &asset.updated);
-            let integrity = match verify_firmware_integrity(&device, &asset, false) {
-                Ok(i) => i,
-                Err(e) => {
-                    status::set_error("failed", 100, "固件校验或兼容性预检失败", &e);
-                    return 1;
-                }
-            };
-            let compat = crate::compat::evaluate_asset(&device, &asset.name);
-            let msg = if integrity.verified {
-                "固件下载完成,SHA256 校验一致(未执行任何升级操作)"
-            } else {
-                "固件下载完成,但无校验依据,仅记录本地 SHA256(未校验,未执行任何升级操作)"
-            };
-            status::set_result(
-                "downloaded",
-                100,
-                msg,
-                Value::Obj(vec![
-                    ("firmware".into(), Value::str(&asset.name)),
-                    ("size".into(), Value::num(d.total)),
-                    ("size_human".into(), Value::str(&github::human_size(d.total))),
-                    ("sha256".into(), Value::str(&integrity.sha256)),
-                    ("verified".into(), Value::Bool(integrity.verified)),
-                    ("hash_source".into(), Value::str(&integrity.source)),
-                    ("version".into(), Value::str(&asset.version)),
-                    ("version_source".into(), Value::str(&asset.version_source)),
-                    ("relation".into(), Value::str(&asset.relation)),
-                    (
-                        "compatibility".into(),
-                        compat.to_json(),
-                    ),
-                    ("dry_run".into(), Value::Bool(true)),
-                ]),
-            );
-            0
-        }
+    let integrity = match verify_firmware_integrity(&device, &asset, false) {
+        Ok(i) => i,
         Err(e) => {
-            status::set_error("failed", 100, "固件下载失败", &e);
-            logline!("[download] failed: {e}");
-            cleanup_download();
-            1
+            status::set_error("failed", 100, "固件校验或兼容性预检失败", &e);
+            return 1;
         }
-    }
+    };
+    // Marker is written only after verification: it advertises "this file
+    // passed the hash gate", which is what makes reuse safe next time.
+    write_download_marker(&asset.updated, &integrity.sha256);
+    let compat = crate::compat::evaluate_asset(&device, &asset.name);
+    let msg = if integrity.verified {
+        "固件下载完成,SHA256 校验一致(未执行任何升级操作)"
+    } else {
+        "固件下载完成,但无校验依据,仅记录本地 SHA256(未校验,未执行任何升级操作)"
+    };
+    status::set_result(
+        "downloaded",
+        100,
+        msg,
+        Value::Obj(vec![
+            ("firmware".into(), Value::str(&asset.name)),
+            ("size".into(), Value::num(total)),
+            (
+                "size_human".into(),
+                Value::str(&github::human_size(total)),
+            ),
+            ("sha256".into(), Value::str(&integrity.sha256)),
+            ("verified".into(), Value::Bool(integrity.verified)),
+            ("hash_source".into(), Value::str(&integrity.source)),
+            ("version".into(), Value::str(&asset.version)),
+            ("version_source".into(), Value::str(&asset.version_source)),
+            ("relation".into(), Value::str(&asset.relation)),
+            ("segments".into(), Value::num(segments as u64)),
+            ("resumed_chunks".into(), Value::num(resumed_chunks as u64)),
+            ("reused".into(), Value::Bool(resumed_chunks == 0 && segments == 0)),
+            ("compatibility".into(), compat.to_json()),
+            ("dry_run".into(), Value::Bool(true)),
+        ]),
+    );
+    0
 }
 
 pub async fn run(force: bool) -> i32 {
@@ -382,13 +450,12 @@ pub async fn run(force: bool) -> i32 {
     }
 
     // ---- Step 1: download (segmented, real progress) ----
-    let skip = std::fs::metadata(TMP_FIRMWARE).map(|m| m.len()).unwrap_or(0) > 0
-        && std::fs::read_to_string(TMP_FIRMWARE_TS)
-            .map(|s| s.trim() == updated)
-            .unwrap_or(false);
-    if skip {
-        logline!("[upgrade] 固件已下载,跳过({})", name);
-        status::set("downloaded", 90, "固件已下载,跳过");
+    // Reuse is gated on the marker's recorded hash (see reuse_download); the
+    // verification below runs in both branches, so a reused file still has to
+    // match the expected checksum before anything touches flash.
+    if reuse_download(&updated, size_hint) {
+        logline!("[upgrade] 复用上一轮已校验的固件副本,跳过传输({})", name);
+        status::set("downloaded", 90, "复用已下载固件,正在重新校验...");
     } else {
         cleanup_download();
         status::set("downloading", 5, "正在下载固件...");
@@ -419,7 +486,6 @@ pub async fn run(force: bool) -> i32 {
                     d.resumed_chunks
                 );
                 status::set("downloaded", 90, "固件下载完成");
-                let _ = std::fs::write(TMP_FIRMWARE_TS, &updated);
             }
             Err(e) => {
                 status::set_error("failed", 100, "固件下载失败", &e);
@@ -444,6 +510,8 @@ pub async fn run(force: bool) -> i32 {
         integrity.source,
         integrity.sha256
     );
+    // Only a verified file earns the reuse marker.
+    write_download_marker(&updated, &integrity.sha256);
 
     // ---- Step 2: record version after a successful backup ----
     // Order matters: writing first would leave a wrong "already upgraded"
