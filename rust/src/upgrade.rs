@@ -452,6 +452,17 @@ pub async fn run(force: bool) -> i32 {
         status::set_error("failed", 100, "拒绝降级", &err);
         return 1;
     }
+    // 同版本不是「可升级」：普通升级路径直接拒绝，重装必须显式 --force
+    // （前端在同版本时也只保留强制升级入口，两处口径一致）。
+    if asset.relation == "same" && !force {
+        let err = format!(
+            "目标版本 v{} 与当前固件同版本，已跳过普通升级(如需同版本重装请使用强制升级)",
+            fw_version
+        );
+        logline!("[upgrade] {err}");
+        status::set_error("failed", 100, "已是最新版本", &err);
+        return 1;
+    }
 
     // ---- Step 1: download (segmented, real progress) ----
     // Reuse is gated on the marker's recorded hash (see reuse_download); the

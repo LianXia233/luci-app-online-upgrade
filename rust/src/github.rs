@@ -227,56 +227,102 @@ struct Decision {
     reason: String,
     /// newer | same | older | unknown
     relation: &'static str,
+    /// decidable | incomparable | suspect
+    state: &'static str,
+    /// Needs an explicit second confirmation (currently only a downgrade).
+    confirm_required: bool,
+}
+
+/// 同版本统一文案：同版本不构成「有更新」，不引导普通升级，并指出重装只能显式强制。
+/// `rebuilt` 传入重新构建的发布时间（`Some`）时把这一点也写清楚，但不因此变成「有新版本」。
+fn same_version_reason(target: &crate::version::Version, rebuilt: Option<&str>) -> String {
+    match rebuilt {
+        Some(ts) => format!(
+            "已是最新 v{}（与当前固件同版本）；该发布已重新构建（发布时间 {}），默认不做普通升级，如需重装请手动点击「强制升级」",
+            target.as_display(),
+            utc_to_local(ts)
+        ),
+        None => format!(
+            "已是最新 v{}（与当前固件同版本），默认不做普通升级；如需同版本重装请手动点击「强制升级」",
+            target.as_display()
+        ),
+    }
+}
+
+/// 判定依据说明：把「本地版本是多少、从哪取的」写进文案，让用户知道自己在确认什么。
+fn local_basis(local: &crate::localver::LocalVersion, cur: &crate::version::Version) -> String {
+    if local.source_text.is_empty() {
+        format!("当前 {}", cur.as_display())
+    } else {
+        format!("当前 {}，依据：{}", cur.as_display(), local.source_text)
+    }
 }
 
 /// Version/update decision.
-/// `target` is the version parsed from the asset name (tag fallback), `current`
-/// is DISTRIB_RELEASE. Both may be unparsable (SNAPSHOT, 自用构建 names); those
-/// cases are reported as "cannot compare" instead of being treated as updates.
+///
+/// `target` is the version parsed from the asset name (tag fallback);
+/// `local_ver` is the local firmware version resolved by `localver::detect()`
+/// (which falls back to the build date when a SNAPSHOT image has no release
+/// number). Three outcomes are kept apart instead of being folded into one
+/// "cannot compare" bucket:
+///   - decidable  本地版本可信，关系为 新/旧/相同
+///   - suspect    本地版本只能靠弱依据（构建时间、修订号、包版本）推断
+///   - incomparable 确实取不到版本号：按「将升级到该发布版本」放行，但明确说明原因
+/// Only a downgrade needs a second confirmation; uncertainty never blocks by
+/// itself, and the model/arch/hash gates stay in force either way.
 fn decide(
     last_ts: Option<&str>,
     last_version: Option<&str>,
     asset_updated: &str,
     target: Option<&crate::version::Version>,
-    current_release: &str,
+    local: &crate::localver::LocalVersion,
+    local_ver: Option<&crate::version::Version>,
 ) -> Decision {
-    let cur = crate::version::pick(current_release);
-    match (cur, target) {
+    let weak = local.confidence != crate::localver::Confidence::Strong;
+    match (local_ver, target) {
         (Some(c), Some(t)) => match c.compare(t) {
             std::cmp::Ordering::Less => Decision {
                 has_update: true,
-                reason: format!("发现新版本 v{}（当前 v{}）", t.as_display(), c.as_display()),
+                reason: if weak {
+                    format!("发现新版本 v{}（{}）", t.as_display(), local_basis(local, c))
+                } else {
+                    format!("发现新版本 v{}（当前 v{}）", t.as_display(), c.as_display())
+                },
                 relation: "newer",
+                state: if weak { "suspect" } else { "decidable" },
+                confirm_required: false,
             },
             std::cmp::Ordering::Greater => Decision {
                 has_update: false,
-                reason: format!(
-                    "Release 版本 v{} 低于当前 v{}，不执行降级（如需降级请强制升级）",
-                    t.as_display(),
-                    c.as_display()
-                ),
+                reason: if weak {
+                    format!(
+                        "Release 版本 v{} 低于当前 {}，已拒绝降级（依据较弱，如确认可强制升级）",
+                        t.as_display(),
+                        local_basis(local, c)
+                    )
+                } else {
+                    format!(
+                        "Release 版本 v{} 低于当前 v{}，不执行降级（如需降级请强制升级）",
+                        t.as_display(),
+                        c.as_display()
+                    )
+                },
                 relation: "older",
+                state: if weak { "suspect" } else { "decidable" },
+                confirm_required: true,
             },
             std::cmp::Ordering::Equal => {
-                let already = last_version == Some(t.as_display().as_str())
-                    && last_ts == Some(asset_updated);
-                if !already && last_version == Some(t.as_display().as_str()) && !asset_updated.is_empty()
-                {
-                    Decision {
-                        has_update: true,
-                        reason: format!(
-                            "v{} 重新构建（发布时间 {}）",
-                            t.as_display(),
-                            utc_to_local(asset_updated)
-                        ),
-                        relation: "same",
-                    }
-                } else {
-                    Decision {
-                        has_update: false,
-                        reason: format!("已是最新 v{}", t.as_display()),
-                        relation: "same",
-                    }
+                // 同版本一律不算「有更新」：Release 被重新构建也只是重刷同一版本，
+                // 重装必须由用户显式点「强制升级」，不能摆成普通升级入口。
+                let recorded = last_version == Some(t.as_display().as_str());
+                let rebuilt =
+                    recorded && !asset_updated.is_empty() && last_ts != Some(asset_updated);
+                Decision {
+                    has_update: false,
+                    reason: same_version_reason(t, rebuilt.then_some(asset_updated)),
+                    relation: "same",
+                    state: if weak { "suspect" } else { "decidable" },
+                    confirm_required: false,
                 }
             }
         },
@@ -286,18 +332,27 @@ fn decide(
             if already {
                 Decision {
                     has_update: false,
-                    reason: format!("已是最新 v{}", t.as_display()),
+                    reason: same_version_reason(t, None),
                     relation: "same",
+                    state: "incomparable",
+                    confirm_required: false,
                 }
             } else {
+                let marker = if local.raw.is_empty() {
+                    "未知"
+                } else {
+                    local.raw.as_str()
+                };
                 Decision {
                     has_update: true,
                     reason: format!(
-                        "当前固件版本无法解析（{}），Release 版本 v{}，请确认后升级",
-                        if current_release.is_empty() { "未知" } else { current_release },
+                        "自用构建固件没有可比较的版本号（本地标记 {}），将按「升级到 v{}」处理；机型、架构与哈希校验仍然生效",
+                        marker,
                         t.as_display()
                     ),
                     relation: "unknown",
+                    state: "incomparable",
+                    confirm_required: false,
                 }
             }
         }
@@ -310,12 +365,16 @@ fn decide(
                         utc_to_local(asset_updated)
                     ),
                     relation: "unknown",
+                    state: "incomparable",
+                    confirm_required: false,
                 }
             } else {
                 Decision {
                     has_update: false,
                     reason: "已是最新（按发布时间判定）".into(),
                     relation: "unknown",
+                    state: "incomparable",
+                    confirm_required: false,
                 }
             }
         }
@@ -555,7 +614,14 @@ pub async fn check(client: &reqwest::Client) -> Value {
     };
     let (cur_id, cur_release, cur_revision) = read_distrib();
     let target_ver = crate::version::pick(&fw_version);
-    let cur_ver = crate::version::pick(&cur_release);
+    // 本机版本按可信度逐级探测（自用 SNAPSHOT 构建会退到构建时间）。
+    let local = crate::localver::detect();
+    let local_ver = local.comparable(target_ver.as_ref());
+    let local_display = match &local_ver {
+        Some(v) => v.as_display(),
+        None if local.source == "none" => local.raw.clone(),
+        None => String::new(),
+    };
 
     let last_ts = uci::get("last_upgrade_ts");
     let last_version = uci::get("last_upgrade_version");
@@ -565,7 +631,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
         last_version.as_deref(),
         &updated,
         target_ver.as_ref(),
-        &cur_release,
+        &local,
+        local_ver.as_ref(),
     );
 
     let mut sha256_hash = uci::get("expected_sha256").unwrap_or_default().trim().to_lowercase();
@@ -633,6 +700,13 @@ pub async fn check(client: &reqwest::Client) -> Value {
         compat.model_check,
         compat.reason
     );
+    logline!(
+        "[check] 本机版本: {} (来源 {} / {}, 判定状态 {})",
+        if local_display.is_empty() { "<无法比较>" } else { &local_display },
+        local.source,
+        local.confidence.as_str(),
+        decision.state
+    );
     for line in &compat.basis {
         logline!("[check] 依据: {line}");
     }
@@ -643,10 +717,16 @@ pub async fn check(client: &reqwest::Client) -> Value {
     current.push(("revision".into(), Value::str(&cur_revision)));
     current.push((
         "parsed".into(),
-        match &cur_ver {
+        match &local_ver {
             Some(v) => Value::str(&v.as_display()),
             None => Value::Null,
         },
+    ));
+    current.push(("version_source".into(), Value::str(&local.source)));
+    current.push(("version_source_text".into(), Value::str(&local.source_text)));
+    current.push((
+        "version_confidence".into(),
+        Value::str(local.confidence.as_str()),
     ));
 
     Value::Obj(vec![
@@ -667,9 +747,21 @@ pub async fn check(client: &reqwest::Client) -> Value {
             "version".into(),
             Value::Obj(vec![
                 ("current".into(), Value::str(&cur_release)),
+                ("local".into(), Value::str(&local_display)),
+                ("local_source".into(), Value::str(&local.source)),
+                ("local_source_text".into(), Value::str(&local.source_text)),
+                (
+                    "local_confidence".into(),
+                    Value::str(local.confidence.as_str()),
+                ),
                 ("target".into(), Value::str(&fw_version)),
                 ("relation".into(), Value::str(decision.relation)),
+                ("state".into(), Value::str(decision.state)),
                 ("source".into(), Value::str(version_source)),
+                (
+                    "confirm_required".into(),
+                    Value::Bool(decision.confirm_required),
+                ),
             ]),
         ),
         ("has_update".into(), Value::Bool(decision.has_update)),
@@ -834,7 +926,7 @@ pub fn utc_to_local(iso: &str) -> String {
     }
     let days = days_from_civil(y, mo, d);
     let epoch = days * 86400 + h * 3600 + mi * 60 + s + 8 * 3600;
-    let (y2, mo2, d2) = civil_from_days(epoch.div_euclid(86400));
+    let (y2, mo2, d2) = crate::version::civil_from_days(epoch.div_euclid(86400));
     let sec = epoch.rem_euclid(86400);
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
@@ -855,19 +947,6 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let doy = (153 * mp + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146097 + doe - 719468
-}
-
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 pub fn human_size(n: u64) -> String {
@@ -925,68 +1004,163 @@ mod tests {
         assert!(err.contains("标签过滤正则无效"));
     }
 
+    /// 构造一个「发行信息里直接读到版本号」的本机版本
+    fn local_of(value: &str) -> crate::localver::LocalVersion {
+        crate::localver::LocalVersion {
+            version: crate::version::pick(value),
+            raw: value.to_string(),
+            source: "DISTRIB_RELEASE".into(),
+            source_text: "发行信息 DISTRIB_RELEASE".into(),
+            confidence: if crate::version::pick(value).is_some() {
+                crate::localver::Confidence::Strong
+            } else {
+                crate::localver::Confidence::None
+            },
+            build_ymd: None,
+        }
+    }
+
+    /// 构造一个「只能靠构建时间推断」的本机版本（自用 SNAPSHOT）
+    fn local_by_build_date(y: i64, m: u32, d: u32) -> crate::localver::LocalVersion {
+        crate::localver::LocalVersion {
+            version: None,
+            raw: "SNAPSHOT".into(),
+            source: "build_time".into(),
+            source_text: format!("固件构建时间 {y}-{m:02}-{d:02}（弱依据，仅能与日期型标签比较）"),
+            confidence: crate::localver::Confidence::Weak,
+            build_ymd: Some((y, m, d)),
+        }
+    }
+
+    fn decide_with(
+        target: Option<&crate::version::Version>,
+        local: &crate::localver::LocalVersion,
+        last_ts: Option<&str>,
+        last_version: Option<&str>,
+    ) -> Decision {
+        let local_ver = local.comparable(target);
+        decide(
+            last_ts,
+            last_version,
+            "2026-01-01T00:00:00Z",
+            target,
+            local,
+            local_ver.as_ref(),
+        )
+    }
+
     #[test]
     fn decide_newer() {
-        let d = decide(Some("t"), Some("24.10.0"), "2026-01-01T00:00:00Z", Some(&v("25.12.0")), "24.10.0");
+        let t = v("25.12.0");
+        let d = decide_with(Some(&t), &local_of("24.10.0"), Some("t"), Some("24.10.0"));
         assert!(d.has_update);
         assert_eq!(d.relation, "newer");
+        assert_eq!(d.state, "decidable");
+        assert!(!d.confirm_required);
         assert!(d.reason.contains("新版本 v25.12.0"));
     }
 
     #[test]
     fn decide_downgrade_is_not_an_update() {
-        let d = decide(Some("t"), Some("25.12.0"), "2026-01-01T00:00:00Z", Some(&v("24.10.0")), "25.12.0");
+        let t = v("24.10.0");
+        let d = decide_with(Some(&t), &local_of("25.12.0"), Some("t"), Some("25.12.0"));
         assert!(!d.has_update);
         assert_eq!(d.relation, "older");
+        // 降级才需要二次确认
+        assert!(d.confirm_required);
         assert!(d.reason.contains("不执行降级"));
     }
 
     #[test]
     fn decide_up_to_date() {
-        let d = decide(
+        let t = v("25.12.0");
+        let d = decide_with(
+            Some(&t),
+            &local_of("25.12.0"),
             Some("2026-01-01T00:00:00Z"),
             Some("25.12.0"),
-            "2026-01-01T00:00:00Z",
-            Some(&v("25.12.0")),
-            "25.12.0",
         );
         assert!(!d.has_update);
         assert_eq!(d.relation, "same");
         assert!(d.reason.contains("已是最新"));
+        // 同版本不引导普通升级，重装只提「强制升级」
+        assert!(d.reason.contains("同版本"));
+        assert!(d.reason.contains("强制升级"));
+        assert!(!d.reason.contains("新版本"));
     }
 
     #[test]
     fn decide_first_run_same_version_is_not_an_update() {
         // default last_upgrade_version '0' must not fabricate an update
-        let d = decide(Some("0"), Some("0"), "2026-01-01T00:00:00Z", Some(&v("25.12.0")), "25.12.0");
+        let t = v("25.12.0");
+        let d = decide_with(Some(&t), &local_of("25.12.0"), Some("0"), Some("0"));
         assert!(!d.has_update);
         assert_eq!(d.relation, "same");
     }
 
     #[test]
-    fn decide_recompiled_same_version() {
+    fn decide_recompiled_same_version_is_not_an_update() {
+        // 同版本号但 Release 被重新构建：仍不是「有更新」，重装要走强制升级
+        let t = v("25.12.0");
+        let local = local_of("25.12.0");
+        let local_ver = local.comparable(Some(&t));
         let d = decide(
             Some("2026-01-01T00:00:00Z"),
             Some("25.12.0"),
             "2026-02-02T00:00:00Z",
-            Some(&v("25.12.0")),
-            "25.12.0",
+            Some(&t),
+            &local,
+            local_ver.as_ref(),
         );
-        assert!(d.has_update);
+        assert!(!d.has_update, "同版本重新构建不应被当成新版本");
+        assert_eq!(d.relation, "same");
         assert!(d.reason.contains("重新构建"));
+        assert!(d.reason.contains("强制升级"));
     }
 
     #[test]
-    fn decide_snapshot_device() {
-        let d = decide(Some("t"), Some("0"), "2026-01-01T00:00:00Z", Some(&v("25.12.0")), "SNAPSHOT");
-        assert!(d.has_update);
+    fn decide_snapshot_device_is_allowed_not_blocked() {
+        // SNAPSHOT 固件确实取不到版本号：放行，但状态必须是「无法比较」
+        let t = v("25.12.0");
+        let d = decide_with(Some(&t), &local_of("SNAPSHOT"), Some("t"), Some("0"));
+        assert!(d.has_update, "无法比较不应阻断升级");
         assert_eq!(d.relation, "unknown");
-        assert!(d.reason.contains("无法解析"));
+        assert_eq!(d.state, "incomparable");
+        assert!(!d.confirm_required);
+        assert!(d.reason.contains("没有可比较的版本号"));
+        // 必须说明其余安全闸仍然生效，且不再是「请确认后升级」
+        assert!(d.reason.contains("仍然生效"));
+        assert!(!d.reason.contains("请确认后升级"));
+    }
+
+    #[test]
+    fn decide_self_build_by_build_time() {
+        // 自用 SNAPSHOT 构建：版本从构建时间推断，结论可用但要标明弱依据
+        let t = v("26.11.08");
+        let d = decide_with(Some(&t), &local_by_build_date(2026, 11, 7), Some("old"), Some("0"));
+        assert!(d.has_update);
+        assert_eq!(d.relation, "newer");
+        assert_eq!(d.state, "suspect");
+        assert!(d.reason.contains("26.11.07"));
+        assert!(d.reason.contains("依据"));
+    }
+
+    #[test]
+    fn decide_build_time_vs_non_date_release_is_incomparable() {
+        // 构建时间只能和日期型标签比较；遇到 24.10.0 这类普通发布号必须放弃比较，
+        // 否则 26.11.07 > 24.10.0 会被当成当前版本更高而判定降级、挡住升级。
+        let t = v("24.10.0");
+        let d = decide_with(Some(&t), &local_by_build_date(2026, 11, 7), Some("old"), Some("0"));
+        assert!(d.has_update, "不可比时应放行升级");
+        assert_eq!(d.relation, "unknown");
+        assert_eq!(d.state, "incomparable");
+        assert!(!d.confirm_required);
+        assert!(d.reason.contains("没有可比较的版本号"));
     }
 
     #[test]
     fn decide_self_build_without_version() {
-        let d = decide(Some("old"), Some("0"), "2026-01-01T00:00:00Z", None, "自用构建");
+        let d = decide_with(None, &local_of("自用构建"), Some("old"), Some("0"));
         assert!(d.has_update);
         assert_eq!(d.relation, "unknown");
         assert!(d.reason.contains("发布时间"));

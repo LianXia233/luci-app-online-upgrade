@@ -8,6 +8,7 @@ mod hash;
 mod http;
 mod json;
 mod lock;
+mod localver;
 mod status;
 mod uci;
 mod upgrade;
