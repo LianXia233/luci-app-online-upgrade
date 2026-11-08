@@ -31,6 +31,8 @@
 - **撞锁时前端把 `ok:false` 当成“已启动”**：ubus 在 `result[0]==0` 时直接 resolve 业务 payload，`{ok:false,error}` 不会 reject。原实现继续进入轮询并隐藏两个升级按钮（`check` 则白等 20 秒给泛化提示），用户只能刷新页面。现在两处都先判 `ok`，立即显示后端错误、恢复按钮、不进入轮询。
 - **自用 SNAPSHOT 固件被判定成「无法比较」而挡住升级**：`DISTRIB_RELEASE` 字面是 `SNAPSHOT`，取不到版本号，版本方向恒为 `unknown`，界面只给一句「当前固件版本无法解析（SNAPSHOT），Release 版本 vX，请确认后升级」，把自用构建的设备挡在门外。现在本机版本按可信度逐级探测：构建写入的版本文件 → `DISTRIB_VERSION` / `DISTRIB_RELEASE` / os-release `VERSION_ID` → `DISTRIB_DESCRIPTION` / `DISTRIB_REVISION` / `BUILD_ID` / `/etc/openwrt_version` → `base-files` 包版本 → 固件构建时间，并把命中的来源随结果返回（`local` / `local_source` / `local_source_text` / `local_confidence`）。判定区分三种状态：`decidable`（可信来源，可比较方向）、`suspect`（只有构建时间/修订号等弱依据，结论仅供参考）、`incomparable`（确实取不到版本号）。无法比较时不再阻断，而是按「将升级到该发布版本」放行并说明原因，机型匹配、架构匹配与 SHA-256 校验照旧生效；只有降级（`older`，`confirm_required=true`）才需要二次确认。构建时间与 `YYYY.MM.DD` 形态的标签比较时自动对齐年份位数，避免 `26.11.07` 与 `2026.11.08` 被比成降级。
 
+- **同版本仍被提示「有新版本」并摆出普通升级按钮**：`relation == same` 时旧逻辑在「同一版本号但 Release 更新时间变化（重新构建）」这一子情形给出 `has_update=true`，界面据此显示「有新版本」并把普通升级按钮当成主操作，用户很容易把重装误解为升级。现在同版本一律 `has_update=false`，文案写明「已是最新（同版本）」并把重装指向强制升级；前端在 `relation == same` 时不显示「有新版本」角标、不展示普通升级按钮，只保留手动点击的「同版本重装（强制升级）」；后端 `upgrade` 在不带 `--force` 时同样拒绝同版本。降级需确认、无法比较放行的口径不变。
+
 ### Added
 
 - **界面展示判定依据**：检测结果卡片现在逐条显示命中哪条规则、比对了哪个标识（本机标识 / 架构 / 资产声明架构）、版本关系与哈希来源；判定失败时能看出是哪一步没通过（架构冲突 / 资产未声明架构 / 机型未匹配）。

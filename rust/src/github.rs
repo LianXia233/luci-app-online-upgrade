@@ -233,6 +233,22 @@ struct Decision {
     confirm_required: bool,
 }
 
+/// 同版本统一文案：同版本不构成「有更新」，不引导普通升级，并指出重装只能显式强制。
+/// `rebuilt` 传入重新构建的发布时间（`Some`）时把这一点也写清楚，但不因此变成「有新版本」。
+fn same_version_reason(target: &crate::version::Version, rebuilt: Option<&str>) -> String {
+    match rebuilt {
+        Some(ts) => format!(
+            "已是最新 v{}（与当前固件同版本）；该发布已重新构建（发布时间 {}），默认不做普通升级，如需重装请手动点击「强制升级」",
+            target.as_display(),
+            utc_to_local(ts)
+        ),
+        None => format!(
+            "已是最新 v{}（与当前固件同版本），默认不做普通升级；如需同版本重装请手动点击「强制升级」",
+            target.as_display()
+        ),
+    }
+}
+
 /// 判定依据说明：把「本地版本是多少、从哪取的」写进文案，让用户知道自己在确认什么。
 fn local_basis(local: &crate::localver::LocalVersion, cur: &crate::version::Version) -> String {
     if local.source_text.is_empty() {
@@ -296,29 +312,17 @@ fn decide(
                 confirm_required: true,
             },
             std::cmp::Ordering::Equal => {
-                let already = last_version == Some(t.as_display().as_str())
-                    && last_ts == Some(asset_updated);
-                if !already && last_version == Some(t.as_display().as_str()) && !asset_updated.is_empty()
-                {
-                    Decision {
-                        has_update: true,
-                        reason: format!(
-                            "v{} 重新构建（发布时间 {}）",
-                            t.as_display(),
-                            utc_to_local(asset_updated)
-                        ),
-                        relation: "same",
-                        state: if weak { "suspect" } else { "decidable" },
-                        confirm_required: false,
-                    }
-                } else {
-                    Decision {
-                        has_update: false,
-                        reason: format!("已是最新 v{}", t.as_display()),
-                        relation: "same",
-                        state: if weak { "suspect" } else { "decidable" },
-                        confirm_required: false,
-                    }
+                // 同版本一律不算「有更新」：Release 被重新构建也只是重刷同一版本，
+                // 重装必须由用户显式点「强制升级」，不能摆成普通升级入口。
+                let recorded = last_version == Some(t.as_display().as_str());
+                let rebuilt =
+                    recorded && !asset_updated.is_empty() && last_ts != Some(asset_updated);
+                Decision {
+                    has_update: false,
+                    reason: same_version_reason(t, rebuilt.then_some(asset_updated)),
+                    relation: "same",
+                    state: if weak { "suspect" } else { "decidable" },
+                    confirm_required: false,
                 }
             }
         },
@@ -328,7 +332,7 @@ fn decide(
             if already {
                 Decision {
                     has_update: false,
-                    reason: format!("已是最新 v{}", t.as_display()),
+                    reason: same_version_reason(t, None),
                     relation: "same",
                     state: "incomparable",
                     confirm_required: false,
@@ -1079,6 +1083,10 @@ mod tests {
         assert!(!d.has_update);
         assert_eq!(d.relation, "same");
         assert!(d.reason.contains("已是最新"));
+        // 同版本不引导普通升级，重装只提「强制升级」
+        assert!(d.reason.contains("同版本"));
+        assert!(d.reason.contains("强制升级"));
+        assert!(!d.reason.contains("新版本"));
     }
 
     #[test]
@@ -1091,7 +1099,8 @@ mod tests {
     }
 
     #[test]
-    fn decide_recompiled_same_version() {
+    fn decide_recompiled_same_version_is_not_an_update() {
+        // 同版本号但 Release 被重新构建：仍不是「有更新」，重装要走强制升级
         let t = v("25.12.0");
         let local = local_of("25.12.0");
         let local_ver = local.comparable(Some(&t));
@@ -1103,8 +1112,10 @@ mod tests {
             &local,
             local_ver.as_ref(),
         );
-        assert!(d.has_update);
+        assert!(!d.has_update, "同版本重新构建不应被当成新版本");
+        assert_eq!(d.relation, "same");
         assert!(d.reason.contains("重新构建"));
+        assert!(d.reason.contains("强制升级"));
     }
 
     #[test]
