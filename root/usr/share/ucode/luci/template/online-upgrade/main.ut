@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.3.0">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.3.1">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -581,6 +581,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.3.0"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.3.1"></script>
 
 {% include(`footer`) %}
