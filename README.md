@@ -176,7 +176,7 @@
 | 2 | `/etc/openwrt_release` 的 `DISTRIB_VERSION`、`DISTRIB_RELEASE`；`/etc/os-release` 的 `VERSION_ID` | 可信 | `24.10.0` |
 | 3 | `DISTRIB_DESCRIPTION`（内嵌版本号时） | 可信 | `ImmortalWrt 24.10.0 r28000-…` |
 | 4 | `DISTRIB_REVISION`、`BUILD_ID`、`/etc/openwrt_version`、`base-files` 包版本 | 弱 | `r0-23a1cd3`、`0~23a1cd3` |
-| 5 | 固件构建时间（`/etc/openwrt_release` 的修改时间，UTC+8） | 弱 | `26.11.07`（仅能与 `YY.MM.DD` 形态的标签按日期比较；目标标签是 `YYYY.MM.DD` 时自动对齐位数） |
+| 5 | 固件构建时间（`/etc/openwrt_release` 的修改时间，UTC+8） | 弱 | `26.11.07`（只与日期型标签（`YY.MM.DD` / `YYYY.MM.DD`，月日合法）比较，并按目标年份位数对齐；目标不是日期型标签时**不比较**） |
 
 `SNAPSHOT` 这类非版本文本不会被当成版本号；拿不到任何来源时，结果里明确写「无法比较」，不会伪造版本。
 
@@ -192,6 +192,7 @@
 | 只有弱依据（构建时间、修订号、包版本） | 高于当前 | `newer` | `suspect` | 允许升级，界面标注「依据较弱」并给出取到的版本与来源 |
 | 只有弱依据 | 等于 / 低于当前 | `same` / `older` | `suspect` | 同版本提示已是最新（同版本重装只能强制升级）；降级仍拒绝并需强制确认 |
 | 确实取不到（如 `SNAPSHOT` 且无任何其他来源） | 任意 | `unknown` | `incomparable` | **放行**：按「将升级到该发布版本」处理，界面说明原因；机型匹配、架构匹配与 SHA-256 校验全部照旧生效 |
+| 只有构建时间，但目标不是日期型标签（如 `24.10.0`、`25.12.0.1`） | 任意 | `unknown` | `incomparable` | **不比较、放行**：构建时间与普通发布号不是同一坐标系（`26.11.07` 对 `24.10.0` 只会得出错误方向），按「将升级到该发布版本」处理，其余校验照旧 |
 | 任意 | 无法解析 | `unknown` | `incomparable` | 按 Release 发布时间提示 |
 
 界面上除了关系结论，还会显示「本地版本」「依据」「判定状态」三个标签，用户能看出这个结论是基于哪个来源、哪一次比较得出的（`version.confirm_required` 同时提供给 API 调用方）。

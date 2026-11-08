@@ -11,7 +11,8 @@
 //   2. `DISTRIB_VERSION`, `DISTRIB_RELEASE`, os-release `VERSION_ID`
 //   3. `DISTRIB_DESCRIPTION`, `DISTRIB_REVISION`, `BUILD_ID`, `/etc/openwrt_version`
 //   4. the `base-files` package version
-//   5. the firmware build time (weak: only meaningful against YY.MM.DD style tags)
+//   5. the firmware build time (weak: only meaningful against date-shaped tags
+//      such as YY.MM.DD / YYYY.MM.DD; other targets are left incomparable)
 //
 // Nothing here guesses: when no source yields a parseable version, the caller
 // gets `Confidence::None` and reports "cannot compare" honestly.
@@ -65,15 +66,20 @@ impl LocalVersion {
 
     /// Version usable for comparison against `target`.
     ///
-    /// A build date is emitted with the same year width as the target version:
-    /// self-build tags use `YY.MM.DD`, while a release may use `YYYY.MM.DD`.
-    /// Without this alignment `26.11.07` would compare as `26 < 2026` and be
-    /// mistaken for a downgrade.
+    /// A build date is only meaningful against a date-shaped tag: self-build
+    /// tags use `YY.MM.DD` while a release may use `YYYY.MM.DD`, so the year
+    /// width is aligned to the target (otherwise `26.11.07` would compare as
+    /// `26 < 2026` and be taken for a downgrade). Against a normal release
+    /// number such as `24.10.0` the date must not be compared at all — the
+    /// result would be meaningless and could hide a real update — so this
+    /// returns `None` and the caller reports "cannot compare" instead.
     pub fn comparable(&self, target: Option<&Version>) -> Option<Version> {
         if let Some((y, m, d)) = self.build_ymd {
-            let four_digit = target
-                .map(|t| t.nums.first().copied().unwrap_or(0) >= 1900)
-                .unwrap_or(false);
+            let target = target?;
+            if !target.is_date_tag() {
+                return None;
+            }
+            let four_digit = target.nums.first().copied().unwrap_or(0) >= 1900;
             return crate::version::from_ymd(
                 if four_digit { y as u64 } else { (y % 100) as u64 },
                 m,
@@ -333,6 +339,23 @@ mod tests {
         // 2 位与 4 位不能混比：对齐后 26.11.07 < 26.11.08
         assert!(short.compare(&pick("26.11.08").unwrap()).is_lt());
         assert!(long.compare(&pick("2026.11.08").unwrap()).is_lt());
+    }
+
+    #[test]
+    fn build_time_skips_non_date_target() {
+        let local = LocalVersion {
+            version: None,
+            raw: "SNAPSHOT".into(),
+            source: "build_time".into(),
+            source_text: "固件构建时间".into(),
+            confidence: Confidence::Weak,
+            build_ymd: Some((2026, 11, 7)),
+        };
+        // 普通发布号与构建时间不可比：直接放弃比较，交给「无法比较」放行，
+        // 否则 26.11.07 > 24.10.0 会被当成当前版本更高而拒绝升级。
+        assert!(local.comparable(Some(&pick("24.10.0").unwrap())).is_none());
+        assert!(local.comparable(Some(&pick("25.12.0.1").unwrap())).is_none());
+        assert!(local.comparable(None).is_none());
     }
 
     #[test]

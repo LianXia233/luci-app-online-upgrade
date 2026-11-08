@@ -1146,6 +1146,19 @@ mod tests {
     }
 
     #[test]
+    fn decide_build_time_vs_non_date_release_is_incomparable() {
+        // 构建时间只能和日期型标签比较；遇到 24.10.0 这类普通发布号必须放弃比较，
+        // 否则 26.11.07 > 24.10.0 会被当成当前版本更高而判定降级、挡住升级。
+        let t = v("24.10.0");
+        let d = decide_with(Some(&t), &local_by_build_date(2026, 11, 7), Some("old"), Some("0"));
+        assert!(d.has_update, "不可比时应放行升级");
+        assert_eq!(d.relation, "unknown");
+        assert_eq!(d.state, "incomparable");
+        assert!(!d.confirm_required);
+        assert!(d.reason.contains("没有可比较的版本号"));
+    }
+
+    #[test]
     fn decide_self_build_without_version() {
         let d = decide_with(None, &local_of("自用构建"), Some("old"), Some("0"));
         assert!(d.has_update);
