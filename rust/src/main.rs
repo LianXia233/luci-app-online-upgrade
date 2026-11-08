@@ -11,6 +11,7 @@ mod status;
 mod uci;
 mod upgrade;
 mod util;
+mod version;
 
 use json::Value;
 
