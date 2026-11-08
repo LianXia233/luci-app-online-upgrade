@@ -11,6 +11,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const LOCK_FILE: &str = "/tmp/online-upgrade.lock";
 
+/// Grace period before an unreadable lock file is treated as stale.
+///
+/// `acquire()` creates the file and only then writes `"<pid> <owner> <ts>"` into
+/// it. A contender that lands in that window sees an empty (or half-written)
+/// lock, and reclaiming it would let two processes run at once against the same
+/// firmware and status files. So a fresh-but-unreadable lock is reported as
+/// busy. The age threshold keeps a crash between create and write from holding
+/// the lock forever.
+const UNREADABLE_LOCK_GRACE_SECS: u64 = 2;
+
 pub struct Lock {
     _priv: (),
 }
@@ -40,6 +50,14 @@ fn read_owner() -> Option<(u32, String)> {
     Some((pid, who))
 }
 
+/// Age of the lock file in whole seconds, measured on the file's mtime rather
+/// than on wall-clock differences between processes.
+fn lock_age_secs() -> Option<u64> {
+    let modified = fs::metadata(LOCK_FILE).ok()?.modified().ok()?;
+    let mtime = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    Some(now().saturating_sub(mtime))
+}
+
 /// Acquire the global operation lock. On failure the caller must NOT write the
 /// status file: the process that owns the lock is the one reporting progress.
 pub fn acquire(owner: &str) -> Result<Lock, String> {
@@ -59,7 +77,16 @@ pub fn acquire(owner: &str) -> Result<Lock, String> {
                         }
                         return Err(format!("已有任务正在运行 (pid {pid}, {who})"));
                     }
-                    // unreadable lock file: treat it as stale once
+                    // 锁文件存在但读不出 PID：可能正好落在 owner 的
+                    // create_new 与 writeln 之间（空文件或首行只写了一半）。
+                    // 这时删锁会让两个进程同时持有锁，所以宽限期内一律按忙处理；
+                    // 超过宽限期仍不可读，才认定是崩溃残留并回收，避免永久占锁。
+                    let fresh = lock_age_secs()
+                        .map(|age| age < UNREADABLE_LOCK_GRACE_SECS)
+                        .unwrap_or(false);
+                    if fresh {
+                        return Err("已有任务正在运行 (锁文件刚被创建)".into());
+                    }
                     let _ = fs::remove_file(LOCK_FILE);
                     continue;
                 }
