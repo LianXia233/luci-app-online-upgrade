@@ -24,13 +24,14 @@
 .ou-hero-card {
 	background: linear-gradient(135deg, #ffffff 0%, #f8fafc 60%, #f1f5f9 100%) !important;
 	border: 1px solid #e2e8f0 !important;
-	border-radius: 20px !important;
-	padding: 28px 36px !important;
-	margin-bottom: 24px !important;
+	border-radius: 18px !important;
+	/* Compact hero: keep the banner slim so the action cards stay above the fold. */
+	padding: 16px 28px !important;
+	margin-bottom: 18px !important;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 32px;
+	gap: 24px;
 	box-shadow: 0 10px 30px -4px rgba(15, 23, 42, 0.05), 0 4px 8px -2px rgba(15, 23, 42, 0.02) !important;
 	position: relative;
 	overflow: hidden;
@@ -50,14 +51,15 @@
 
 .ou-hero-content {
 	flex: 1;
-	min-width: 300px;
+	/* min-width:0 lets the text column shrink instead of forcing the card taller. */
+	min-width: 0;
 	z-index: 1;
 }
 
 .ou-hero-tags {
 	display: flex;
 	gap: 8px;
-	margin-bottom: 12px;
+	margin-bottom: 8px;
 	flex-wrap: wrap;
 }
 
@@ -65,9 +67,9 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	padding: 4px 10px;
+	padding: 3px 9px;
 	border-radius: 999px;
-	font-size: 11.5px;
+	font-size: 11px;
 	font-weight: 600;
 	letter-spacing: 0.02em;
 }
@@ -85,30 +87,30 @@
 }
 
 .ou-hero-pill-icon {
-	width: 13px;
-	height: 13px;
+	width: 12px;
+	height: 12px;
 }
 
 .ou-hero-title {
-	font-size: 26px !important;
+	font-size: 23px !important;
 	font-weight: 800 !important;
 	color: #0f172a !important;
 	letter-spacing: -0.03em !important;
-	margin: 0 0 8px !important;
-	line-height: 1.25 !important;
+	margin: 0 0 6px !important;
+	line-height: 1.2 !important;
 }
 
 .ou-hero-desc {
-	font-size: 13.5px !important;
-	line-height: 1.6 !important;
+	font-size: 13px !important;
+	line-height: 1.5 !important;
 	color: #64748b !important;
-	margin: 0 0 16px !important;
+	margin: 0 0 12px !important;
 	max-width: 560px;
 }
 
 .ou-hero-features {
 	display: flex;
-	gap: 12px;
+	gap: 8px;
 	flex-wrap: wrap;
 }
 
@@ -116,24 +118,24 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	font-size: 12px;
+	font-size: 11.5px;
 	font-weight: 500;
 	color: #475569 !important;
 	background: #ffffff !important;
 	border: 1px solid #e2e8f0 !important;
-	padding: 5px 12px;
+	padding: 4px 10px;
 	border-radius: 8px;
 	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 
 .ou-feature-item svg {
-	width: 14px;
-	height: 14px;
+	width: 13px;
+	height: 13px;
 	color: #2563eb !important;
 }
 
 .ou-hero-visual {
-	flex: 0 0 380px;
+	flex: 0 0 300px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -143,7 +145,7 @@
 .ou-hero-svg {
 	width: 100%;
 	height: auto;
-	max-height: 160px;
+	max-height: 118px;
 	filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.04));
 }
 
@@ -1455,17 +1457,28 @@
 		grid-template-columns: repeat(2, 1fr);
 	}
 
+	/* Keep the two-column hero on tablets: stacking it here doubled the banner
+	   height (~400px) and pushed the action cards off the first screen. */
 	.ou-hero-card {
-		flex-direction: column;
-		align-items: flex-start;
-		padding: 24px 28px !important;
+		padding: 16px 22px !important;
+		gap: 16px;
+	}
+
+	.ou-hero-content {
+		min-width: 0;
+	}
+
+	.ou-hero-desc {
+		font-size: 12.5px !important;
 	}
 
 	.ou-hero-visual {
-		width: 100%;
-		flex: none;
-		max-height: 140px;
-		margin-top: 10px;
+		flex: 0 0 220px;
+		max-height: 96px;
+	}
+
+	.ou-hero-svg {
+		max-height: 96px;
 	}
 }
 
@@ -1475,34 +1488,78 @@
 		padding: 4px 6px 40px;
 	}
 
+	/* Phone hero: a compact header instead of a full-height landing banner.
+	   The decorative SVG is dropped and feature chips flow horizontally, so
+	   the first action card is visible without scrolling. */
 	.ou-hero-card {
-		padding: 20px 18px !important;
-		border-radius: 16px !important;
-		gap: 16px;
+		padding: 14px 16px !important;
+		border-radius: 14px !important;
+		gap: 10px;
+		margin-bottom: 14px !important;
+	}
+
+	.ou-hero-card::before {
+		top: -160px;
+		right: -100px;
+		width: 260px;
+		height: 260px;
+	}
+
+	.ou-hero-content {
+		min-width: 0;
+	}
+
+	.ou-hero-tags {
+		gap: 6px;
+		margin-bottom: 8px;
+	}
+
+	.ou-hero-pill {
+		padding: 3px 8px;
+		font-size: 10.5px;
+	}
+
+	.ou-hero-pill-icon {
+		width: 11px;
+		height: 11px;
 	}
 
 	.ou-hero-title {
-		font-size: 20px !important;
+		font-size: 19px !important;
+		margin-bottom: 4px !important;
+		line-height: 1.2 !important;
 	}
 
 	.ou-hero-desc {
-		font-size: 12.5px !important;
-		margin-bottom: 12px !important;
+		font-size: 12px !important;
+		line-height: 1.45 !important;
+		margin-bottom: 10px !important;
+		/* Full copy is kept on phones (no line-clamp): the README promises
+		   no truncated text, so only spacing/type scale is reduced here. */
+		max-width: none;
 	}
 
 	.ou-hero-features {
-		gap: 8px;
-		flex-direction: column;
+		gap: 6px;
+		flex-direction: row;
+		flex-wrap: wrap;
 	}
 
 	.ou-feature-item {
-		width: 100%;
-		font-size: 11.5px;
+		width: auto;
+		padding: 3px 8px;
+		font-size: 11px;
+		border-radius: 7px;
 	}
 
+	.ou-feature-item svg {
+		width: 12px;
+		height: 12px;
+	}
+
+	/* 460x170 artwork is unreadable at phone width and only costs vertical space. */
 	.ou-hero-visual {
-		width: 100%;
-		max-height: 110px;
+		display: none !important;
 	}
 
 	.ou-card {
@@ -1660,5 +1717,22 @@
 
 	.ou-countdown {
 		font-size: 38px !important;
+	}
+}
+
+/* Very small phones (<= 380px): keep pills and feature chips on fewer lines. */
+@media (max-width: 380px) {
+	.ou-hero-title {
+		font-size: 18px !important;
+	}
+
+	.ou-hero-pill {
+		font-size: 10px;
+		padding: 2px 7px;
+	}
+
+	.ou-feature-item {
+		font-size: 10.5px;
+		padding: 3px 7px;
 	}
 }
