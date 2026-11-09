@@ -1,5 +1,4 @@
-// Segmented concurrent downloader — architecture inspired by FluxDown's engine
-// (https://github.com/zerx-lab/FluxDown): dynamic chunk queue with work-stealing
+// Segmented concurrent downloader: dynamic chunk queue with work-stealing
 // (fast connections naturally take over slow segments), per-chunk retry with a
 // stall watchdog, shared progress counter, and a sidecar file for resuming.
 //

@@ -1,4 +1,4 @@
-// Shared reqwest client (rustls + webpki-roots, same TLS stack as FluxDown's engine).
+// Shared reqwest client (rustls + webpki-roots static TLS stack, no system CA dependency).
 
 use reqwest::Client;
 use std::time::Duration;
