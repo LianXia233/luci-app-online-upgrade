@@ -2291,3 +2291,428 @@ details[open] > .ou-plugin-convention-summary .ou-evidence-chevron {
 		flex: 1 1 auto;
 	}
 }
+/* ==========================================================================
+   v2.5.2 手机端信息密度优化
+   目标：首屏只保留「状态 + 下一步动作」，详细判定与次要工具按需展开。
+   ========================================================================== */
+
+.ou-evidence-toggle,
+.ou-mobile-toggle {
+	display: none;
+}
+
+@media (max-width: 760px) {
+	/* 全局：更窄的页边距、更紧凑的卡片与标题 */
+	.ou-container {
+		padding: 6px 8px 28px !important;
+	}
+
+	.ou-hero-card {
+		padding: 12px 14px !important;
+		margin-bottom: 12px !important;
+		border-radius: 14px !important;
+	}
+
+	.ou-hero-desc,
+	.ou-hero-features {
+		display: none !important;
+	}
+
+	.ou-hero-tags {
+		margin-bottom: 4px !important;
+	}
+
+	.ou-hero-pill {
+		font-size: 9.5px !important;
+		padding: 2px 7px !important;
+	}
+
+	.ou-hero-title {
+		font-size: 20px !important;
+		line-height: 1.25 !important;
+	}
+
+	.ou-card {
+		padding: 13px 12px !important;
+		margin-bottom: 12px !important;
+		border-radius: 14px !important;
+	}
+
+	.ou-card-head {
+		gap: 10px !important;
+		margin-bottom: 11px !important;
+	}
+
+	.ou-card-head h3 {
+		font-size: 14.5px !important;
+	}
+
+	.ou-head-sub {
+		font-size: 11px !important;
+		line-height: 1.5 !important;
+	}
+
+	.ou-icon-badge {
+		width: 34px !important;
+		height: 34px !important;
+		border-radius: 10px !important;
+	}
+
+	.ou-head-icon {
+		width: 18px !important;
+		height: 18px !important;
+	}
+
+	.ou-status-pill {
+		font-size: 9.5px !important;
+		padding: 2px 7px !important;
+	}
+
+	.ou-container .ou-btn {
+		min-height: 34px;
+		padding: 7px 10px !important;
+		font-size: 11.5px !important;
+		border-radius: 9px !important;
+	}
+
+	.ou-btn-svg {
+		width: 13px !important;
+		height: 13px !important;
+	}
+
+	/* 首屏：状态卡只保留标题、状态与操作，说明和次要统计信息收起 */
+	#card-status .ou-head-sub {
+		display: none !important;
+	}
+
+	#card-status .ou-btn-row {
+		gap: 8px !important;
+	}
+
+	.ou-stat-grid {
+		grid-template-columns: 1fr !important;
+		gap: 6px !important;
+		margin-bottom: 11px !important;
+	}
+
+	.ou-stat-card {
+		padding: 9px 10px !important;
+		gap: 9px !important;
+		border-radius: 10px !important;
+		align-items: center !important;
+	}
+
+	.ou-stat-icon-wrap {
+		width: 28px !important;
+		height: 28px !important;
+		border-radius: 8px !important;
+	}
+
+	.ou-stat-icon {
+		width: 15px !important;
+		height: 15px !important;
+	}
+
+	.ou-stat-label {
+		font-size: 9.5px !important;
+		margin-bottom: 1px !important;
+	}
+
+	.ou-stat-val {
+		font-size: 12px !important;
+		margin-bottom: 0 !important;
+		line-height: 1.4 !important;
+	}
+
+	.ou-stat-sub {
+		display: none !important;
+	}
+
+	.ou-ver-badge {
+		font-size: 9.5px !important;
+		padding: 1px 5px !important;
+	}
+
+	/* 判定依据：默认只显示结论与短标签，事实与证据链按需展开 */
+	.ou-evidence {
+		padding: 13px 12px 11px !important;
+		margin-bottom: 12px !important;
+		border-radius: 14px !important;
+	}
+
+	.ou-evidence-head {
+		gap: 8px !important;
+	}
+
+	.ou-evidence-kicker {
+		display: none !important;
+	}
+
+	.ou-evidence-title {
+		font-size: 14px !important;
+		margin-top: 0 !important;
+	}
+
+	.ou-evidence-state {
+		font-size: 9.5px !important;
+		padding: 2px 7px !important;
+	}
+
+	.ou-evidence-link {
+		font-size: 10px !important;
+		padding: 2px 6px !important;
+	}
+
+	.ou-evidence-verdict {
+		font-size: 12.5px !important;
+		line-height: 1.55 !important;
+		margin: 9px 0 8px !important;
+	}
+
+	.ou-evidence-chips {
+		gap: 4px !important;
+		margin-bottom: 8px !important;
+	}
+
+	.ou-tag-chip {
+		font-size: 10px !important;
+		padding: 2px 6px !important;
+		border-radius: 6px !important;
+	}
+
+	.ou-evidence-toggle {
+		display: flex !important;
+		align-items: center;
+		justify-content: flex-start;
+		gap: 5px;
+		width: 100%;
+		margin: 0 0 8px;
+		padding: 7px 0 6px;
+		border: 0;
+		border-top: 1px dashed #e2e8f0;
+		background: transparent;
+		color: #2563eb;
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.ou-evidence-toggle-svg {
+		width: 12px;
+		height: 12px;
+		transition: transform 0.18s ease;
+	}
+
+	.ou-evidence.is-open .ou-evidence-toggle-svg {
+		transform: rotate(90deg);
+	}
+
+	.ou-evidence-facts {
+		display: none !important;
+		gap: 5px !important;
+	}
+
+	.ou-evidence.is-open .ou-evidence-facts {
+		display: grid !important;
+	}
+
+	.ou-fact {
+		padding: 8px 9px !important;
+		border-radius: 8px !important;
+	}
+
+	.ou-fact-label {
+		font-size: 9.5px !important;
+		margin-bottom: 2px !important;
+	}
+
+	.ou-fact-value {
+		font-size: 11.5px !important;
+		line-height: 1.5 !important;
+	}
+
+	.ou-fact-value.ou-mono {
+		font-size: 10.5px !important;
+	}
+
+	.ou-evidence-detail {
+		display: none !important;
+		margin-top: 10px !important;
+		padding-top: 8px !important;
+	}
+
+	.ou-evidence.is-open .ou-evidence-detail:not(.is-hidden) {
+		display: block !important;
+	}
+
+	.ou-evidence-summary {
+		font-size: 11px !important;
+	}
+
+	.ou-evidence-note {
+		display: none !important;
+	}
+
+	.ou-notice-box {
+		padding: 9px 10px !important;
+		gap: 8px !important;
+		border-radius: 10px !important;
+	}
+
+	.ou-notice-icon-wrap {
+		width: 24px !important;
+		height: 24px !important;
+	}
+
+	.ou-notice-svg {
+		width: 14px !important;
+		height: 14px !important;
+	}
+
+	.ou-hint {
+		font-size: 11.5px !important;
+		line-height: 1.55 !important;
+	}
+
+	/* 插件卡：四行信息压成 2×2，资产说明最多两行 */
+	/* 成功结论已由判定面板给出，隐藏重复的绿色提示条 */
+	.ou-notice-box.ok {
+		display: none !important;
+	}
+
+	/* 插件卡的副标题在手机上由下方更新源信息替代 */
+	.ou-card-plugin .ou-head-sub {
+		display: none !important;
+	}
+
+	.ou-plugin-body {
+		gap: 8px !important;
+	}
+
+	.ou-plugin-meta {
+		grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+		gap: 6px !important;
+	}
+
+	.ou-plugin-row {
+		padding: 8px 9px !important;
+		border-radius: 8px !important;
+	}
+
+	.ou-plugin-key {
+		font-size: 9.5px !important;
+		margin-bottom: 2px !important;
+	}
+
+	.ou-plugin-val {
+		font-size: 11.5px !important;
+		line-height: 1.4 !important;
+	}
+
+	.ou-plugin-detail {
+		padding: 9px 10px !important;
+		border-radius: 10px !important;
+		gap: 7px !important;
+	}
+
+	.ou-plugin-asset {
+		font-size: 11px !important;
+		line-height: 1.5 !important;
+	}
+
+	.ou-plugin-asset-sub {
+		display: -webkit-box !important;
+		-webkit-line-clamp: 2 !important;
+		-webkit-box-orient: vertical !important;
+		overflow: hidden !important;
+		font-size: 10px !important;
+	}
+
+	.ou-plugin-hint {
+		font-size: 11px !important;
+		line-height: 1.5 !important;
+	}
+
+	.ou-plugin-convention-summary {
+		font-size: 10.5px !important;
+	}
+
+	/* 次要卡片默认收起，只保留标题与展开入口 */
+	.ou-mobile-toggle {
+		display: flex !important;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		margin: 0;
+		padding: 7px 0;
+		border: 1px dashed #dbeafe;
+		border-radius: 8px;
+		background: #f8fbff;
+		color: #2563eb;
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.ou-card.ou-mobile-collapsed > *:not(.ou-card-head):not(.ou-mobile-toggle) {
+		display: none !important;
+	}
+
+	.ou-card.ou-mobile-collapsed .ou-card-head {
+		margin-bottom: 4px !important;
+	}
+
+	.ou-card.ou-mobile-collapsed .ou-head-sub,
+	.ou-card.ou-mobile-collapsed .ou-card-head .ou-btn-row {
+		display: none !important;
+	}
+
+	/* 展开后的配置区也收敛间距，隐藏与上方重复的摘要条 */
+	.ou-config-steps {
+		gap: 8px !important;
+	}
+
+	.ou-form-card {
+		padding: 10px !important;
+		border-radius: 10px !important;
+	}
+
+	.ou-field-help {
+		font-size: 10.5px !important;
+		line-height: 1.5 !important;
+	}
+
+	.ou-config-summary-card {
+		display: none !important;
+	}
+
+	.ou-quick-pill {
+		font-size: 10px !important;
+		padding: 2px 6px !important;
+	}
+
+	.ou-table th {
+		font-size: 10px !important;
+		padding: 9px 10px !important;
+	}
+
+	.ou-table td {
+		font-size: 11px !important;
+		padding: 10px !important;
+	}
+
+	.ou-terminal {
+		max-height: 180px !important;
+		font-size: 10.5px !important;
+	}
+}
+
+@media (max-width: 360px) {
+	.ou-plugin-meta {
+		grid-template-columns: 1fr !important;
+	}
+
+	.ou-stat-val {
+		font-size: 11.5px !important;
+	}
+}

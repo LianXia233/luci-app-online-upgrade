@@ -225,6 +225,19 @@
 		el.textContent = text;
 	}
 
+	function setEvidenceExpanded(open) {
+		var panel = $('check-evidence');
+		var btn = $('evidence-toggle');
+		var detail = $('evidence-detail');
+		if (panel) panel.classList.toggle('is-open', !!open);
+		if (btn) {
+			btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+			var label = btn.querySelector('span');
+			if (label) label.textContent = open ? '收起判定详情' : '展开判定详情';
+		}
+		if (detail) detail.open = !!open && !detail.classList.contains('is-hidden');
+	}
+
 	function hideEvidenceDetail() {
 		var d = $('evidence-detail');
 		if (d) d.classList.add('is-hidden');
@@ -237,6 +250,7 @@
 		setText('evidence-verdict', '正在连接 GitHub 并读取 Release 清单，请稍候…');
 		if ($('evidence-chips')) $('evidence-chips').innerHTML = '';
 		if ($('evidence-facts')) $('evidence-facts').innerHTML = '';
+		setEvidenceExpanded(false);
 		hideEvidenceDetail();
 	}
 
@@ -247,6 +261,7 @@
 		if ($('evidence-facts')) {
 			$('evidence-facts').innerHTML = factRow('错误信息', esc(msg || '检测失败'), { wide: true });
 		}
+		setEvidenceExpanded(false);
 		hideEvidenceDetail();
 	}
 
@@ -360,6 +375,7 @@
 				link.classList.add('is-hidden');
 			}
 		}
+		setEvidenceExpanded(false);
 	}
 
 	function renderCheckResult(res) {
@@ -1610,6 +1626,54 @@
 		});
 	}
 
+	/* ---------------- 手机端信息密度 ---------------- */
+
+	// 手机端默认收起下载任务、备份、仓库配置与运行日志，只保留标题和展开入口。
+	// 桌面端完全不受影响；按钮由 JS 动态插入，模板里不增加额外结构。
+	var MOBILE_MQ = window.matchMedia('(max-width: 760px)');
+	var MOBILE_SECTIONS = [
+		['card-tasks', '下载任务'],
+		['card-backup', '备份与恢复'],
+		['card-config', '仓库配置'],
+		['card-log', '运行日志']
+	];
+
+	function applyMobileSections() {
+		MOBILE_SECTIONS.forEach(function (item) {
+			var card = $(item[0]);
+			if (!card) return;
+			var head = card.querySelector('.ou-card-head');
+			var btn = card.querySelector('.ou-mobile-toggle');
+			if (!btn && head) {
+				btn = document.createElement('button');
+				btn.type = 'button';
+				btn.className = 'ou-mobile-toggle';
+				card.insertBefore(btn, head.nextSibling);
+				btn.addEventListener('click', function () {
+					var collapsed = card.classList.toggle('ou-mobile-collapsed');
+					card.setAttribute('data-mobile-expanded', collapsed ? '0' : '1');
+					btn.textContent = (collapsed ? '展开' : '收起') + item[1];
+				});
+			}
+			if (!btn) return;
+			if (!MOBILE_MQ.matches) {
+				card.classList.remove('ou-mobile-collapsed');
+				btn.style.display = 'none';
+				return;
+			}
+			btn.style.display = '';
+			var expanded = card.getAttribute('data-mobile-expanded') === '1';
+			card.classList.toggle('ou-mobile-collapsed', !expanded);
+			btn.textContent = (expanded ? '收起' : '展开') + item[1];
+		});
+	}
+
+	if (MOBILE_MQ.addEventListener) {
+		MOBILE_MQ.addEventListener('change', applyMobileSections);
+	} else if (MOBILE_MQ.addListener) {
+		MOBILE_MQ.addListener(applyMobileSections);
+	}
+
 	/* ---------------- 初始化 ---------------- */
 
 	function boot() {
@@ -1636,6 +1700,10 @@
 		$('btn-plugin-check').addEventListener('click', runPluginCheck);
 		$('btn-plugin-update').addEventListener('click', runPluginUpdate);
 		$('btn-plugin-reload').addEventListener('click', function () { location.reload(); });
+		$('evidence-toggle').addEventListener('click', function () {
+			setEvidenceExpanded(!$('check-evidence').classList.contains('is-open'));
+		});
+		applyMobileSections();
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {
 			pill.addEventListener('click', function () {

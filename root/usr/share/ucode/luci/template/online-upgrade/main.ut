@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.1">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.2">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -227,12 +227,16 @@
 			</div>
 			<p class="ou-evidence-verdict" id="evidence-verdict">尚未执行检测。点击右上角「检查更新」后，这里会给出结论与完整证据链。</p>
 			<div class="ou-evidence-chips" id="evidence-chips"></div>
+			<button type="button" class="ou-evidence-toggle" id="evidence-toggle" aria-expanded="false">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-evidence-toggle-svg"><polyline points="9 18 15 12 9 6"/></svg>
+				<span>展开判定详情</span>
+			</button>
 			<div class="ou-evidence-facts" id="evidence-facts"></div>
 			<details class="ou-evidence-detail is-hidden" id="evidence-detail">
 				<summary class="ou-evidence-summary">
 					<span class="ou-evidence-summary-left">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-evidence-chevron"><polyline points="9 18 15 12 9 6"/></svg>
-						<span>展开完整判定依据</span>
+						<span>完整判定依据</span>
 					</span>
 					<span class="ou-detail-count" id="evidence-basis-count">0 条</span>
 				</summary>
@@ -749,6 +753,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.5.1"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.5.2"></script>
 
 {% include('footer') %}
