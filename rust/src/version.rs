@@ -1,15 +1,15 @@
-// Generic firmware-version parsing and comparison.
+// 通用的固件版本号解析与比较。
 //
-// Deliberately free of repo-, vendor- and asset-naming assumptions:
-// any dotted numeric version (with an optional `v` prefix and an optional
-// `-rc`/`-beta`/`-alpha` suffix) is recognised. Asset names usually put
-// vendor/distro/build numbers before the firmware version and board/arch
-// tokens after it, so the *last* candidate wins; that keeps vendor version
-// numbers and SoC/arch numbers from being mistaken for the firmware version.
+// 刻意不假定仓库、厂商与资产命名规则：
+// 任何点分数字版本（可带 `v` 前缀，以及可选的
+// `-rc`/`-beta`/`-alpha` 后缀）都能识别。
+// 资产名通常把厂商/发行版/构建号放在固件版本之前，
+// 把板型/架构标识放在其后，因此取*最后一个*候选；
+// 这样可避免把厂商版本号和 SoC/架构编号误当成固件版本。
 //
-// Versions without any dotted number (e.g. a tag like `自用构建`) yield None;
-// callers must then fall back to an explicit "cannot compare" path instead
-// of inventing a version.
+// 不含任何点分数字的版本（例如标签 `自用构建`）返回 None；
+// 此时调用方必须走显式的“无法比较”路径，
+// 而不是凭空编造一个版本号。
 
 use regex::Regex;
 use std::cmp::Ordering;
@@ -27,14 +27,14 @@ pub enum Pre {
 pub struct Version {
     pub nums: Vec<u64>,
     pub pre: Option<Pre>,
-    /// Verbatim matched version text (keeps leading zeroes such as 23.05.3).
+    /// 匹配到的版本文本原文（保留 23.05.3 这类前导零）。
     pub raw: String,
 }
 
 fn candidate_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        // group 1 = dotted numeric core, group 2 = pre-release word, group 3 = its number
+        // 分组 1 = 点分数字主体，分组 2 = 预发布类型词，分组 3 = 其编号
         Regex::new(
             r"(?i)(?:^|[^0-9a-z])(?:v)?([0-9]{1,6}(?:\.[0-9]{1,6}){1,3})(?:[-_.]?(rc|beta|alpha|pre)[-_.]?([0-9]{1,3})?)?",
         )
@@ -100,7 +100,7 @@ impl Version {
         self.raw.clone()
     }
 
-    /// 是否是 `YY.MM.DD` / `YYYY.MM.DD` 这类日期型标签。
+    /// 判断是否为 `YY.MM.DD` / `YYYY.MM.DD` 这类日期型标签。
     ///
     /// 自用构建只能拿「固件构建时间」当版本，而构建时间只有和日期型标签比较才有意义：
     /// 把 `26.11.08` 去和 `24.10.0` 这类发布号比大小会得出毫无意义的关系
@@ -140,7 +140,7 @@ impl Version {
     }
 }
 
-/// Last dotted version found in `text` (see module docs for why "last").
+/// `text` 中最后一个点分版本（为何取“最后一个”见模块说明）。
 pub fn pick(text: &str) -> Option<Version> {
     let mut last = None;
     for caps in candidate_re().captures_iter(text) {
@@ -151,10 +151,10 @@ pub fn pick(text: &str) -> Option<Version> {
     last
 }
 
-/// Build a version from a calendar date (`year.month.day`).
+/// 由日历日期（`年.月.日`）构造版本号。
 ///
-/// Used for build-time derived local versions. The caller chooses the year
-/// width (2 digits for `YY.MM.DD` self-build tags, 4 for `YYYY.MM.DD`).
+/// 用于由构建时间推导的本地版本。年份宽度由调用方决定
+/// （自用构建标签用 2 位 `YY.MM.DD`，发布号用 4 位 `YYYY.MM.DD`）。
 pub fn from_ymd(year: u64, month: u32, day: u32) -> Option<Version> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
@@ -166,7 +166,7 @@ pub fn from_ymd(year: u64, month: u32, day: u32) -> Option<Version> {
     })
 }
 
-/// Days since 1970-01-01 → (year, month, day).
+/// 自 1970-01-01 起的天数 → (年, 月, 日)。
 pub fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let z = z + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn vendor_prefix_is_not_the_version() {
-        // The vendor's own 2.1.0 must not win over the distribution version.
+        // 厂商自己的 2.1.0 不能盖过发行版版本号。
         assert_eq!(
             picked("vendor-2.1.0-immortalwrt-24.10.0-x86-64-generic.img.gz").as_deref(),
             Some("24.10.0")

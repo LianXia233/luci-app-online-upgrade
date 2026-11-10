@@ -1,6 +1,6 @@
-// Upgrade orchestration: check → download (segmented, real progress) →
-// verify SHA256 + image integrity → record version → backup → package list →
-// sysupgrade.
+// 升级流程编排：检查 → 下载（分段、真实进度）→
+// 校验 SHA256 与镜像完整性 → 记录版本 → 备份 → 软件包清单 →
+// sysupgrade。
 
 use crate::downloader::{self, DownloadError};
 use crate::github::{self, Cfg};
@@ -45,7 +45,7 @@ fn full_url(cfg: &Cfg, url: &str) -> String {
     github::prefixed(&cfg.proxy, url)
 }
 
-/// Shared progress callback handed to the downloader.
+/// 传给下载器的共享进度回调。
 type ProgressFn = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 fn unix_now() -> u64 {
@@ -55,7 +55,7 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Apply a change to one history entry and persist it atomically.
+/// 对一条历史记录应用修改并原子持久化。
 fn task_update(id: &str, f: impl FnOnce(&mut Task)) {
     let mut store = TaskStore::open();
     if let Some(t) = store.get_mut(id) {
@@ -64,7 +64,7 @@ fn task_update(id: &str, f: impl FnOnce(&mut Task)) {
     let _ = store.save();
 }
 
-/// Record a terminal task state (done / failed / aborted).
+/// 记录任务的终态（done / failed / aborted）。
 fn task_finish(id: &str, state: &str, reason: &str, done: u64, speed: u64) {
     task_update(id, |t| {
         t.done = done;
@@ -73,9 +73,9 @@ fn task_finish(id: &str, state: &str, reason: &str, done: u64, speed: u64) {
     });
 }
 
-/// Write a download stop to the status file, the log and the task history.
-/// A slow-speed abort gets its own headline and keeps the measured evidence in
-/// the log, so the reason is never reduced to a generic "download failed".
+/// 将下载停止写入状态文件、日志与任务历史。
+/// 慢速中止会使用独立的标题，并在日志中保留实测证据，
+/// 避免原因被简化成笼统的“下载失败”。
 fn report_download_stop(
     err: &DownloadError,
     task_id: Option<&str>,
@@ -113,17 +113,17 @@ fn report_download_stop(
     }
 }
 
-/// Mirror Tokio watch state into the status file and the history entry.
-/// Progress writes are left to the downloader's reporter; this task only
-/// handles the pause / resume transitions (which produce no byte progress).
+/// 把 Tokio watch 状态同步到状态文件与历史记录。
+/// 进度写入由下载器的上报任务负责；本任务只处理
+/// 暂停 / 继续的状态切换（这些切换不会产生字节进度）。
 fn spawn_state_reporter(mut rx: watch::Receiver<RunState>, task_id: String) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             if rx.changed().await.is_err() {
                 return;
             }
-            // Bind the cloned state first: `watch::Ref` is !Send and must not
-            // be held across an await inside this spawned future.
+            // 先绑定克隆后的状态：`watch::Ref` 不是 Send，
+            // 不能在这个 spawned future 中跨 await 持有。
             let st = rx.borrow_and_update().clone();
             match st {
                 RunState::Paused => {
@@ -151,8 +151,8 @@ fn spawn_state_reporter(mut rx: watch::Receiver<RunState>, task_id: String) -> J
     })
 }
 
-/// Build a progress callback that shows live throughput and throttles history
-/// writes to once every 5 seconds (the history lives on flash).
+/// 构造进度回调：实时显示吞吐量，并把历史写入
+/// 限制为每 5 秒一次（历史记录存放在闪存上）。
 fn progress_reporter(
     total_hint: u64,
     control: &DownloadControl,
@@ -197,24 +197,24 @@ fn progress_reporter(
     (report, last_done)
 }
 
-/// Remove every artefact of a download attempt (firmware, timestamp marker and
-/// resume sidecar). A sidecar left behind after the firmware was deleted is
-/// exactly what produces a zero-filled "successful" download on the retry.
+/// 清除一次下载尝试的全部产物（固件、时间戳标记与
+/// 续传 sidecar）。固件已删除却留下 sidecar，
+/// 正是重试时得到“成功”的空洞文件的原因。
 fn cleanup_download() {
     let _ = std::fs::remove_file(TMP_FIRMWARE);
     let _ = std::fs::remove_file(TMP_FIRMWARE_TS);
     let _ = std::fs::remove_file(TMP_FIRMWARE_PARTS);
 }
 
-/// Reuse a firmware file left over from a previous run only when the marker
-/// proves the bytes on disk are exactly the ones that run finished with.
+/// 仅当标记能够证明磁盘上的字节确实是上一次运行完成时的内容，
+/// 才复用上次运行留下的固件文件。
 ///
-/// Length is not evidence: the downloader pre-allocates with `set_len`, so a
-/// half-written file can have the right size while its tail is still zero
-/// filled. The marker therefore stores the asset `updated` stamp *and* the
-/// SHA256 of the completed file; a marker without the hash (an older run) is
-/// never trusted. Callers must still run the full verification afterwards —
-/// reuse skips the network transfer, not the hash check.
+/// 文件长度不能作为证据：下载器会用 `set_len` 预分配，
+/// 半写入的文件也可能长度正确，而尾部仍是零填充。
+/// 因此标记中同时保存资产的 `updated` 时间戳*和*
+/// 完成文件的 SHA256；不含哈希的标记（旧版本写入）
+/// 一律不可信。调用方之后仍必须执行完整校验——
+/// 复用只跳过网络传输，不跳过哈希校验。
 fn reuse_download(updated: &str, size: u64) -> bool {
     let meta = match std::fs::metadata(TMP_FIRMWARE) {
         Ok(m) => m,
@@ -251,8 +251,8 @@ fn reuse_download(updated: &str, size: u64) -> bool {
     }
 }
 
-/// Marker format: line 1 = asset `updated` stamp, line 2 = local SHA256 of the
-/// finished file. Written only after the file passed verification.
+/// 标记格式：第 1 行为资产的 `updated` 时间戳，第 2 行为完成文件的
+/// 本地 SHA256。仅在文件通过校验后写入。
 fn write_download_marker(updated: &str, sha256: &str) {
     let _ = std::fs::write(TMP_FIRMWARE_TS, format!("{updated}\n{sha256}\n"));
 }
@@ -277,13 +277,13 @@ struct Integrity {
     sha256: String,
 }
 
-/// Try the configured proxy route first, then GitHub's API asset endpoint.
-/// `browser_download_url` is served by github.com's web frontend, which can
-/// return 504 while the API + release-assets CDN path still serves the file.
+/// 先尝试配置的代理线路，再尝试 GitHub 的 API 资产端点。
+/// `browser_download_url` 由 github.com 的 Web 前端提供，
+/// 它可能返回 504，而 API + release-assets CDN 路径仍能提供文件。
 ///
-/// Only route-level failures fall through to the next URL. A user cancel or a
-/// slow-speed abort is terminal for the whole task and must not be masked by a
-/// silent retry on a different mirror.
+/// 只有线路层面的失败才会继续尝试下一个 URL。用户取消或
+/// 慢速中止对整个任务都是终止性的，
+/// 不能被其他镜像的静默重试掩盖。
 async fn fetch_firmware(
     client: &reqwest::Client,
     asset: &Asset,
@@ -302,8 +302,8 @@ async fn fetch_firmware(
                 "[download] 上一线路失败({}),回退到 GitHub API 资产直链",
                 last.message()
             );
-            // the sidecar is keyed by URL, but a half-written file from another
-            // route must not be mistaken for resumable progress
+            // sidecar 以 URL 为键，但来自其他线路的半成品文件
+            // 不能被误认为可续传的进度
             let _ = std::fs::remove_file(out);
             let _ = std::fs::remove_file(format!("{out}.parts.json"));
         }
@@ -404,7 +404,7 @@ fn verify_firmware_integrity(
 
     logline!("[verify] 固件实际 SHA256: {actual_sha256}");
 
-    // Explicit UCI value first, then whatever the release published.
+    // 优先使用 UCI 中显式配置的值，其次使用 Release 发布的值。
     let manual_expected = uci::get("expected_sha256")
         .unwrap_or_default()
         .trim()
@@ -428,15 +428,15 @@ fn verify_firmware_integrity(
         logline!("[verify] SHA256 校验一致 (来源 {source}: {expected})");
         true
     } else {
-        // No expected hash anywhere. Do not claim "verified": the UI and the
-        // status text must say "recorded but not verified".
+        // 任何来源都没有期望哈希。此时不能宣称“已校验”：
+        // 界面与状态文案必须写成“已记录但未校验”。
         logline!(
             "[verify] 未提供校验依据(配置/校验单/Release 正文均无哈希),仅记录本地 SHA256: {actual_sha256}"
         );
         false
     };
 
-    // Hardware & sysupgrade -T image compatibility verification
+    // 硬件与 sysupgrade -T 镜像兼容性校验
     if let Err(e) = crate::compat::verify_downloaded_image(device, TMP_FIRMWARE) {
         if !force {
             cleanup_download();
@@ -452,8 +452,8 @@ fn verify_firmware_integrity(
     })
 }
 
-/// `online-upgrade download` — check + segmented download + verification only.
-/// Never touches flash, backup or sysupgrade.
+/// `online-upgrade download` —— 仅执行检查、分段下载与校验。
+/// 不会写入闪存，也不执行备份或 sysupgrade。
 pub async fn download_only() -> i32 {
     status::trim_log();
     let client = crate::http::client();
@@ -474,8 +474,8 @@ pub async fn download_only() -> i32 {
     let task_id: Option<String>;
     let mut control: Option<DownloadControl> = None;
     if reuse_download(&asset.updated, asset.size) {
-        // A leftover file is reused only when its marker carries the hash of
-        // the completed bytes; the hash is re-checked below either way.
+        // 仅当残留文件的标记带有完成字节的哈希时才复用；
+        // 无论是否复用，下面都会重新校验该哈希。
         total = std::fs::metadata(TMP_FIRMWARE)
             .map(|m| m.len())
             .unwrap_or(0);
@@ -485,7 +485,7 @@ pub async fn download_only() -> i32 {
             github::human_size(total)
         );
         status::set("verifying", 90, "复用已下载固件,正在重新校验...");
-        // A re-used download is still a task the user can see and delete.
+        // 复用已有下载时，仍会创建用户可见、可删除的任务记录。
         let mut store = TaskStore::open();
         let mut t = Task::new(
             &asset.name,
@@ -498,11 +498,11 @@ pub async fn download_only() -> i32 {
         store.upsert(t);
         let _ = store.save();
     } else {
-        // Do not wipe the firmware + sidecar here: load_parts() already rejects
-        // a sidecar whose url/etag/total/chunk grid no longer matches, and a
-        // surviving sidecar is exactly what makes a download interrupted in a
-        // previous process resumable. Wiping it forced every restart to begin
-        // from byte 0.
+        // 这里不要清除固件和 sidecar：load_parts() 会拒绝
+        // url/etag/total/分块网格已不匹配的 sidecar，
+        // 而保留下来的 sidecar 正是让上次进程中中断的下载
+        // 能够续传的关键。清除它会导致每次重启都从
+        // 第 0 字节重新开始。
         let ctl = match DownloadControl::start() {
             Ok(c) => c,
             Err(e) => {
@@ -545,7 +545,7 @@ pub async fn download_only() -> i32 {
                     Some(&ctl),
                     last_done.load(Ordering::Relaxed),
                 );
-                // keep whatever the downloader judged resumable
+                // 保留下载器判定为可续传的内容
                 return 1;
             }
         }
@@ -563,8 +563,8 @@ pub async fn download_only() -> i32 {
             return 1;
         }
     };
-    // Marker is written only after verification: it advertises "this file
-    // passed the hash gate", which is what makes reuse safe next time.
+    // 标记只在校验通过后写入：它表示“该文件
+    // 已通过哈希校验”，这正是下次复用安全的前提。
     write_download_marker(&asset.updated, &integrity.sha256);
     if let Some(id) = &task_id {
         let speed = control
@@ -619,7 +619,7 @@ pub async fn run(force: bool) -> i32 {
         logline!("[upgrade] 强制更新模式");
     }
 
-    // ---- Step 0: check, get asset info ----
+    // ---- 步骤 0：检查更新并获取资产信息 ----
     let asset = match fetch_asset(&client).await {
         Ok(a) => a,
         Err(e) => {
@@ -680,10 +680,10 @@ pub async fn run(force: bool) -> i32 {
         return 1;
     }
 
-    // ---- Step 1: download (segmented, real progress) ----
-    // Reuse is gated on the marker's recorded hash (see reuse_download); the
-    // verification below runs in both branches, so a reused file still has to
-    // match the expected checksum before anything touches flash.
+    // ---- 步骤 1：下载（分段、真实进度）----
+    // 复用与否取决于标记中记录的哈希（见 reuse_download）；
+    // 下面的校验在两条分支上都会执行，因此复用文件仍必须
+    // 在写入闪存之前匹配期望的校验和。
     let task_id: Option<String>;
     let mut control: Option<DownloadControl> = None;
     if reuse_download(&updated, size_hint) {
@@ -691,8 +691,8 @@ pub async fn run(force: bool) -> i32 {
         status::set("downloaded", 90, "复用已下载固件,正在重新校验...");
         task_id = None;
     } else {
-        // See download_only(): the sidecar is what enables resume across
-        // processes, and load_parts() already validates it.
+        // 参见 download_only()：sidecar 是实现跨进程续传的关键，
+        // 且 load_parts() 已经对它做过校验。
         let ctl = match DownloadControl::start() {
             Ok(c) => c,
             Err(e) => {
@@ -728,7 +728,7 @@ pub async fn run(force: bool) -> i32 {
                     Some(&ctl),
                     last_done.load(Ordering::Relaxed),
                 );
-                // keep whatever the downloader judged resumable
+                // 保留下载器判定为可续传的内容
                 return 1;
             }
         }
@@ -736,7 +736,7 @@ pub async fn run(force: bool) -> i32 {
         control = Some(ctl);
     }
 
-    // ---- Step 1.5: verify SHA256 checksum and image integrity ----
+    // ---- 步骤 1.5：校验 SHA256 与镜像完整性 ----
     let integrity = match verify_firmware_integrity(&device, &asset, force) {
         Ok(i) => i,
         Err(e) => {
@@ -760,13 +760,13 @@ pub async fn run(force: bool) -> i32 {
         integrity.source,
         integrity.sha256
     );
-    // Only a verified file earns the reuse marker.
+    // 只有通过校验的文件才写入复用标记。
     write_download_marker(&updated, &integrity.sha256);
 
-    // ---- Step 2: record version after a successful backup ----
-    // Order matters: writing first would leave a wrong "already upgraded"
-    // marker when the backup fails, and writing after the backup without
-    // rollback would do the same on flash failure below.
+    // ---- 步骤 2：备份成功后记录版本 ----
+    // 顺序很重要：先写版本会在备份失败时留下错误的
+    // “已升级”标记；备份后写入若不回滚，
+    // 在下方刷写失败时也会产生同样的问题。
     let prev_ts = uci::get("last_upgrade_ts");
     let prev_ver = uci::get("last_upgrade_version");
     status::set("saving", 92, "记录固件版本...");
@@ -779,7 +779,7 @@ pub async fn run(force: bool) -> i32 {
         github::utc_to_local(&updated)
     );
 
-    // ---- Step 3: backup (sysupgrade -b, passed to -f later) ----
+    // ---- 步骤 3：备份（sysupgrade -b，稍后传给 -f）----
     status::set("backing_up", 94, "正在创建配置备份...");
     let _ = std::fs::create_dir_all("/etc/uci-defaults");
     let _ = std::fs::write(UCI_DEFAULTS_AUTO, AUTO_REINSTALL_SCRIPT);
@@ -801,7 +801,7 @@ pub async fn run(force: bool) -> i32 {
             .map(|m| m.len() > 0)
             .unwrap_or(false);
     if !backup_ok {
-        // Roll the version marker back: no backup means no upgrade happened.
+        // 回滚版本标记：没有备份就等同于没有发生升级。
         match &prev_ts {
             Some(v) => uci::set("last_upgrade_ts", v),
             None => uci::unset("last_upgrade_ts"),
@@ -830,9 +830,9 @@ pub async fn run(force: bool) -> i32 {
         ),
     }
 
-    // ---- Step 4: save installed package list (for post-upgrade auto reinstall) ----
-    // Package names only (no versions): the reinstall script must not depend
-    // on a specific package manager's output format.
+    // ---- 步骤 4：保存已安装软件包清单（供升级后自动重装）----
+    // 只记录包名（不含版本）：重装脚本不能依赖
+    // 特定包管理器的输出格式。
     let pkg_cmd = if which("apk") {
         "apk info"
     } else {
@@ -855,7 +855,7 @@ pub async fn run(force: bool) -> i32 {
     }
     let _ = sh("sync", &[]);
 
-    // ---- Step 5: flash (does not return on success) ----
+    // ---- 步骤 5：刷写（成功时不会返回）----
     status::set("flashing", 100, "正在刷写固件,配置将自动恢复,即将重启...");
     logline!("[upgrade] 执行: sysupgrade -f {backup_tmp} {TMP_FIRMWARE}");
     let _ = sh("sync", &[]);
@@ -864,7 +864,7 @@ pub async fn run(force: bool) -> i32 {
         .args(["-f", &backup_tmp, TMP_FIRMWARE])
         .status();
 
-    // if sysupgrade returned, it failed
+    // sysupgrade 若返回，说明执行失败
     logline!("[upgrade] sysupgrade 执行失败!");
     status::set_error("failed", 100, "升级失败", "sysupgrade 执行失败");
     match &prev_ts {

@@ -1,4 +1,4 @@
-// Shared reqwest client (rustls + webpki-roots static TLS stack, no system CA dependency).
+// 共享的 reqwest 客户端（使用 rustls + webpki-roots 静态 TLS 栈，不依赖系统 CA）。
 
 use reqwest::Client;
 use std::time::Duration;

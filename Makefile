@@ -1,7 +1,7 @@
 #
 # Copyright (C) 2026 gooyjq
 #
-# This is free software, licensed under the GNU General Public License v2.
+# 本软件为自由软件，遵循 GNU 通用公共许可证第 2 版。
 #
 
 include $(TOPDIR)/rules.mk
@@ -14,9 +14,9 @@ PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
 PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 
-# Rust backend ships its own HTTP stack (reqwest/rustls) — no curl needed.
-# The prebuilt binary must exist at ./root/usr/bin/online-upgrade before
-# packaging (see README "编译" — build via cargo zigbuild / cross-gcc, or CI).
+# Rust 后端自带 HTTP 栈（reqwest/rustls），无需依赖 curl。
+# 打包前必须已存在预编译二进制 ./root/usr/bin/online-upgrade
+# （参见 README 的“编译”一节：可用 cargo zigbuild、交叉 gcc 或 CI 构建）。
 # ca-bundle: uci-defaults 的自动重装脚本用 curl 走 HTTPS 拉取 release，
 # 没有 CA 根证书时 curl 会直接因证书校验失败而无法下载。
 LUCI_DEPENDS:=+rpcd-mod-ucode +ucode-mod-fs +ucode-mod-uci +ca-bundle
@@ -87,8 +87,8 @@ endef
 define Package/luci-app-online-upgrade/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	# ucode LuCI (26.x): no /lib/functions/luci.sh, no luci-reload —
-	# invalidating the dispatcher cache is all a menu/acl change needs
+	# ucode 版 LuCI（26.x）：不再提供 /lib/functions/luci.sh 和 luci-reload，
+	# 菜单或 ACL 变更后只需让调度器缓存失效即可。
 	rm -f /tmp/luci-indexcache*
 	exit 0
 }

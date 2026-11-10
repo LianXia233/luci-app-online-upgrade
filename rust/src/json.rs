@@ -1,4 +1,4 @@
-// Minimal JSON parser / serializer, std-only (no crates on OpenWrt).
+// 极简 JSON 解析器 / 序列化器，仅用标准库（OpenWrt 上不引入第三方 crate）。
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -47,7 +47,7 @@ impl Value {
         Value::Num(n as f64)
     }
 
-    // ---- serializer ----
+    // ---- 序列化 ----
 
     pub fn dump(&self) -> String {
         let mut out = String::new();
@@ -109,7 +109,7 @@ fn write_escaped(s: &str, out: &mut String) {
     out.push('"');
 }
 
-// ---- parser ----
+// ---- 解析 ----
 
 pub fn parse(input: &str) -> Result<Value, String> {
     let bytes: Vec<char> = input.chars().collect();
@@ -250,7 +250,7 @@ impl<'a> Parser<'a> {
                         'u' => {
                             let cp = self.hex4()?;
                             if (0xD800..0xDC00).contains(&cp) {
-                                // high surrogate: expect a low surrogate to follow
+                                // 高代理项：后面必须紧跟一个低代理项
                                 self.expect('\\')?;
                                 self.expect('u')?;
                                 let lo = self.hex4()?;

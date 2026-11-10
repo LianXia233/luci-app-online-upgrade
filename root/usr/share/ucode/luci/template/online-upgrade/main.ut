@@ -1,10 +1,10 @@
 {% include(`themes/${theme}/header`) %}
 
-<!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
+<!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
 <link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.4.0">
 
 <div class="cbi-map ou-container">
-	<!-- Hero Header Banner with Bespoke Vector Graphic -->
+	<!-- 顶部主视觉横幅：定制矢量插画 -->
 	<div class="ou-hero-card">
 		<div class="ou-hero-content">
 			<div class="ou-hero-tags">
@@ -37,7 +37,7 @@
 			</div>
 		</div>
 
-		<!-- Bespoke High-Tech Vector SVG Drawing -->
+		<!-- 定制科技感矢量 SVG 插画 -->
 		<div class="ou-hero-visual" aria-hidden="true">
 			<svg class="ou-hero-svg" viewBox="0 0 460 170" fill="none" xmlns="http://www.w3.org/2000/svg">
 				<defs>
@@ -67,7 +67,7 @@
 					</filter>
 				</defs>
 
-				<!-- Ambient Circuit Grid -->
+				<!-- 背景电路网格 -->
 				<g opacity="0.5">
 					<line x1="40" y1="85" x2="420" y2="85" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="6 6"/>
 					<line x1="90" y1="30" x2="90" y2="140" stroke="#e2e8f0" stroke-width="1"/>
@@ -78,11 +78,11 @@
 					<circle cx="380" cy="85" r="4" fill="#cbd5e1"/>
 				</g>
 
-				<!-- Dynamic Connection Paths -->
+				<!-- 动态连接路径 -->
 				<path d="M 120 70 C 180 30, 240 30, 290 75" stroke="url(#heroLineGrad)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
 				<path d="M 140 100 C 190 135, 250 130, 300 95" stroke="url(#heroCyanGrad)" stroke-width="2" stroke-dasharray="4 4" fill="none" opacity="0.6"/>
 
-				<!-- Cloud Source Hub -->
+				<!-- 云端更新源节点 -->
 				<g transform="translate(60, 42)" filter="url(#heroDrop)">
 					<circle cx="35" cy="35" r="32" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
 					<circle cx="35" cy="35" r="26" fill="#eff6ff"/>
@@ -91,35 +91,35 @@
 					<circle cx="58" cy="18" r="4.5" fill="#10b981" stroke="#ffffff" stroke-width="1.5"/>
 				</g>
 
-				<!-- Data Stream Particles -->
+				<!-- 数据流粒子 -->
 				<circle cx="195" cy="46" r="3" fill="#3b82f6"/>
 				<circle cx="240" cy="54" r="3.5" fill="#06b6d4"/>
 				<circle cx="215" cy="118" r="2.5" fill="#3b82f6" opacity="0.7"/>
 
-				<!-- Futuristic Router Device -->
+				<!-- 未来感路由器设备 -->
 				<g transform="translate(265, 45)" filter="url(#heroDrop)">
 					<path d="M 22 35 L 6 10" stroke="#64748b" stroke-width="3" stroke-linecap="round"/>
 					<path d="M 88 35 L 104 10" stroke="#64748b" stroke-width="3" stroke-linecap="round"/>
 					<path d="M 38 32 L 28 5" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>
 					<path d="M 72 32 L 82 5" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>
 					
-					<!-- Signal Arcs -->
+					<!-- 信号弧线 -->
 					<path d="M 1 6 A 12 12 0 0 1 13 0" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.8"/>
 					<path d="M 97 0 A 12 12 0 0 1 109 6" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.8"/>
 
-					<!-- Chassis -->
+					<!-- 机身外壳 -->
 					<rect x="15" y="32" width="80" height="36" rx="8" fill="url(#heroCardGrad)" stroke="#cbd5e1" stroke-width="1.5"/>
 					<rect x="20" y="37" width="70" height="26" rx="5" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
 					<line x1="28" y1="56" x2="48" y2="56" stroke="#e2e8f0" stroke-width="1.5" stroke-linecap="round"/>
 					
-					<!-- Status LEDs -->
+					<!-- 状态指示灯 -->
 					<circle cx="58" cy="50" r="2.2" fill="#10b981"/>
 					<circle cx="66" cy="50" r="2.2" fill="#3b82f6"/>
 					<circle cx="74" cy="50" r="2.2" fill="#3b82f6"/>
 					<circle cx="82" cy="50" r="2.2" fill="#06b6d4"/>
 				</g>
 
-				<!-- Security Check Badge -->
+				<!-- 安全检查徽标 -->
 				<g transform="translate(385, 25)" filter="url(#heroDrop)">
 					<rect x="0" y="0" width="46" height="46" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5"/>
 					<rect x="4" y="4" width="38" height="38" rx="9" fill="#ecfdf5"/>
@@ -127,7 +127,7 @@
 					<path d="M 20 23 L 22 25 L 26 21" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
 				</g>
 
-				<!-- Speed Pill -->
+				<!-- 速度标签 -->
 				<g transform="translate(330, 115)" filter="url(#heroDrop)">
 					<rect x="0" y="0" width="108" height="28" rx="14" fill="#ffffff" stroke="#dbeafe" stroke-width="1.2"/>
 					<circle cx="14" cy="14" r="6" fill="#eff6ff"/>
@@ -169,7 +169,7 @@
 			</div>
 		</div>
 
-		<!-- 4 Stat Metric Tiles -->
+		<!-- 四项统计指标卡片 -->
 		<div class="ou-stat-grid">
 			<div class="ou-stat-card">
 				<div class="ou-stat-icon-wrap">
@@ -220,7 +220,7 @@
 			</div>
 		</div>
 
-		<!-- Check Result Hint Box -->
+		<!-- 检查结果提示框 -->
 		<div class="ou-notice-box" id="check-result-box">
 			<div class="ou-notice-icon-wrap">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-notice-svg"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -248,7 +248,7 @@
 			</div>
 		</div>
 
-		<!-- Visual Pipeline Steps -->
+		<!-- 升级流程步骤条 -->
 		<div class="ou-step-pipeline">
 			<div class="ou-step-node" id="step-env">
 				<div class="ou-step-circle">1</div>
@@ -271,7 +271,7 @@
 			</div>
 		</div>
 
-		<!-- Progress Bar Track -->
+		<!-- 进度条轨道 -->
 		<div class="ou-progress-wrap">
 			<div class="ou-progress-track">
 				<div class="ou-progress-bar" id="progress-bar" style="width:0%">
@@ -339,7 +339,7 @@
 		<p class="ou-hint" id="task-hint"></p>
 	</div>
 
-	<!-- 3. 备份 & 恢复 -->
+	<!-- 3. 备份与恢复 -->
 	<div class="cbi-section ou-card" id="card-backup">
 		<div class="ou-card-head">
 			<div class="ou-head-title-wrap">
@@ -409,7 +409,7 @@
 		</div>
 
 		<div class="ou-config-steps">
-			<!-- Step 1 -->
+			<!-- 步骤 1 -->
 			<div class="ou-form-card">
 				<div class="ou-step-badge-row">
 					<span class="ou-step-number">1</span>
@@ -428,7 +428,7 @@
 				</div>
 			</div>
 
-			<!-- Step 2 -->
+			<!-- 步骤 2 -->
 			<div class="ou-form-card">
 				<div class="ou-step-badge-row">
 					<span class="ou-step-number">2</span>
@@ -453,7 +453,7 @@
 				</div>
 			</div>
 
-			<!-- Step 3 -->
+			<!-- 步骤 3 -->
 			<div class="ou-form-card">
 				<div class="ou-step-badge-row">
 					<span class="ou-step-number">3</span>
@@ -478,7 +478,7 @@
 			</div>
 		</div>
 
-		<!-- Summary Bar -->
+		<!-- 配置摘要栏 -->
 		<div class="ou-config-summary-card">
 			<div class="ou-summary-icon">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
@@ -486,7 +486,7 @@
 			<div class="ou-summary-text" id="config-summary">尚未配置固件源</div>
 		</div>
 
-		<!-- Advanced Settings Collapsible -->
+		<!-- 高级设置折叠面板 -->
 		<details id="adv-box" class="ou-details">
 			<summary class="ou-summary">
 				<div class="ou-summary-left">
@@ -562,7 +562,7 @@
 			</div>
 		</details>
 
-		<!-- Card Foot -->
+		<!-- 卡片底部操作区 -->
 		<div class="ou-card-foot">
 			<div class="ou-hint" id="config-hint"></div>
 			<button id="btn-save-config" class="btn ou-btn ou-btn-primary" type="button">
@@ -598,7 +598,7 @@
 			</div>
 		</div>
 
-		<!-- Terminal Console -->
+		<!-- 终端风格日志窗口 -->
 		<div class="ou-terminal-window">
 			<div class="ou-terminal-titlebar">
 				<div class="ou-terminal-dots">

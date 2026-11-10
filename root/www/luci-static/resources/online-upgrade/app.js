@@ -1,11 +1,11 @@
-/* luci-app-online-upgrade v2 — native JS frontend (no LuCI framework).
- * RPC: uhttpd-mod-ubus JSON-RPC against the luci.online-upgrade object.
- * Session token: LuCI admin session cookie (the dispatcher session IS an
- * ubus session), with a server-injected global as a fallback hook. */
+/* luci-app-online-upgrade v2 —— 原生 JS 前端（不依赖 LuCI 框架）。
+ * RPC：通过 uhttpd-mod-ubus 以 JSON-RPC 调用 luci.online-upgrade 对象。
+ * 会话令牌：使用 LuCI 管理会话 Cookie（调度器会话本身就是一个
+ * ubus 会话），并以服务端注入的全局变量作为兜底。 */
 (function () {
 	'use strict';
 
-	/* ---------------- session ---------------- */
+	/* ---------------- 会话 ---------------- */
 
 	function readCookie(name) {
 		var m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
@@ -20,7 +20,7 @@
 	var SID = window.__OU_SESSION__ || luciSession() ||
 		readCookie('sysauth_https') || readCookie('sysauth_http') || readCookie('sysauth') || '';
 
-	/* ---------------- ubus JSON-RPC ---------------- */
+	/* ---------------- ubus JSON-RPC 调用 ---------------- */
 
 	var rpcId = 0;
 
@@ -47,7 +47,7 @@
 		});
 	}
 
-	/* ---------------- helpers ---------------- */
+	/* ---------------- 工具函数 ---------------- */
 
 	function $(id) { return document.getElementById(id); }
 
@@ -103,7 +103,7 @@
 		}
 	}
 
-	/* ---------------- detached run freshness ---------------- */
+	/* ---------------- detached 运行状态的新旧判定 ---------------- */
 
 	// rpcd 以 detached 方式启动 check/upgrade，点击后第一次轮询读到的往往还是
 	// 上一次运行留下的终态（failed / check_done）。用「写入者 pid」判断新旧：
@@ -130,7 +130,7 @@
 		return Number(st.ts || 0) > pollBaseline.ts;
 	}
 
-	/* ---------------- status card ---------------- */
+	/* ---------------- 状态卡片 ---------------- */
 
 	var lastCheck = null;
 
@@ -489,7 +489,7 @@
 		});
 	}
 
-	/* ---------------- upgrade flow ---------------- */
+	/* ---------------- 升级流程 ---------------- */
 
 	function showRebootOverlay() {
 		stopPoll();
@@ -504,7 +504,7 @@
 			if (cd) cd.textContent = Math.max(seconds, 0);
 		}, 1000);
 
-		// poll until the router answers again (LAN IP may change → try hostname too)
+		// 轮询直到路由器重新响应（LAN IP 可能变化，因此同时尝试主机名与常见网关地址）
 		var targets = [location.origin, 'http://immortalwrt.lan', 'http://192.168.1.1'];
 		var t = 0;
 		var ping = setInterval(function () {
@@ -599,8 +599,8 @@
 					showBtn('btn-force', true);
 					$('card-progress').style.display = 'none';
 					hint('check-result', '操作失败: ' + (st.error || '未知错误'), 'err');
-					// Surface the stop reason (slow-speed evidence, cancel, ...)
-					// in the task card as well and refresh the final history state.
+					// 把停止原因（慢速证据、用户取消等）同步显示在任务卡片中，
+					// 并刷新最终的历史任务状态。
 					if (st.error) hint('task-hint', ' ' + st.error, 'err');
 					refreshTasks();
 				}
@@ -662,7 +662,7 @@
 		});
 	}
 
-	/* ---------------- download tasks ---------------- */
+	/* ---------------- 下载任务 ---------------- */
 
 	var taskTimer = null;
 	var taskActive = null;
@@ -714,8 +714,8 @@
 		}
 		taskActive = active;
 		syncTaskButtons(active);
-		// Poll only while a task is actually running/paused: a stopped or empty
-		// history must not keep spawning a CLI process every few seconds.
+		// 仅在任务确实处于运行或暂停状态时轮询：已停止或空历史
+		// 不应每隔几秒就反复拉起一次 CLI 进程。
 		if (active && !taskTimer) {
 			taskTimer = setInterval(refreshTasks, 3000);
 		} else if (!active && taskTimer) {
@@ -780,7 +780,7 @@
 		});
 	}
 
-	/* ---------------- backup & restore ---------------- */
+	/* ---------------- 备份与恢复 ---------------- */
 
 	function refreshBackups() {
 		ubus('list_backups').then(function (r) {
@@ -922,7 +922,7 @@
 			});
 	}
 
-	/* ---------------- config ---------------- */
+	/* ---------------- 配置 ---------------- */
 
 	function fillConfig(settings) {
 		$('cfg-repo').value = settings.repo || '';
@@ -935,8 +935,8 @@
 		$('cfg-chunk').value = settings.dl_chunk_mb || '4';
 		$('cfg-stall').value = settings.dl_stall_sec || '30';
 		$('cfg-retries').value = settings.dl_retries || '3';
-		// 0 is a valid value for the slow-speed guard (disable / no grace), so
-		// it must not be replaced by the default with `||`.
+		// 慢速保护的 0 是有效取值（表示关闭保护或不设宽限期），
+		// 因此不能用 `||` 把它替换成默认值。
 		[['cfg-minspeed', settings.dl_min_speed_kb, '32'],
 		 ['cfg-slowwin', settings.dl_slow_window_sec, '15'],
 		 ['cfg-slowgrace', settings.dl_slow_grace_sec, '10']].forEach(function (f) {
@@ -1163,7 +1163,7 @@
 		}
 	}
 
-	/* ---------------- log ---------------- */
+	/* ---------------- 日志 ---------------- */
 
 	function refreshLog() {
 		setBusy('btn-refresh-log', true);
@@ -1200,7 +1200,7 @@
 		});
 	}
 
-	/* ---------------- boot ---------------- */
+	/* ---------------- 初始化 ---------------- */
 
 	function boot() {
 		$('btn-check').addEventListener('click', runCheck);
@@ -1240,7 +1240,7 @@
 		refreshBackups();
 		refreshTasks();
 
-		// resume UI if an operation is already running (e.g. page reloaded mid-upgrade)
+		// 若已有任务在运行（例如升级途中刷新了页面），恢复对应的界面状态
 		ubus('get_status').then(function (st) {
 			if (st.stage === 'idle' || st.stage === 'check_done' || st.stage === 'check_failed') {
 				if (st.stage === 'check_done' && st.result) renderCheckResult(st.result);

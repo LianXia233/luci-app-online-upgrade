@@ -1,4 +1,4 @@
-// UCI access via the `uci` CLI (arguments passed directly, no shell involved).
+// 通过 `uci` 命令行访问 UCI 配置（参数直接传递，不经过 shell）。
 
 use std::process::Command;
 

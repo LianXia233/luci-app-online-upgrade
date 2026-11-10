@@ -1,21 +1,21 @@
-// Local firmware version detection.
+// 本地固件版本检测。
 //
-// A self-built SNAPSHOT image has no comparable release number: `DISTRIB_RELEASE`
-// is literally `SNAPSHOT`, so falling back to "cannot compare" makes every such
-// device look like an unknown-version box and blocks the upgrade path. Instead
-// try a chain of sources, highest confidence first, and remember *which* source
-// produced the value so the UI can show the basis instead of a bare verdict.
+// 自用构建的 SNAPSHOT 镜像没有可比较的发布号：`DISTRIB_RELEASE` 的值
+// 就是 `SNAPSHOT`。若直接退化为“无法比较”，这类设备都会被当成
+// 版本未知，从而堵死升级路径。因此这里按可信度从高到低依次
+// 尝试多个来源，并记录*哪个*来源给出了该值，让界面展示
+// 判定依据，而不是只给一个孤立结论。
 //
-// Order (high → low):
-//   1. version files stamped by the build (CI-written tag)
-//   2. `DISTRIB_VERSION`, `DISTRIB_RELEASE`, os-release `VERSION_ID`
-//   3. `DISTRIB_DESCRIPTION`, `DISTRIB_REVISION`, `BUILD_ID`, `/etc/openwrt_version`
-//   4. the `base-files` package version
-//   5. the firmware build time (weak: only meaningful against date-shaped tags
-//      such as YY.MM.DD / YYYY.MM.DD; other targets are left incomparable)
+// 优先级（高 → 低）：
+//   1. 构建时写入的版本文件（CI 写入的标签）
+//   2. `DISTRIB_VERSION`、`DISTRIB_RELEASE`、os-release 的 `VERSION_ID`
+//   3. `DISTRIB_DESCRIPTION`、`DISTRIB_REVISION`、`BUILD_ID`、`/etc/openwrt_version`
+//   4. `base-files` 软件包版本
+//   5. 固件构建时间（弱依据：仅对 YY.MM.DD / YYYY.MM.DD 这类
+//      日期型标签有意义；其他目标保持不可比）
 //
-// Nothing here guesses: when no source yields a parseable version, the caller
-// gets `Confidence::None` and reports "cannot compare" honestly.
+// 这里不做任何猜测：所有来源都解析不出版本时，调用方会得到
+// `Confidence::None`，并如实上报“无法比较”。
 
 use crate::version::{civil_from_days, pick, Version};
 use std::time::UNIX_EPOCH;
@@ -39,16 +39,16 @@ impl Confidence {
 
 #[derive(Debug, Clone)]
 pub struct LocalVersion {
-    /// Parsed version, when a source produced a dotted number.
+    /// 解析出的版本号（当来源提供了点分数字时）。
     pub version: Option<Version>,
-    /// Verbatim text of the winning source (`SNAPSHOT`, `r0-23a1cd3`, ...).
+    /// 命中来源的原始文本（如 `SNAPSHOT`、`r0-23a1cd3` 等）。
     pub raw: String,
-    /// Machine-readable source key.
+    /// 机器可读的来源标识。
     pub source: String,
-    /// Human-readable source description (shown in the UI).
+    /// 人类可读的来源说明（显示在界面上）。
     pub source_text: String,
     pub confidence: Confidence,
-    /// Build date (year, month, day), only set when the source is build time.
+    /// 构建日期（年、月、日），仅当来源为构建时间时设置。
     pub build_ymd: Option<(i64, u32, u32)>,
 }
 
@@ -64,15 +64,15 @@ impl LocalVersion {
         }
     }
 
-    /// Version usable for comparison against `target`.
+    /// 可用于与 `target` 比较的版本号。
     ///
-    /// A build date is only meaningful against a date-shaped tag: self-build
-    /// tags use `YY.MM.DD` while a release may use `YYYY.MM.DD`, so the year
-    /// width is aligned to the target (otherwise `26.11.07` would compare as
-    /// `26 < 2026` and be taken for a downgrade). Against a normal release
-    /// number such as `24.10.0` the date must not be compared at all — the
-    /// result would be meaningless and could hide a real update — so this
-    /// returns `None` and the caller reports "cannot compare" instead.
+    /// 构建日期只对日期型标签有意义：自用构建标签使用 `YY.MM.DD`，
+    /// 发布版可能使用 `YYYY.MM.DD`，
+    /// 因此年份宽度需要与目标对齐（否则 `26.11.07` 会按 `26 < 2026`
+    /// 比较，被误判为降级）。对于 `24.10.0` 这类普通发布号，
+    /// 则完全不能比较日期——比较结果没有意义，
+    /// 还可能掩盖真实更新——此时返回 `None`，
+    /// 由调用方上报“无法比较”。
     pub fn comparable(&self, target: Option<&Version>) -> Option<Version> {
         if let Some((y, m, d)) = self.build_ymd {
             let target = target?;
@@ -94,7 +94,7 @@ impl LocalVersion {
     }
 }
 
-/// Version files a build pipeline may stamp into the rootfs.
+/// 构建流水线可能写入 rootfs 的版本文件。
 const VERSION_FILES: [(&str, &str); 4] = [
     (
         "/etc/online-upgrade-version",
@@ -115,7 +115,7 @@ fn read_file(path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Read `KEY='value'`, `KEY="value"` or `KEY=value` from a shell-style file.
+/// 从 shell 风格文件中读取 `KEY='value'`、`KEY="value"` 或 `KEY=value`。
 fn kv(text: &str, key: &str) -> Option<String> {
     for line in text.lines() {
         let line = line.trim();
@@ -136,11 +136,11 @@ fn kv(text: &str, key: &str) -> Option<String> {
     None
 }
 
-/// Build time of the image, taken from the mtime of the release marker file.
+/// 镜像构建时间，取自发行标记文件的 mtime。
 ///
-/// Rootfs file mtimes come from the build, not from the flash moment, which is
-/// what makes them usable here. Times are shown in UTC+8, matching the rest of
-/// this plugin.
+/// rootfs 文件的 mtime 来自构建过程而非刷机时刻，
+/// 因此可用于此处的判断。时间按 UTC+8 显示，与本插件
+/// 其他部分保持一致。
 fn build_ymd() -> Option<(i64, u32, u32)> {
     let mut secs: Option<i64> = None;
     for path in ["/etc/openwrt_release", "/etc/openwrt_version"] {
@@ -164,7 +164,7 @@ fn build_ymd() -> Option<(i64, u32, u32)> {
     Some((y, m as u32, d as u32))
 }
 
-/// `apk info -v <pkg>` / `opkg info <pkg>` → version, if the manager knows it.
+/// `apk info -v <包名>` / `opkg info <包名>` → 版本号（若包管理器能提供）。
 fn package_version(pkg: &str) -> Option<String> {
     for (cmd, args) in [
         ("apk", vec!["info", "-v", pkg]),
@@ -188,7 +188,7 @@ fn package_version(pkg: &str) -> Option<String> {
     None
 }
 
-/// First candidate whose text contains a parseable version wins.
+/// 取第一个文本中包含可解析版本号的候选来源。
 fn select(candidates: &[(String, String, String, Confidence)]) -> Option<usize> {
     candidates
         .iter()
@@ -199,7 +199,7 @@ pub fn detect() -> LocalVersion {
     let rel = read_file("/etc/openwrt_release").unwrap_or_default();
     let osrel = read_file("/etc/os-release").unwrap_or_default();
 
-    // (source key, source text, raw value, confidence)
+    // (来源标识, 来源说明, 原始值, 可信度)
     let mut cands: Vec<(String, String, String, Confidence)> = Vec::new();
 
     for (path, label) in VERSION_FILES {
@@ -224,7 +224,7 @@ pub fn detect() -> LocalVersion {
     ];
     for (key, label) in distro {
         let conf = if key == "DISTRIB_REVISION" {
-            // r1234-abcdef style revisions are not release numbers
+            // r1234-abcdef 形式的修订号不是发布版本号
             Confidence::Weak
         } else {
             Confidence::Strong
@@ -261,8 +261,8 @@ pub fn detect() -> LocalVersion {
         ));
     }
 
-    // Keep the first non-empty raw text (usually `SNAPSHOT`) for the "cannot
-    // compare" message even when nothing parses.
+    // 保留第一个非空原始文本（通常是 `SNAPSHOT`），用于“无法
+    // 比较”提示，即使所有来源都解析失败。
     let mut raw_marker = String::new();
     if let Some(v) = kv(&rel, "DISTRIB_RELEASE") {
         raw_marker = v;

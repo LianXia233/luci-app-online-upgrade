@@ -1,9 +1,9 @@
-// Single-process mutex for check / upgrade / download / backup / restore.
+// 用于 check / upgrade / download / backup / restore 的单进程互斥锁。
 //
-// OpenWrt's rpcd backend spawns each binary detached, so two clicks (or a
-// check racing a running upgrade) can otherwise write the same temp firmware
-// and the same status file. A stale lock (router rebooted mid-download) is
-// detected by probing /proc/<pid> and reclaimed once.
+// OpenWrt 的 rpcd 后端以 detached 方式启动二进制，因此两次点击（或
+// check 与正在运行的 upgrade 并发）可能同时写入同一份临时固件
+// 和同一个状态文件。陈旧锁（下载途中路由器重启）通过探测
+// /proc/<pid> 识别，并回收一次。
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -11,14 +11,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const LOCK_FILE: &str = "/tmp/online-upgrade.lock";
 
-/// Grace period before an unreadable lock file is treated as stale.
+/// 不可读的锁文件被视为陈旧之前所需的宽限期。
 ///
-/// `acquire()` creates the file and only then writes `"<pid> <owner> <ts>"` into
-/// it. A contender that lands in that window sees an empty (or half-written)
-/// lock, and reclaiming it would let two processes run at once against the same
-/// firmware and status files. So a fresh-but-unreadable lock is reported as
-/// busy. The age threshold keeps a crash between create and write from holding
-/// the lock forever.
+/// `acquire()` 先创建文件，再写入 `"<pid> <owner> <ts>"`。
+/// 在这段窗口内进入的竞争者会看到空文件（或只写了一半的内容），
+/// 若此时回收锁，就会让两个进程同时操作同一份固件
+/// 和状态文件。因此，刚创建但不可读的锁按“忙”处理；
+/// 该时长阈值可避免创建与写入之间的崩溃
+/// 导致锁被永久占用。
 const UNREADABLE_LOCK_GRACE_SECS: u64 = 2;
 
 pub struct Lock {
@@ -33,8 +33,8 @@ fn now() -> u64 {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    // Linux-only probe; on other platforms (local dev builds) treat a lock
-    // file owned by another process id as alive to stay conservative.
+    // 仅 Linux 可用的探测；其他平台（本地开发构建）上，
+    // 为保守起见，将其他进程持有的锁视为仍然存活。
     let path = format!("/proc/{pid}");
     if !std::path::Path::new("/proc").exists() {
         return true;
@@ -50,16 +50,16 @@ fn read_owner() -> Option<(u32, String)> {
     Some((pid, who))
 }
 
-/// Age of the lock file in whole seconds, measured on the file's mtime rather
-/// than on wall-clock differences between processes.
+/// 锁文件的年龄（整秒），以文件 mtime 为基准计算，
+/// 而不是比较进程间的墙上时钟。
 fn lock_age_secs() -> Option<u64> {
     let modified = fs::metadata(LOCK_FILE).ok()?.modified().ok()?;
     let mtime = modified.duration_since(UNIX_EPOCH).ok()?.as_secs();
     Some(now().saturating_sub(mtime))
 }
 
-/// Acquire the global operation lock. On failure the caller must NOT write the
-/// status file: the process that owns the lock is the one reporting progress.
+/// 获取全局操作锁。失败时调用方**不得**写状态文件：
+/// 持有锁的进程才负责上报进度。
 pub fn acquire(owner: &str) -> Result<Lock, String> {
     for attempt in 0..2 {
         match OpenOptions::new()

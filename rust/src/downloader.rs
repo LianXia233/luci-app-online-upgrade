@@ -1,14 +1,14 @@
-// Segmented concurrent downloader: dynamic chunk queue with work-stealing
-// (fast connections naturally take over slow segments), per-chunk retry with a
-// stall watchdog, shared progress counter, and a sidecar file for resuming.
+// 分段并发下载器：动态分块队列结合工作窃取
+// （连接较快的 worker 会自然接管较慢的分段），单块重试、
+// 停滞看门狗、共享进度计数，以及用于断点续传的 sidecar 文件。
 //
-// Sized for this plugin's use case: one firmware file, optional URL-prefix
-// proxy, progress fed into the LuCI status JSON.
+// 针对本插件的场景设计：单个固件文件、可选的 URL 前缀
+// 代理，进度写入 LuCI 状态 JSON。
 //
-// Task control is Tokio-native: a `watch::Receiver<RunState>` drives pause /
-// cancel across every chunk worker, a Tokio task polls the out-of-band control
-// file written by `online-upgrade pause|resume|cancel`, and a throughput
-// monitor stops the transfer when it stays abnormally slow.
+// 任务控制基于 Tokio 原生机制：`watch::Receiver<RunState>` 驱动所有分块
+// worker 的暂停 / 取消；一个 Tokio 任务轮询带外控制文件
+// （由 `online-upgrade pause|resume|cancel` 写入），另有吞吐量
+// 监控在速度持续异常偏低时中止传输。
 
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -30,21 +30,21 @@ const MAX_WORKERS: usize = 6;
 const SINGLE_STREAM_MAX: u64 = 2 * 1024 * 1024; // below this, don't bother splitting
 const MAX_CHUNK_RETRIES: u32 = 3;
 
-/// Failure of a download attempt.
+/// 单次下载尝试的失败类型。
 ///
-/// `Stopped` is terminal for the whole task (user cancel or slow-speed guard)
-/// and must NOT trigger a fallback to another mirror; `Other` is a route-level
-/// failure that the caller may retry on a different URL.
+/// `Stopped` 表示整个任务终止（用户取消或慢速保护），
+/// 绝不能触发切换到其他镜像；`Other` 表示当前线路层面的
+/// 失败，调用方可以换一个 URL 重试。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DownloadError {
-    /// Terminal stop with a typed reason.
+    /// 带明确原因类型的终止。
     Stopped(StopReason),
-    /// Network / IO / protocol failure of this route.
+    /// 当前线路的网络 / IO / 协议失败。
     Other(String),
 }
 
 impl DownloadError {
-    /// User-facing message (status file, log, task history).
+    /// 面向用户的消息（状态文件、日志、任务历史）。
     pub fn message(&self) -> String {
         match self {
             DownloadError::Stopped(r) => r.text().to_string(),
@@ -52,7 +52,7 @@ impl DownloadError {
         }
     }
 
-    /// Whether another download route may be tried.
+    /// 是否可以尝试其他下载线路。
     pub fn is_route_failure(&self) -> bool {
         matches!(self, DownloadError::Other(_))
     }
@@ -67,7 +67,7 @@ impl std::fmt::Display for DownloadError {
     }
 }
 
-/// Tunables read from UCI (`online-upgrade.settings.dl_*`), clamped to sane ranges.
+/// 从 UCI 读取的可调参数（`online-upgrade.settings.dl_*`），会限制到合理范围。
 struct DlCfg {
     workers: usize,
     chunk_size: u64,
@@ -94,16 +94,16 @@ impl DlCfg {
     }
 }
 
-/// Result of a completed download.
+/// 下载完成后的结果。
 pub struct Downloaded {
-    /// Final file size in bytes.
+    /// 最终文件大小（字节）。
     pub total: u64,
-    /// Entity tag of the asset, when the server supplied one.
-    #[allow(dead_code)] // reserved for future cache validation
+    /// 资产响应的 ETag（服务器提供时）。
+    #[allow(dead_code)] // 预留给后续的缓存校验
     pub etag: Option<String>,
-    /// Chunks restored from a previous run's sidecar.
+    /// 从上一次运行的 sidecar 恢复的分块数量。
     pub resumed_chunks: usize,
-    /// Number of concurrent segments used.
+    /// 实际使用的并发分段数。
     pub segments: usize,
 }
 
@@ -113,12 +113,12 @@ struct Probe {
     etag: Option<String>,
 }
 
-/// HEAD-less range probe: asks for byte 0-0 and derives size / range support.
+/// 不使用 HEAD 的范围探测：请求 0-0 字节，据此推导文件大小与是否支持 Range。
 async fn probe(client: &Client, url: &str) -> Result<Probe, String> {
     let resp = client
         .get(url)
-        // Required by api.github.com/releases/assets/<id>: without it the API
-        // answers with JSON metadata instead of redirecting to the file.
+        // api.github.com/releases/assets/<id> 要求带此头：否则 API
+        // 会返回 JSON 元数据，而不是重定向到文件。
         .header("Accept", "application/octet-stream")
         .header("Range", "bytes=0-0")
         .timeout(Duration::from_secs(30))
@@ -134,7 +134,7 @@ async fn probe(client: &Client, url: &str) -> Result<Probe, String> {
 
     let status = resp.status().as_u16();
     if status == 206 {
-        // Content-Range: bytes 0-0/123456
+        // 响应头形如 Content-Range: bytes 0-0/123456
         let cr = resp
             .headers()
             .get("content-range")
@@ -163,7 +163,7 @@ async fn probe(client: &Client, url: &str) -> Result<Probe, String> {
     Err(format!("HTTP {status}"))
 }
 
-// ---- resume sidecar ----
+// ---- 断点续传 sidecar ----
 
 #[derive(Clone)]
 struct Parts {
@@ -178,15 +178,15 @@ fn parts_path(out: &str) -> String {
     format!("{out}.parts.json")
 }
 
-/// A sidecar is only trustworthy when all three hold:
-/// 1. the data file it describes still exists with the expected length
-///    (a deleted/truncated firmware must never keep its "done" map);
-/// 2. the chunk grid is unchanged — changing `dl_chunk_mb` remaps indices to
-///    completely different byte ranges;
-/// 3. every recorded index is inside the current grid.
+/// 只有同时满足以下三点，sidecar 才可信：
+/// 1. 它描述的数据文件仍然存在且长度符合预期
+///    （被删除或截断的固件绝不能保留其“已完成”映射）；
+/// 2. 分块网格未变——修改 `dl_chunk_mb` 会让索引映射到
+///    完全不同的字节区间；
+/// 3. 每个记录的索引都落在当前网格内。
 ///
-/// Anything else is discarded, so a resume can never skip bytes that were
-/// never written.
+/// 其他情况一律丢弃，
+/// 确保续传绝不会跳过从未写入的字节。
 fn load_parts(
     out: &str,
     url: &str,
@@ -259,7 +259,7 @@ fn drop_parts(out: &str) {
     let _ = std::fs::remove_file(parts_path(out));
 }
 
-// ---- chunk queue ----
+// ---- 分块队列 ----
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Chunk {
@@ -289,10 +289,10 @@ fn build_chunks(total: u64, chunk_size: u64) -> Vec<Chunk> {
     v
 }
 
-// ---- task control helpers ----
+// ---- 任务控制辅助函数 ----
 
-/// Wait until the task is running again. Pause is honoured only at chunk
-/// boundaries so an HTTP response stream is never held open while idle.
+/// 等待任务恢复运行。暂停只在分块边界生效，
+/// 避免 HTTP 响应流在空闲时被长时间挂起。
 async fn wait_running(state: &mut watch::Receiver<RunState>) -> Result<(), DownloadError> {
     loop {
         let cur = state.borrow_and_update().clone();
@@ -309,8 +309,8 @@ async fn wait_running(state: &mut watch::Receiver<RunState>) -> Result<(), Downl
     }
 }
 
-/// Pure sliding-window tracker for the slow-speed guard. Kept separate from
-/// the async monitor so the decision rule is unit-testable without timers.
+/// 慢速保护使用的纯滑动窗口统计器。与异步监控逻辑分离，
+/// 使判定规则无需计时器即可做单元测试。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct SlowTracker {
     low_secs: u64,
@@ -318,8 +318,8 @@ struct SlowTracker {
 }
 
 impl SlowTracker {
-    /// Feed one second of throughput. Returns `(avg_bps, low_secs)` once the
-    /// throughput stayed below the floor for the whole observation window.
+    /// 输入一秒的吞吐量。当吞吐量在整个观察窗口内持续低于下限时，
+    /// 返回 `(avg_bps, low_secs)`。
     fn observe(&mut self, bps: u64, policy: &SlowPolicy, in_grace: bool) -> Option<(u64, u64)> {
         if in_grace || !policy.enabled() {
             self.reset();
@@ -343,7 +343,7 @@ impl SlowTracker {
     }
 }
 
-/// Shorten a URL for logs without slicing in the middle of a UTF-8 character.
+/// 缩短 URL 以便记录日志，且不会从 UTF-8 字符中间截断。
 pub(crate) fn short_url(url: &str) -> String {
     let mut s: String = url.chars().take(90).collect();
     if url.chars().count() > 90 {
@@ -352,8 +352,8 @@ pub(crate) fn short_url(url: &str) -> String {
     s
 }
 
-/// Tokio task that samples the shared byte counter once per second and stops
-/// the download when throughput stays below the configured floor.
+/// 每秒采样一次共享字节计数器的 Tokio 任务，当吞吐量持续低于
+/// 配置下限时中止下载。
 fn spawn_slow_monitor(
     downloaded: Arc<AtomicU64>,
     policy: SlowPolicy,
@@ -406,14 +406,14 @@ fn spawn_slow_monitor(
     }))
 }
 
-// ---- core ----
+// ---- 核心逻辑 ----
 
-/// Download `url` to `out`, concurrently. `report(done_bytes, total)` is called
-/// at most every ~500 ms. Returns final size.
+/// 并发地把 `url` 下载到 `out`。`report(done_bytes, total)` 的调用
+/// 间隔最多约 500 毫秒。返回最终大小。
 ///
-/// `control` carries the Tokio watch channel used for pause / cancel and the
-/// slow-speed guard; the caller owns it so a single task can span multiple
-/// fallback routes.
+/// `control` 携带用于暂停 / 取消和慢速保护的 Tokio watch 通道；
+/// 它由调用方持有，使同一个任务可以跨多条备用线路
+/// 持续工作。
 pub async fn download(
     client: &Client,
     url: &str,
@@ -421,8 +421,8 @@ pub async fn download(
     report: Arc<dyn Fn(u64, u64) + Send + Sync>,
     control: &DownloadControl,
 ) -> Result<Downloaded, DownloadError> {
-    // A cancel that arrived before the first byte must not start a new
-    // connection at all.
+    // 在收到第一个字节之前就已到达的取消请求，
+    // 绝不能再去建立新连接。
     if let RunState::Stopped(r) = control.state() {
         return Err(DownloadError::Stopped(r));
     }
@@ -448,11 +448,11 @@ pub async fn download(
     let segments = ((total / dl.chunk_size).min(dl.workers as u64)).max(2) as usize;
     let all_chunks = build_chunks(total, dl.chunk_size);
 
-    // resume state
+    // 续传状态
     let prev = load_parts(out, url, &p.etag, total, dl.chunk_size, all_chunks.len());
     if prev.is_none() {
-        // untrusted sidecar (file gone, chunk grid changed, ...) must not
-        // linger next to a freshly started download
+        // 不可信的 sidecar（文件不存在、分块网格变化等）
+        // 不能留在新开始的下载旁边
         drop_parts(out);
     }
     let mut queue: VecDeque<Chunk> = VecDeque::new();
@@ -472,12 +472,12 @@ pub async fn download(
     } else {
         queue.extend(all_chunks.iter().cloned());
     }
-    // preallocate
+    // 预分配文件
     File::options()
         .write(true)
         .create(true)
-        // Resume reuses the preallocated file: truncating it would destroy
-        // already-written chunks. `set_len` below establishes the full size.
+        // 续传会复用已预分配的文件：截断会破坏
+        // 已写入的分块。下方用 `set_len` 设定完整大小。
         .truncate(false)
         .open(out)
         .await
@@ -515,8 +515,8 @@ pub async fn download(
         let retries = dl.retries;
         handles.push(tokio::spawn(async move {
             loop {
-                // Pause is observed between chunks; a stop is observed inside
-                // the byte loop as well, so cancellation is prompt.
+                // 暂停在分块之间检查；停止还会在字节循环内部检查，
+                // 因此取消能够及时生效。
                 wait_running(&mut state).await?;
                 let chunk = {
                     let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
@@ -541,8 +541,8 @@ pub async fn download(
                             ok = true;
                             break;
                         }
-                        // Terminal stop: keep the original typed reason and do
-                        // not burn the remaining retries.
+                        // 终止性停止：保留原始的原因类型，
+                        // 不消耗剩余重试次数。
                         Err(e @ DownloadError::Stopped(_)) => return Err(e),
                         Err(DownloadError::Other(e)) => {
                             crate::logline!("  分段 {} 第{}次重试失败: {}", chunk.idx, attempt, e);
@@ -553,7 +553,7 @@ pub async fn download(
                 if !ok {
                     return Err(DownloadError::Other(format!("分段 {} 下载失败", chunk.idx)));
                 }
-                // mark done + persist sidecar
+                // 标记完成并持久化 sidecar
                 {
                     let mut flags = done_flags.lock().unwrap_or_else(|e| e.into_inner());
                     flags[chunk.idx] = true;
@@ -566,7 +566,7 @@ pub async fn download(
         }));
     }
 
-    // progress reporter
+    // 进度上报任务
     let rep_handle = {
         let downloaded = Arc::clone(&downloaded);
         let report = Arc::clone(&report);
@@ -609,15 +609,15 @@ pub async fn download(
         h.abort();
     }
     if let Some(e) = err {
-        // Keep the sidecar only when the data file is still intact at full
-        // length; otherwise a later resume would trust a "done" map that no
-        // longer describes this file (the classic zero-filled hole bug).
+        // 仅当数据文件仍完整且长度正确时才保留 sidecar；
+        // 否则后续续传会信任一个已不再描述该文件的
+        // “已完成”映射（典型的空洞填零问题）。
         keep_resumable(out, total);
         return Err(e);
     }
 
-    // Every chunk must be marked done. Length alone cannot prove that: a
-    // preallocated file has the right length even with unwritten regions.
+    // 每个分块都必须标记为完成。仅凭文件长度无法证明这一点：
+    // 预分配的文件即使存在未写入区域，长度也会是正确的。
     {
         let flags = done_flags.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(missing) = flags.iter().position(|&d| !d) {
@@ -647,8 +647,8 @@ pub async fn download(
     })
 }
 
-/// On failure: keep the sidecar only if the file can actually be resumed from
-/// it, otherwise delete both so a retry starts from a clean slate.
+/// 失败时：仅当确实能从该文件续传时才保留 sidecar，
+/// 否则将两者都删除，让重试从干净状态开始。
 fn keep_resumable(out: &str, total: u64) {
     let ok = std::fs::metadata(out)
         .map(|m| m.len() == total)
@@ -698,15 +698,15 @@ async fn fetch_range(
     let mut stream = resp.bytes_stream();
     let mut written: u64 = 0;
     loop {
-        // `state.changed()` is cancel-safe, so selecting it against the stream
-        // does not lose a stop notification when a data chunk wins the race.
+        // `state.changed()` 是取消安全的，因此与数据流一起 select
+        // 时，即使数据块先就绪也不会丢失停止通知。
         let item = tokio::select! {
             biased;
             _res = state.changed() => {
                 match state.borrow_and_update().clone() {
                     RunState::Stopped(r) => return Err(DownloadError::Stopped(r)),
-                    // Paused takes effect at the next chunk boundary; keep
-                    // draining this response so the connection is not idle.
+                    // 暂停在下一个分块边界生效；期间继续
+                    // 读取完当前响应，避免连接空转。
                     _ => continue,
                 }
             }
@@ -756,8 +756,8 @@ async fn single_stream(
     let res = single_stream_inner(client, url, out, total, etag, report, control, dl).await;
     match res {
         Ok(d) => {
-            // no resume state applies to a single stream: make sure an old
-            // sidecar from a segmented attempt cannot be reused later
+            // 单流下载不适用续传状态：确保此前分段下载留下的
+            // 旧 sidecar 不会在之后被误用
             drop_parts(out);
             Ok(d)
         }
@@ -899,7 +899,7 @@ mod tests {
 
     #[test]
     fn slow_tracker_fires_after_window() {
-        let p = SlowPolicy::new(32, 5, 0); // 32 KiB/s, 5s window
+        let p = SlowPolicy::new(32, 5, 0); // 32 KiB/s，5 秒窗口
         let mut t = SlowTracker::default();
         for _ in 0..4 {
             assert!(t.observe(1024, &p, false).is_none());

@@ -1,11 +1,11 @@
 #!/bin/sh
-# Seed defaults + migrate away from v1 (shell/lua) leftovers.
+# 写入默认配置，并清理 v1（shell/lua 实现）遗留文件。
 
-# Seed neutral defaults only when the settings section does not exist yet,
-# so package upgrades never clobber user configuration.
-# NOTE: repo / firmware_pattern are intentionally NOT seeded — the update
-# source is a user decision, configured in the web UI (tag=latest tracks the
-# newest release automatically).
+# 仅在 settings 配置节尚不存在时写入中性默认值，
+# 避免软件包升级覆盖用户已有配置。
+# 注意：repo 与 firmware_pattern 刻意不写入默认值——更新源属于
+# 用户决策，需在 Web 界面配置（tag=latest 会自动追踪
+# 最新 Release）。
 if [ -z "$(uci -q get online-upgrade.settings)" ]; then
 	uci -q batch <<-EOF
 		set online-upgrade.settings.enabled='0'
@@ -20,7 +20,7 @@ if [ -z "$(uci -q get online-upgrade.settings)" ]; then
 	EOF
 fi
 
-# ---- remove v1 files (shell backend / lua controller / cbi / legacy js / cgi) ----
+# ---- 清理 v1 文件（shell 后端 / lua 控制器 / cbi / 旧版 js / cgi） ----
 rm -f /usr/bin/online-upgrade.sh
 rm -f /usr/lib/lua/luci/controller/admin_system/online_upgrade.lua
 rm -f /usr/lib/lua/luci/model/cbi/admin_system/online_upgrade.lua

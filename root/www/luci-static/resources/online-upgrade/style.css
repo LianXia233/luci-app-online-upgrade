@@ -1,8 +1,8 @@
 /* ==========================================================================
-   luci-app-online-upgrade — Modern Pure White Aesthetic Theme
+   luci-app-online-upgrade —— 现代纯白美学主题
    ========================================================================== */
 
-/* Box sizing and scoped reset */
+/* 盒模型与局部样式重置 */
 .ou-container,
 .ou-container * {
 	box-sizing: border-box;
@@ -19,13 +19,13 @@
 }
 
 /* --------------------------------------------------------------------------
-   1. Hero Header Banner
+   1. 顶部主视觉横幅
    -------------------------------------------------------------------------- */
 .ou-hero-card {
 	background: linear-gradient(135deg, #ffffff 0%, #f8fafc 60%, #f1f5f9 100%) !important;
 	border: 1px solid #e2e8f0 !important;
 	border-radius: 18px !important;
-	/* Compact hero: keep the banner slim so the action cards stay above the fold. */
+	/* 紧凑型主视觉：压低横幅高度，让操作卡片留在首屏可见范围内。 */
 	padding: 16px 28px !important;
 	margin-bottom: 18px !important;
 	display: flex;
@@ -51,7 +51,7 @@
 
 .ou-hero-content {
 	flex: 1;
-	/* min-width:0 lets the text column shrink instead of forcing the card taller. */
+	/* min-width:0 允许文字列收缩，避免把卡片撑高。 */
 	min-width: 0;
 	z-index: 1;
 }
@@ -150,7 +150,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   2. Modern White Cards
+   2. 现代纯白卡片
    -------------------------------------------------------------------------- */
 .ou-container .cbi-section,
 .ou-container .ou-card {
@@ -209,7 +209,7 @@
 	margin: 2px 0 0 !important;
 }
 
-/* Header Icon Badges */
+/* 标题图标徽标 */
 .ou-icon-badge {
 	width: 40px;
 	height: 40px;
@@ -231,7 +231,7 @@
 	height: 20px;
 }
 
-/* Status Pill */
+/* 状态胶囊标签 */
 .ou-status-pill {
 	display: inline-flex;
 	align-items: center;
@@ -266,7 +266,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   3. Buttons & Controls
+   3. 按钮与控件
    -------------------------------------------------------------------------- */
 .ou-btn-row {
 	display: flex;
@@ -393,7 +393,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   4. Stat Metric Grid & Detection Reason Layout
+   4. 统计指标网格与判定依据布局
    -------------------------------------------------------------------------- */
 .ou-stat-grid {
 	display: grid;
@@ -499,7 +499,7 @@
 	line-height: 1.45 !important;
 }
 
-/* Detection Reason Full Display */
+/* 判定依据完整展示 */
 .ou-reason-val {
 	font-size: 13.5px !important;
 	font-weight: 600 !important;
@@ -633,7 +633,7 @@
 	margin: 0 4px;
 }
 
-/* Notice Box */
+/* 提示框 */
 .ou-notice-box {
 	background: #f8fafc !important;
 	border: 1px solid #e2e8f0 !important;
@@ -682,7 +682,7 @@
 .ou-hint.err, .hint.err { color: #dc2626 !important; font-weight: 600 !important; }
 
 /* --------------------------------------------------------------------------
-   5. Upgrade Progress Pipeline
+   5. 升级进度流程
    -------------------------------------------------------------------------- */
 .ou-step-pipeline {
 	display: flex;
@@ -749,7 +749,7 @@
 	margin: 0 8px -18px;
 }
 
-/* Progress Track */
+/* 进度轨道 */
 .ou-progress-wrap {
 	margin-bottom: 12px;
 }
@@ -815,7 +815,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   6. Backup Table
+   6. 备份列表
    -------------------------------------------------------------------------- */
 .ou-table-responsive {
 	overflow-x: auto;
@@ -896,7 +896,7 @@
 	white-space: nowrap;
 }
 
-/* Empty State */
+/* 空状态 */
 .ou-empty {
 	text-align: center;
 	padding: 36px 20px !important;
@@ -930,7 +930,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   7. Repository & Configuration Forms
+   7. 仓库与配置表单
    -------------------------------------------------------------------------- */
 .ou-config-steps {
 	display: grid;
@@ -1074,7 +1074,7 @@
 	min-width: 200px;
 }
 
-/* Quick proxy pills */
+/* 代理快捷选项 */
 .ou-proxy-quick-pills {
 	display: flex;
 	align-items: center;
@@ -1106,7 +1106,7 @@
 	color: #2563eb !important;
 }
 
-/* Summary Card */
+/* 摘要卡片 */
 .ou-config-summary-card {
 	background: #f8fafc !important;
 	border: 1px solid #e2e8f0 !important;
@@ -1137,7 +1137,7 @@
 	word-break: break-all;
 }
 
-/* Details & Advanced Settings */
+/* 折叠面板与高级设置 */
 .ou-details {
 	background: #ffffff !important;
 	border: 1px solid #e2e8f0 !important;
@@ -1227,7 +1227,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   8. Modern Terminal
+   8. 现代终端风格
    -------------------------------------------------------------------------- */
 .ou-terminal-window {
 	background: #0f172a !important;
@@ -1310,7 +1310,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   9. Reboot Glassmorphism Overlay
+   9. 重启毛玻璃遮罩
    -------------------------------------------------------------------------- */
 .ou-overlay {
 	position: fixed;
@@ -1448,17 +1448,17 @@
 }
 
 /* ==========================================================================
-   10. Comprehensive Responsive Design (Mobile & Desktop)
+   10. 响应式设计（移动端与桌面端）
    ========================================================================== */
 
-/* Tablet & Medium Screens */
+/* 平板与中等屏幕 */
 @media (max-width: 992px) {
 	.ou-stat-grid {
 		grid-template-columns: repeat(2, 1fr);
 	}
 
-	/* Keep the two-column hero on tablets: stacking it here doubled the banner
-	   height (~400px) and pushed the action cards off the first screen. */
+	/* 平板上保持主视觉双列布局：此处改为堆叠会让横幅高度翻倍
+	   （约 400px），把操作卡片挤出首屏。 */
 	.ou-hero-card {
 		padding: 16px 22px !important;
 		gap: 16px;
@@ -1482,15 +1482,15 @@
 	}
 }
 
-/* Mobile Screens */
+/* 手机屏幕 */
 @media (max-width: 768px) {
 	.ou-container {
 		padding: 4px 6px 40px;
 	}
 
-	/* Phone hero: a compact header instead of a full-height landing banner.
-	   The decorative SVG is dropped and feature chips flow horizontally, so
-	   the first action card is visible without scrolling. */
+	/* 手机端主视觉：使用紧凑标题区，而非整屏落地页式横幅。
+	   装饰性 SVG 会隐藏，特性标签横向排列，
+	   使首个操作卡片无需滚动即可见。 */
 	.ou-hero-card {
 		padding: 14px 16px !important;
 		border-radius: 14px !important;
@@ -1534,8 +1534,8 @@
 		font-size: 12px !important;
 		line-height: 1.45 !important;
 		margin-bottom: 10px !important;
-		/* Full copy is kept on phones (no line-clamp): the README promises
-		   no truncated text, so only spacing/type scale is reduced here. */
+		/* 手机端保留完整文案（不做行数截断）：README 承诺
+		   不截断文字，因此这里只压缩间距与字号。 */
 		max-width: none;
 	}
 
@@ -1557,7 +1557,7 @@
 		height: 12px;
 	}
 
-	/* 460x170 artwork is unreadable at phone width and only costs vertical space. */
+	/* 460x170 的插画在手机宽度下无法辨认，只会浪费纵向空间。 */
 	.ou-hero-visual {
 		display: none !important;
 	}
@@ -1592,7 +1592,7 @@
 		min-height: 40px;
 	}
 
-	/* Status Card buttons full stack on phone */
+	/* 手机端状态卡片按钮纵向铺满 */
 	#card-status .ou-btn-row {
 		display: flex;
 		flex-direction: column;
@@ -1603,7 +1603,7 @@
 		width: 100%;
 	}
 
-	/* Backup Card: 2x2 grid buttons on phone */
+	/* 手机端备份卡片：按钮呈 2x2 网格 */
 	#card-backup .ou-btn-row {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
@@ -1611,7 +1611,7 @@
 		width: 100%;
 	}
 
-	/* Stat grid stacks cleanly on mobile */
+	/* 手机端统计网格整齐堆叠 */
 	.ou-stat-grid {
 		grid-template-columns: 1fr !important;
 		gap: 12px;
@@ -1632,7 +1632,7 @@
 		margin-left: 0 !important;
 	}
 
-	/* Steps section on mobile */
+	/* 手机端步骤区域 */
 	.ou-config-steps {
 		grid-template-columns: 1fr !important;
 		gap: 14px;
@@ -1678,7 +1678,7 @@
 		min-height: 42px;
 	}
 
-	/* Step pipeline compact on mobile */
+	/* 手机端步骤条紧凑显示 */
 	.ou-step-pipeline {
 		padding: 0;
 		margin: 6px 0 16px;
@@ -1698,14 +1698,14 @@
 		margin: 0 2px -12px;
 	}
 
-	/* Terminal on mobile */
+	/* 手机端终端窗口 */
 	.ou-terminal {
 		font-size: 11px !important;
 		padding: 12px 14px !important;
 		max-height: 240px !important;
 	}
 
-	/* Reboot modal on mobile */
+	/* 手机端重启弹窗 */
 	.ou-reboot-card {
 		padding: 28px 20px !important;
 		border-radius: 20px !important;
@@ -1720,7 +1720,7 @@
 	}
 }
 
-/* Very small phones (<= 380px): keep pills and feature chips on fewer lines. */
+/* 超小屏手机（<= 380px）：减少胶囊与特性标签占用的行数。 */
 @media (max-width: 380px) {
 	.ou-hero-title {
 		font-size: 18px !important;

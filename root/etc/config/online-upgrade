@@ -1,4 +1,4 @@
-# LuCI configuration for online-upgrade
+# online-upgrade 的 LuCI 配置文件
 
 config online-upgrade 'settings'
 	option enabled '0'

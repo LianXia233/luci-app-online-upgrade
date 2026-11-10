@@ -1,6 +1,6 @@
 #!/bin/sh
-# Auto-reinstall luci-app-online-upgrade after sysupgrade.
-# Kept across firmware upgrades via /lib/upgrade/keep.d/.
+# 系统升级（sysupgrade）后自动重装 luci-app-online-upgrade。
+# 通过 /lib/upgrade/keep.d/ 在固件升级后保留本脚本。
 #
 # 设计约束：不猜测。先按「本机完整架构」挑选，再退到架构家族；两者都挑不出
 # 明确候选时报错退出，只有「同架构多候选」才记录全部候选并按顺序取第一个。

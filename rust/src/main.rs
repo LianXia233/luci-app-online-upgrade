@@ -1,5 +1,5 @@
-// online-upgrade — OpenWrt/ImmortalWrt firmware online upgrade backend.
-// Replaces the original shell implementation; talks JSON to the LuCI frontend.
+// online-upgrade —— OpenWrt/ImmortalWrt 固件在线升级后端。
+// 取代原有的 shell 实现，通过 JSON 与 LuCI 前端通信。
 
 mod compat;
 mod downloader;
@@ -53,11 +53,11 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(|s| s.as_str()).unwrap_or("check");
 
-    // Mutating modes share one process lock: rpcd spawns each invocation
-    // detached, so without it two clicks can write the same temp firmware and
-    // the same status file. The loser exits without touching the status file,
-    // otherwise it would overwrite the progress of the process that owns the
-    // operation.
+    // 会修改状态的模式共用同一把进程锁：rpcd 以 detached 方式
+    // 启动每次调用，若没有该锁，两次点击可能同时写入同一份临时固件
+    // 和同一个状态文件。未抢到锁的进程直接退出，不会写状态文件，
+    // 否则会覆盖真正持有该操作锁的进程所上报的进度。
+    // （check / upgrade / download / backup / restore）
     let needs_lock = matches!(
         mode,
         "check" | "upgrade" | "download" | "backup" | "restore"
@@ -99,7 +99,7 @@ fn main() {
             .unwrap()
             .block_on(upgrade::download_only()),
         "probe" => {
-            // probe --repo owner/repo [--tag latest|latest@regex|tag]
+            // probe --repo owner/repo [--tag latest|latest@正则|tag]
             let mut repo = String::new();
             let mut tag = String::from("latest");
             let mut it = args.iter().skip(2);
@@ -126,9 +126,9 @@ fn main() {
             Some(p) => util::restore(p),
             None => usage(),
         },
-        // Download task control. These commands must NOT take the operation
-        // lock: they only write a small control file that the detached download
-        // process polls, so they have to stay callable while it is running.
+        // 下载任务控制命令。这些命令**不能**获取操作锁：
+        // 它们只写入一个小的控制文件，由 detached 下载进程轮询读取，
+        // 因此必须在下载运行期间保持可调用。
         "pause" | "resume" | "cancel" => {
             let cmd = match mode {
                 "pause" => taskctl::Command::Pause,
@@ -215,9 +215,9 @@ fn main() {
         }
         _ => usage(),
     };
-    // process::exit skips destructors, so release the lock explicitly: a
-    // surviving lock file is only reclaimed through the stale-pid path, and a
-    // recycled pid would then keep the lock "alive" forever.
+    // process::exit 不会执行析构函数，因此必须显式释放锁：
+    // 残留的锁文件只能通过陈旧 pid 检测回收，若 pid 被系统复用，
+    // 该锁就会被永远视为“存活”状态。
     drop(guard);
     std::process::exit(code);
 }

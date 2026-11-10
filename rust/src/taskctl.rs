@@ -1,12 +1,12 @@
-// Download task lifecycle: cross-process control channel + persistent history.
+// 下载任务生命周期：跨进程控制通道与持久化历史。
 //
-// rpcd starts `online-upgrade download` detached, so pause/resume/cancel from
-// a second process cannot use an in-process channel. A small JSON control file
-// is the out-of-band channel; the downloader polls it from a Tokio task and
-// publishes the resulting state on a `tokio::sync::watch` channel, which is
-// what the transfer loops await. History lives in /root (flash) so it survives
-// a reboot; /tmp artefacts are reclaimed only when no finished task still
-// refers to them (a verified firmware is reused by `upgrade`).
+// rpcd 以 detached 方式启动 `online-upgrade download`，因此来自另一个
+// 进程的暂停/继续/取消无法使用进程内通道。这里改用一个小型 JSON
+// 控制文件作为带外通道；下载器由一个 Tokio 任务轮询该文件，
+// 并把结果状态发布到 `tokio::sync::watch` 通道，
+// 由各传输循环等待该状态。历史记录存放在 /root（闪存）中，以便重启后
+// 仍然保留；/tmp 中的产物仅在没有已完成任务仍引用它们时才回收
+// （已校验的固件会被 `upgrade` 复用）。
 
 use crate::json::{self, Value};
 use std::fs;
@@ -18,47 +18,47 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
-/// Out-of-band control file polled by the active download process.
+/// 由活动下载进程轮询的带外控制文件。
 pub const CONTROL_FILE: &str = "/tmp/online-upgrade-control.json";
-/// Persistent task history (survives reboot, unlike the /tmp status file).
+/// 持久化任务历史（与 /tmp 状态文件不同，重启后仍保留）。
 pub const TASKS_FILE: &str = "/root/.online-upgrade-tasks.json";
-/// Firmware artefact owned by a download task.
+/// 归属下载任务的固件产物。
 pub const FIRMWARE_FILE: &str = "/tmp/firmware.img.gz";
-/// Maximum number of history entries kept on flash.
+/// 闪存中保留的历史记录条数上限。
 pub const MAX_TASKS: usize = 30;
 
-/// Task state: actively transferring.
+/// 任务状态：正在传输。
 pub const ST_RUNNING: &str = "running";
-/// Task state: paused, resumable.
+/// 任务状态：已暂停，可续传。
 pub const ST_PAUSED: &str = "paused";
-/// Task state: finished and verified.
+/// 任务状态：已完成并通过校验。
 pub const ST_DONE: &str = "done";
-/// Task state: network / verification failure.
+/// 任务状态：网络或校验失败。
 pub const ST_FAILED: &str = "failed";
-/// Task state: stopped by the user or the slow-speed guard.
+/// 任务状态：被用户或慢速保护中止。
 pub const ST_ABORTED: &str = "aborted";
 
-/// Why a download was stopped. Kept typed so the UI and history can render
-/// a slow-speed abort differently from a plain user cancel.
+/// 下载被停止的原因。保留类型信息，使界面与历史记录能够把
+/// 慢速中止与普通用户取消区分展示。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StopReason {
-    /// The user clicked cancel / deleted the active task.
+    /// 用户点击取消，或删除了正在执行的任务。
     UserCancel(String),
-    /// The throughput guard fired; carries the measured evidence.
+    /// 吞吐量保护触发；携带实测证据。
     Slow {
-        /// Human-readable explanation including the route and thresholds.
+        /// 面向用户的说明，包含线路与阈值。
         reason: String,
-        /// Average throughput during the observation window (bytes/second).
+        /// 观察窗口内的平均吞吐量（字节/秒）。
         bps: u64,
-        /// Configured floor (bytes/second).
+        /// 配置的速度下限（字节/秒）。
         min_bps: u64,
-        /// Length of the observation window in seconds.
+        /// 观察窗口长度（秒）。
         window_secs: u64,
     },
 }
 
 impl StopReason {
-    /// The message shown in the status file, log and task history.
+    /// 显示在状态文件、日志和任务历史中的消息。
     pub fn text(&self) -> &str {
         match self {
             StopReason::UserCancel(s) => s,
@@ -67,25 +67,25 @@ impl StopReason {
     }
 }
 
-/// State of the active download, observed by every chunk worker.
+/// 活动下载的运行状态，每个分块 worker 都会观察该状态。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunState {
-    /// Transferring normally.
+    /// 正常传输中。
     Running,
-    /// No new chunks are claimed; the process stays alive waiting for resume.
+    /// 不再领取新分块；进程保持存活并等待继续指令。
     Paused,
-    /// Terminal stop with a typed reason (user cancel or slow speed).
+    /// 带原因类型的终止（用户取消或慢速保护）。
     Stopped(StopReason),
 }
 
-/// Command written by `online-upgrade pause|resume|cancel`.
+/// 由 `online-upgrade pause|resume|cancel` 写入的命令。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    /// Continue / start transfer.
+    /// 继续或开始传输。
     Resume,
-    /// Suspend transfer at the next chunk boundary.
+    /// 在下一个分块边界暂停传输。
     Pause,
-    /// Stop transfer immediately.
+    /// 立即停止传输。
     Cancel,
 }
 
@@ -108,19 +108,19 @@ impl Command {
     }
 }
 
-/// Slow-speed guard thresholds, all read from UCI.
+/// 慢速保护阈值，全部从 UCI 读取。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlowPolicy {
-    /// Minimum acceptable throughput in bytes per second; 0 disables the guard.
+    /// 可接受的最低吞吐量（字节/秒）；0 表示关闭保护。
     pub min_bps: u64,
-    /// How long the throughput must stay below `min_bps` before stopping.
+    /// 吞吐量需持续低于 `min_bps` 多久才触发停止。
     pub window_secs: u64,
-    /// Startup grace period (TLS handshake / TCP slow start) excluded from checks.
+    /// 启动宽限期（TLS 握手 / TCP 慢启动），该时段不参与判定。
     pub grace_secs: u64,
 }
 
 impl SlowPolicy {
-    /// Build a policy with clamped values. `min_kb` is in KiB/s.
+    /// 构造带范围钳制的策略。`min_kb` 单位为 KiB/s。
     pub fn new(min_kb: u64, window_secs: u64, grace_secs: u64) -> SlowPolicy {
         SlowPolicy {
             min_bps: min_kb.saturating_mul(1024),
@@ -129,7 +129,7 @@ impl SlowPolicy {
         }
     }
 
-    /// Load from `online-upgrade.settings.dl_*`, with sane defaults.
+    /// 从 `online-upgrade.settings.dl_*` 加载，并使用合理默认值。
     pub fn load() -> SlowPolicy {
         let kb = uci_u32("dl_min_speed_kb", 32, 0, 10240);
         let win = uci_u32("dl_slow_window_sec", 15, 3, 300);
@@ -137,7 +137,7 @@ impl SlowPolicy {
         SlowPolicy::new(kb as u64, win as u64, grace as u64)
     }
 
-    /// Whether the guard should run at all.
+    /// 是否应启用慢速保护。
     pub fn enabled(&self) -> bool {
         self.min_bps > 0
     }
@@ -157,40 +157,40 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// A persisted download task record.
+/// 持久化的下载任务记录。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
-    /// Stable id (`<unix>-<pid>-<seq>`).
+    /// 稳定 ID（`<unix>-<pid>-<seq>`）。
     pub id: String,
-    /// Firmware asset name.
+    /// 固件资产名称。
     pub name: String,
-    /// Download URL (may contain a mirror prefix).
+    /// 下载 URL（可能带镜像前缀）。
     pub url: String,
-    /// One of the `ST_*` constants.
+    /// 取值见 `ST_*` 常量。
     pub state: String,
-    /// Expected size in bytes (0 when unknown).
+    /// 预期大小（字节，未知时为 0）。
     pub total: u64,
-    /// Bytes written so far.
+    /// 已写入字节数。
     pub done: u64,
-    /// Last measured throughput in bytes per second.
+    /// 最近一次测得的吞吐量（字节/秒）。
     pub speed_bps: u64,
-    /// Failure / stop reason, empty on success.
+    /// 失败或停止原因，成功时为空。
     pub reason: String,
-    /// Unix timestamp of creation.
+    /// 创建时间（Unix 时间戳）。
     pub created: u64,
-    /// Unix timestamp of the terminal state, 0 while active.
+    /// 进入终态的时间（Unix 时间戳），活动期间为 0。
     pub finished: u64,
 }
 
 static TASK_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Generate a task id that is unique within a process and across processes.
+/// 生成在进程内与跨进程都唯一的任务 ID。
 pub fn new_task_id() -> String {
     let n = TASK_SEQ.fetch_add(1, Ordering::Relaxed);
     format!("{:x}-{:x}-{:x}", now_secs(), std::process::id(), n)
 }
 
-/// Validate a task id coming from rpcd before using it in any file operation.
+/// 在任何文件操作前校验来自 rpcd 的任务 ID。
 pub fn valid_task_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
@@ -200,7 +200,7 @@ pub fn valid_task_id(id: &str) -> bool {
 }
 
 impl Task {
-    /// Start a fresh running task.
+    /// 创建一个新的运行中任务。
     pub fn new(name: &str, url: &str, total: u64) -> Task {
         Task {
             id: new_task_id(),
@@ -216,7 +216,7 @@ impl Task {
         }
     }
 
-    /// Mark the task as terminal, recording the outcome and reason.
+    /// 将任务标记为终态，并记录结果与原因。
     pub fn finish(&mut self, state: &str, reason: &str) {
         self.state = state.to_string();
         self.reason = reason.to_string();
@@ -260,21 +260,21 @@ impl Task {
     }
 }
 
-/// Persistent, bounded task history. All writes are atomic (tmp + rename).
+/// 持久化且有上限的任务历史。所有写入均为原子操作（临时文件 + rename）。
 pub struct TaskStore {
     path: PathBuf,
     tasks: Vec<Task>,
 }
 
 impl TaskStore {
-    /// Open the default history file and load its contents.
+    /// 打开默认历史文件并加载其内容。
     pub fn open() -> TaskStore {
         let mut s = TaskStore::with_path(TASKS_FILE);
         s.load();
         s
     }
 
-    /// Open a history file at a custom path (used by tests and CLI overrides).
+    /// 打开指定路径的历史文件（供测试与命令行覆盖使用）。
     pub fn with_path(path: impl Into<PathBuf>) -> TaskStore {
         TaskStore {
             path: path.into(),
@@ -282,7 +282,7 @@ impl TaskStore {
         }
     }
 
-    /// Reload from disk; a corrupt or missing file is treated as empty history.
+    /// 从磁盘重新加载；文件损坏或缺失时视为空历史。
     pub fn load(&mut self) {
         let text = match fs::read_to_string(&self.path) {
             Ok(t) => t,
@@ -301,14 +301,14 @@ impl TaskStore {
         };
     }
 
-    /// Persist the history atomically.
+    /// 原子地持久化历史。
     pub fn save(&self) -> Result<(), String> {
         let arr: Vec<Value> = self.tasks.iter().map(Task::to_value).collect();
         let body = Value::Obj(vec![("tasks".into(), Value::Arr(arr))]).dump();
         atomic_write(&self.path, &body)
     }
 
-    /// Insert or update a task, keeping the newest `MAX_TASKS` entries.
+    /// 插入或更新任务，仅保留最新的 `MAX_TASKS` 条记录。
     pub fn upsert(&mut self, task: Task) {
         if let Some(existing) = self.tasks.iter_mut().find(|t| t.id == task.id) {
             *existing = task;
@@ -319,12 +319,12 @@ impl TaskStore {
         self.tasks.truncate(MAX_TASKS);
     }
 
-    /// Mutable access to a task by id.
+    /// 按 ID 获取任务的可变引用。
     pub fn get_mut(&mut self, id: &str) -> Option<&mut Task> {
         self.tasks.iter_mut().find(|t| t.id == id)
     }
 
-    /// Remove a task. Active (running/paused) tasks must be stopped first.
+    /// 删除任务。运行中或已暂停的任务必须先停止。
     pub fn remove(&mut self, id: &str) -> Result<Task, String> {
         let active = self
             .tasks
@@ -338,8 +338,8 @@ impl TaskStore {
         self.remove_any(id)
     }
 
-    /// Remove a task regardless of its recorded state. Use only when the owner
-    /// process is known to be gone (stale `running` entry after a crash).
+    /// 无视记录状态直接删除任务。仅当确认所属进程
+    /// 已退出时使用（例如崩溃后残留的 `running` 记录）。
     pub fn remove_any(&mut self, id: &str) -> Result<Task, String> {
         let pos = self
             .tasks
@@ -351,12 +351,12 @@ impl TaskStore {
         Ok(task)
     }
 
-    /// Read-only view of the history.
+    /// 历史记录的只读视图。
     pub fn tasks(&self) -> &[Task] {
         &self.tasks
     }
 
-    /// JSON representation returned by the `tasks` subcommand.
+    /// `tasks` 子命令返回的 JSON 表示。
     pub fn to_json(&self) -> Value {
         Value::Obj(vec![
             ("ok".into(), json::Value::Bool(true)),
@@ -368,16 +368,16 @@ impl TaskStore {
     }
 }
 
-/// Whether the shared firmware artefacts are safe to reclaim.
+/// 共享固件产物是否可以安全回收。
 ///
-/// A finished, verified download is reused by `upgrade` (see
-/// `reuse_download`), so as long as one `done` task remains we keep the file.
+/// 已完成并通过校验的下载会被 `upgrade` 复用（见
+/// `reuse_download`），因此只要还存在一个 `done` 任务，就保留该文件。
 pub fn should_purge(tasks: &[Task]) -> bool {
     !tasks.iter().any(|t| t.state == ST_DONE)
 }
 
-/// Delete the fixed set of firmware artefacts, but only when no `done` task
-/// still refers to them. Returns the number of files removed.
+/// 删除固定的固件产物集合，但仅当没有 `done` 任务
+/// 仍引用它们时执行。返回删除的文件数。
 pub fn purge_orphan_artifacts(store: &TaskStore) -> usize {
     if !should_purge(store.tasks()) {
         return 0;
@@ -414,9 +414,9 @@ fn read_seq(path: &Path) -> u64 {
     read_command(path).map(|(_, s)| s).unwrap_or(0)
 }
 
-/// Write a control command. `seq` is monotonic and stays inside the exact
-/// integer range of the JSON number type (f64), so no change is ever lost to
-/// floating-point rounding.
+/// 写入控制命令。`seq` 单调递增，且始终落在 JSON 数字类型（f64）
+/// 可精确表示的整数范围内，
+/// 因此不会因浮点舍入而丢失变更。
 pub fn send_command(cmd: Command) -> Result<(), String> {
     send_command_at(Path::new(CONTROL_FILE), cmd)
 }
@@ -432,14 +432,14 @@ fn send_command_at(path: &Path, cmd: Command) -> Result<(), String> {
     atomic_write(path, &body)
 }
 
-/// Poll the control file and publish state changes on a Tokio watch channel.
+/// 轮询控制文件，并在 Tokio watch 通道上发布状态变化。
 ///
-/// A terminal `Stopped` state (slow-speed abort) is never overwritten by a
-/// stale resume command, so the original reason reaches the UI.
+/// 终态的 `Stopped`（慢速中止）不会被过期的 resume 命令
+/// 覆盖，确保原始原因能传递到界面。
 pub fn spawn_watcher(tx: watch::Sender<RunState>, path: PathBuf) -> JoinHandle<()> {
-    // Read the baseline synchronously *before* spawning. Doing it inside the
-    // async block races with a command written right after spawn: the watcher
-    // could then adopt the new command as its baseline and never publish it.
+    // 必须在 spawn 之前同步读取基线。若放到异步块内部，
+    // 会与 spawn 后立即写入的命令竞争：
+    // watcher 可能把新命令当作基线，从而永远不发布它。
     let mut last = read_seq(&path);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(400));
@@ -470,7 +470,7 @@ pub fn spawn_watcher(tx: watch::Sender<RunState>, path: PathBuf) -> JoinHandle<(
     })
 }
 
-/// Owns the control channel for one download process.
+/// 持有单个下载进程的控制通道。
 pub struct DownloadControl {
     tx: watch::Sender<RunState>,
     rx: watch::Receiver<RunState>,
@@ -479,7 +479,7 @@ pub struct DownloadControl {
 }
 
 impl DownloadControl {
-    /// Reset the control file to `running` and start the watcher task.
+    /// 将控制文件重置为 `running` 并启动 watcher 任务。
     pub fn start() -> Result<DownloadControl, String> {
         DownloadControl::start_at(Path::new(CONTROL_FILE))
     }
@@ -496,27 +496,27 @@ impl DownloadControl {
         })
     }
 
-    /// A sender for the slow-speed monitor to publish a terminal stop.
+    /// 供慢速监控发布终止状态的发送端。
     pub fn tx(&self) -> watch::Sender<RunState> {
         self.tx.clone()
     }
 
-    /// An independent receiver for one chunk worker.
+    /// 为单个分块 worker 提供独立接收端。
     pub fn rx(&self) -> watch::Receiver<RunState> {
         self.rx.clone()
     }
 
-    /// Shared counter holding the last measured throughput (bytes/second).
+    /// 保存最近一次测得吞吐量的共享计数器（字节/秒）。
     pub fn speed(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.speed)
     }
 
-    /// Last measured throughput in bytes per second.
+    /// 最近一次测得的吞吐量（字节/秒）。
     pub fn current_speed(&self) -> u64 {
         self.speed.load(Ordering::Relaxed)
     }
 
-    /// Current run state.
+    /// 当前运行状态。
     pub fn state(&self) -> RunState {
         self.rx.borrow().clone()
     }
@@ -590,7 +590,7 @@ mod tests {
             reloaded.upsert(t);
         }
         assert_eq!(reloaded.tasks().len(), MAX_TASKS);
-        // newest first
+        // 最新的在最前
         assert!(reloaded.tasks()[0].created > reloaded.tasks()[1].created);
         let _ = fs::remove_file(&p);
     }
@@ -665,7 +665,7 @@ mod tests {
         let (tx, mut rx) = watch::channel(RunState::Running);
         let h = spawn_watcher(tx.clone(), p.clone());
         send_command_at(&p, Command::Pause).unwrap();
-        // poll interval is 400ms
+        // 轮询间隔为 400 毫秒
         tokio::time::sleep(Duration::from_millis(700)).await;
         assert_eq!(*rx.borrow_and_update(), RunState::Paused);
         send_command_at(&p, Command::Resume).unwrap();

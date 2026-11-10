@@ -1,18 +1,18 @@
-// Device identity / architecture compatibility evaluation.
+// 设备身份与架构兼容性判定。
 //
-// Design goals (see README "识别矩阵" for the full matrix):
-// 1. Identity comes from what the router reports about itself
-//    (/etc/board.json, /tmp/sysinfo/*, `ubus call system board`,
-//    /etc/openwrt_release, apk/opkg arch), never from a curated device table.
-// 2. Matching is structural: the asset file name must contain the board id /
-//    model, or several independent identity tokens, or exactly one
-//    device-specific token. Platform/SoC words (mediatek, mt7621, filogic,
-//    aarch64, sysupgrade, ...) are never accepted as evidence.
-// 3. An asset whose architecture is not declared is never treated as
-//    "generic and therefore fine"; it stays "cannot confirm".
-// 4. A user supplied rule (UCI `firmware_pattern`) is an explicit statement
-//    of intent: a hit is reported as a rule match with its own basis, but an
-//    architecture conflict still blocks.
+// 设计目标（完整矩阵见 README 的“识别矩阵”）：
+// 1. 身份信息全部来自路由器自报（/etc/board.json、/tmp/sysinfo/*、
+//    `ubus call system board`、/etc/openwrt_release、apk/opkg 架构），
+//    绝不依赖人工维护的机型表。
+// 2. 匹配采用结构化比对：资产文件名必须包含 board id /
+//    机型名，或包含多个相互独立的身份标识，或恰好包含一个
+//    设备专属标识。平台/SoC 词汇（mediatek、mt7621、filogic、
+//    aarch64、sysupgrade 等）永远不作为匹配依据。
+// 3. 未声明架构的资产绝不会被当成“通用因此可用”，
+//    而是始终保持“无法确认”。
+// 4. 用户配置的规则（UCI `firmware_pattern`）是明确的意图声明：
+//    命中时按规则匹配上报并给出对应依据，但架构冲突
+//    仍然会阻断升级。
 
 use crate::json::Value;
 use std::collections::BTreeSet;
@@ -39,8 +39,8 @@ impl DeviceProfile {
         let (json_id, json_name) = read_board_json();
         let (distro, release, target, arch, revision) = read_release_info();
 
-        // ubus is authoritative but costs a subprocess: only ask when the
-        // file based sources are incomplete.
+        // ubus 的结果最权威，但需要启动子进程：仅在
+        // 基于文件的来源不完整时才调用。
         let mut ubus_board = String::new();
         let mut ubus_model = String::new();
         let mut ubus_arch = String::new();
@@ -202,8 +202,8 @@ fn read_release_info() -> (String, String, String, String, String) {
 }
 
 fn package_manager_arch() -> String {
-    // apk-tools first, opkg second: both are generic package managers, the
-    // only per-manager difference is the query command.
+    // 优先 apk-tools，其次 opkg：两者都是通用包管理器，
+    // 差异仅在查询命令。
     for (cmd, args) in [
         ("apk", vec!["--print-arch"]),
         ("opkg", vec!["print-architecture"]),
@@ -219,8 +219,8 @@ fn package_manager_arch() -> String {
             if line.is_empty() {
                 continue;
             }
-            // `apk --print-arch` prints the arch alone; `opkg
-            // print-architecture` prints `arch <name> <priority>`.
+            // `apk --print-arch` 只输出架构名；
+            // `opkg print-architecture` 输出 `arch <名称> <优先级>`。
             let name = line.split_whitespace().nth(1).unwrap_or(line);
             if name == "all" || name == "noarch" {
                 continue;
@@ -281,10 +281,10 @@ impl Arch {
     }
 }
 
-/// Platform / SoC / image-type vocabulary. These are chip and packaging words,
-/// not device identifiers, so they are never evidence for a model match.
+/// 平台 / SoC / 镜像类型词汇。这些是芯片与打包术语，
+/// 不是设备标识，因此永远不能作为机型匹配依据。
 const NON_IDENTITY_TOKENS: &[&str] = &[
-    // SoC / vendor / target platforms
+    // SoC / 厂商 / 目标平台
     "mediatek",
     "mtk",
     "qualcomm",
@@ -311,7 +311,7 @@ const NON_IDENTITY_TOKENS: &[&str] = &[
     "wireless",
     "wifi",
     "wlan",
-    // architectures
+    // 架构
     "aarch64",
     "arm64",
     "arm",
@@ -357,7 +357,7 @@ const NON_IDENTITY_TOKENS: &[&str] = &[
     "24kc",
     "74kc",
     "1004kc",
-    // distro / release words
+    // 发行版 / 发布相关词汇
     "openwrt",
     "immortalwrt",
     "lede",
@@ -377,7 +377,7 @@ const NON_IDENTITY_TOKENS: &[&str] = &[
     "self",
     "custom",
     "diyp",
-    // image / packaging words
+    // 镜像 / 打包相关词汇
     "sysupgrade",
     "factory",
     "initramfs",
@@ -436,7 +436,7 @@ fn is_identity_token(t: &str) -> bool {
     if t.len() < 3 || NON_IDENTITY_TOKENS.contains(&t) {
         return false;
     }
-    // pure numbers, version-ish fragments and two-letter glue are not identities
+    // 纯数字、类版本号片段以及两字母连接词都不属于身份标识
     if t.chars().all(|c| c.is_ascii_digit()) {
         return false;
     }
@@ -447,8 +447,8 @@ fn is_identity_token(t: &str) -> bool {
 }
 
 fn is_specific_token(t: &str) -> bool {
-    // A token carrying both a digit and a letter (h5000m, ax3000t, r4s) is
-    // specific enough to identify a device on its own.
+    // 同时包含数字和字母的标识（h5000m、ax3000t、r4s）
+    // 已经足够具体，可单独用于识别设备。
     t.chars().any(|c| c.is_ascii_digit()) && t.chars().any(|c| c.is_ascii_alphabetic())
 }
 
@@ -562,9 +562,9 @@ pub struct CompatResult {
     pub reason: String,
     pub detected_arch: String,
     pub detected_model: String,
-    /// ok | conflict | undeclared | unknown
+    /// 取值：ok | conflict | undeclared | unknown
     pub arch_check: &'static str,
-    /// exact | partial | rule | unmatched
+    /// 取值：exact | partial | rule | unmatched
     pub model_check: &'static str,
     pub requires_confirm: bool,
     pub basis: Vec<String>,
@@ -623,7 +623,7 @@ pub fn evaluate_asset(device: &DeviceProfile, filename: &str) -> CompatResult {
     evaluate(device, filename, None)
 }
 
-/// Evaluate with an explicit user rule that already matched this file name.
+/// 使用已命中该文件名的显式用户规则进行判定。
 pub fn evaluate_with_rule(device: &DeviceProfile, filename: &str, rule: &str) -> CompatResult {
     evaluate(device, filename, Some(rule))
 }
@@ -711,12 +711,12 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
         };
     }
 
-    // Explicit user rule: the operator stated this file is for this device, so a
-    // rule hit counts as a match ("自用构建" fallback). Architecture conflict has
-    // already returned above — that is positive evidence of a mismatch and must
-    // not be overridable by a regex. A file name without any architecture word is
-    // only "undeclared", never "generic": it is allowed solely because the
-    // operator asserted it, and the basis records that fact.
+    // 显式用户规则：用户已声明该文件适用于本机，因此规则命中即可视为匹配
+    // （“自用构建”兜底）。架构冲突已在上方提前返回——
+    // 那是明确的不匹配证据，不能被正则覆盖。
+    // 文件名不含任何架构词时只算“未声明”，绝不算“通用”：
+    // 它之所以被允许，完全是因为用户明确指定，
+    // 判定依据中也会记录这一点。
     if let Some(rule) = rule {
         let mut base = 90 + arch_score;
         if fname.contains("sysupgrade") || fname.contains("combined") {
@@ -766,7 +766,7 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
         };
     }
 
-    // Structural model comparison.
+    // 结构化机型比对。
     let identities = device.identity_strings();
     let tokens = device.identity_tokens();
     let mut model_check = "unmatched";
@@ -910,9 +910,9 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
 }
 
 pub fn verify_downloaded_image(device: &DeviceProfile, path: &str) -> Result<(), String> {
-    // 1. fwtool metadata: authoritative supported device list. Only enforced
-    // when the image really carries metadata; compressed images yield no
-    // metadata here and are covered by sysupgrade -T below.
+    // 1. fwtool 元数据：权威的受支持设备列表。仅当镜像确实携带
+    // 元数据时才强制校验；压缩镜像在这里取不到元数据，
+    // 由下方的 sysupgrade -T 覆盖。
     if which("fwtool") {
         let meta_tmp = "/tmp/.fwtool-meta.json";
         let _ = std::fs::remove_file(meta_tmp);
@@ -951,7 +951,7 @@ pub fn verify_downloaded_image(device: &DeviceProfile, path: &str) -> Result<(),
         let _ = std::fs::remove_file(meta_tmp);
     }
 
-    // 2. sysupgrade -T (read-only image test; never flashes).
+    // 2. sysupgrade -T（只读镜像测试，绝不刷写）。
     if which("sysupgrade") {
         crate::logline!("[compat] 执行系统底层固件兼容性预检 (sysupgrade -T)...");
         let output = Command::new("sysupgrade").args(["-T", path]).output();
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn platform_word_does_not_match() {
-        // mt7621 is a platform word: it must never turn an unrelated asset into a match.
+        // mt7621 是平台词汇，绝不能让无关资产变成匹配项。
         let r = evaluate_asset(
             &dev(),
             "openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin",
@@ -1044,7 +1044,7 @@ mod tests {
     fn token_only_name_matches_model_but_arch_is_undeclared() {
         let r = evaluate_asset(&dev(), "H5000M-sysupgrade-25.12.0.bin");
         assert_eq!(r.model_check, "exact");
-        // no architecture word in the name: never auto-approved
+        // 文件名中没有架构词：绝不自动放行
         assert_eq!(r.arch_check, "undeclared");
         assert_eq!(r.level, CompatLevel::Warning);
         assert!(!r.can_upgrade);
@@ -1098,7 +1098,7 @@ mod tests {
     #[test]
     fn vendor_only_name_is_unknown() {
         let r = evaluate_asset(&dev(), "hiveton-custom-image.bin");
-        // hiveton is an identity token but not specific (no digit) -> partial
+        // hiveton 是身份标识但不够具体（不含数字）→ 部分匹配
         assert_eq!(r.model_check, "partial");
         assert!(!r.can_upgrade);
     }

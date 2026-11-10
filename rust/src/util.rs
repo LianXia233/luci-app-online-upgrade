@@ -1,4 +1,4 @@
-// Standalone backup / restore subcommands (pure sync — run outside the tokio runtime).
+// 独立的备份 / 恢复子命令（纯同步实现，运行在 tokio 运行时之外）。
 
 use crate::json::Value;
 use crate::logline;
@@ -25,7 +25,7 @@ fn print_result(ok: bool, key: &str, msg: &str) {
     );
 }
 
-/// `online-upgrade backup` — create a config backup in /tmp and copy to /root.
+/// `online-upgrade backup` —— 在 /tmp 创建配置备份并复制到 /root。
 pub fn backup() -> i32 {
     let stamp = run("date", &["+%Y%m%d-%H%M%S"]).unwrap_or_else(|| "unknown".into());
     let tmp = format!("/tmp/pre-upgrade-backup-{stamp}.tar.gz");
@@ -43,8 +43,8 @@ pub fn backup() -> i32 {
         print_result(false, "error", "sysupgrade -b 执行失败");
         return 1;
     }
-    // The /root copy is what survives a /tmp cleanup and what README promises
-    // as the restore source: a failed copy must not be reported as success.
+    // 只有 /root 下的副本能在 /tmp 清理后保留，也是 README 承诺的
+    // 恢复来源；复制失败绝不能上报为成功。
     if let Err(e) = std::fs::copy(&tmp, &root) {
         let msg = format!("备份已生成于 {tmp},但复制到 {root} 失败: {e}");
         status::set_error("failed", 100, "备份保存失败", &msg);
@@ -87,7 +87,7 @@ pub fn backup() -> i32 {
     0
 }
 
-/// `online-upgrade restore <file>` — verify gzip magic then extract to /.
+/// `online-upgrade restore <file>` —— 校验 gzip 魔数后解压到 /。
 pub fn restore(path: &str) -> i32 {
     if !path.starts_with("/root/pre-upgrade-backup-") && !path.starts_with("/tmp/") {
         print_result(false, "error", "不允许的路径");

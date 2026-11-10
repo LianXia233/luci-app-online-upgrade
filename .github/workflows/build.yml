@@ -9,15 +9,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ---------- 0. Guard: one version everywhere ----------
-  # app.js/style.css are cache-busted with ?v=<version>; if that drifts from
-  # PKG_VERSION the browser keeps executing the previous script after an
-  # upgrade, so the mismatch must fail CI instead of shipping silently.
+  # ---------- 0. 前置校验：版本号全局一致 ----------
+  # app.js/style.css 通过 ?v=<版本号> 实现缓存失效；若该版本号与
+  # PKG_VERSION 不一致，升级后浏览器仍会执行旧脚本，
+  # 因此必须让 CI 失败，而不能静默发布。
   verify:
     runs-on: ubuntu-latest
-    # Single source of truth: every later job (tag, release title, package
-    # filename check, release notes) consumes these outputs, so the published
-    # Release can never drift from the version baked into the .apk.
+    # 唯一事实来源：后续所有作业（标签、Release 标题、包名
+    # 校验、发布说明）都使用这里的输出，保证发布的 Release
+    # 不会偏离 .apk 中固化的版本号。
     outputs:
       version: ${{ steps.ver.outputs.version }}
       pkg_release: ${{ steps.ver.outputs.pkg_release }}
@@ -48,7 +48,7 @@ jobs:
           echo "pkg_release=$pkg_rel" >> "$GITHUB_OUTPUT"
           echo "tag=v$pkg_ver" >> "$GITHUB_OUTPUT"
 
-  # ---------- 1. Rust backend: cross-compile both targets ----------
+  # ---------- 1. Rust 后端：交叉编译两个目标架构 ----------
   rust:
     runs-on: ubuntu-latest
     needs: verify
@@ -80,7 +80,7 @@ jobs:
         env:
           RUSTFLAGS: "-C link-self-contained=yes -C linker=rust-lld"
         run: |
-          # ring's build script reads the CC_* env when compiling its C sources
+          # ring 的构建脚本在编译其 C 源码时会读取 CC_* 环境变量
           env ${{ matrix.cc_env }} cargo build --release --locked --target ${{ matrix.target }}
           file target/${{ matrix.target }}/release/online-upgrade
 
@@ -90,7 +90,7 @@ jobs:
           name: online-upgrade-${{ matrix.target }}
           path: rust/target/${{ matrix.target }}/release/online-upgrade
 
-  # ---------- 2. Package with ImmortalWrt SDKs ----------
+  # ---------- 2. 使用 ImmortalWrt SDK 打包 ----------
   package:
     runs-on: ubuntu-latest
     needs: rust
@@ -145,9 +145,9 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p /tmp/pkgs
-          # NB: the 25.12 SDK drops everything into bin/packages/base/, so the
-          # arch must come from the matrix, not the directory name — otherwise
-          # both apks are identically named and the release upload overwrites one
+          # 注意：25.12 SDK 会把产物统一放到 bin/packages/base/，因此
+          # 架构必须取自矩阵配置而非目录名，否则
+          # 两个 apk 会重名，发布上传时互相覆盖
           find sdk/bin/packages -name "luci-app-online-upgrade*.${{ matrix.ext }}" | while read f; do
             cp "$f" "/tmp/pkgs/$(basename "$f" ".${{ matrix.ext }}")_${{ matrix.pkg_arch }}.${{ matrix.ext }}"
           done
@@ -159,11 +159,11 @@ jobs:
           name: pkg-${{ matrix.bin_artifact }}
           path: /tmp/pkgs/*
 
-  # ---------- 3. Release ----------
+  # ---------- 3. 发布 ----------
   release:
     runs-on: ubuntu-latest
-    # verify supplies the version; package supplies the .apk files. Both the
-    # tag and the release title come from PKG_VERSION, never from run_number.
+    # verify 作业提供版本号，package 作业提供 .apk 文件；
+    # 标签与 Release 标题均来自 PKG_VERSION，绝不使用 run_number。
     needs: [verify, package]
     steps:
       - name: Checkout source (CHANGELOG drives the release notes)

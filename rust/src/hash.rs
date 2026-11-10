@@ -2,7 +2,7 @@ use ring::digest::{Context, SHA256};
 use std::fs::File;
 use std::io::Read;
 
-/// Compute SHA-256 hex digest of a local file.
+/// 计算本地文件的 SHA-256 十六进制摘要。
 pub fn sha256_file(path: &str) -> Result<String, String> {
     let mut file = File::open(path).map_err(|e| format!("打开文件失败: {e}"))?;
     let mut ctx = Context::new(&SHA256);
@@ -23,10 +23,10 @@ pub fn sha256_file(path: &str) -> Result<String, String> {
     Ok(hex)
 }
 
-/// Parse SHA-256 hash for `target_file` from checksum text (e.g. `sha256sums` file content or release body).
+/// 从校验文本（如 `sha256sums` 文件内容或 Release 正文）中解析 `target_file` 的 SHA-256 哈希。
 ///
-/// File-name matching is case-insensitive and basename based: release
-/// checksum lists frequently uppercase the name or prefix it with `./`.
+/// 文件名匹配不区分大小写，且只比较 basename：Release 的校验清单
+/// 经常使用大写文件名，或给文件名加上 `./` 前缀。
 pub fn find_sha256_in_text(text: &str, target_file: &str) -> Option<String> {
     let re_hash = regex::Regex::new(r"(?i)\b([0-9a-f]{64})\b").ok()?;
     let target = basename(target_file).to_ascii_lowercase();
@@ -51,10 +51,10 @@ fn basename(p: &str) -> &str {
     p.rsplit('/').next().unwrap_or(p)
 }
 
-/// Fallback parser for single-hash files (e.g. `xxx.bin.sha256`) OR for a
-/// checksum list that contains exactly one distinct hash. A multi-entry list
-/// must never fall back to "the first hash": that would compare the firmware
-/// against an unrelated file and produce a permanent mismatch.
+/// 单哈希文件（如 `xxx.bin.sha256`）或仅含一个唯一哈希的校验清单的兜底解析器。
+/// 多条目清单绝不能退化为“取第一个哈希”：
+/// 那会把固件与无关文件比对，
+/// 导致永久性校验不匹配。
 pub fn extract_single_sha256(text: &str) -> Option<String> {
     let re_hash = regex::Regex::new(r"(?i)\b([0-9a-f]{64})\b").ok()?;
     let mut found: Option<String> = None;
@@ -95,12 +95,12 @@ mod tests {
 
     #[test]
     fn ambiguous_list_is_not_reduced_to_the_first_hash() {
-        // A multi-entry checksum list must never fall back to "the first hash":
-        // that would compare the firmware against an unrelated file.
+        // 多条目校验清单绝不能退化为“取第一个哈希”：
+        // 那会把固件与无关文件比对。
         let content = "1111111111111111111111111111111111111111111111111111111111111111  a.bin\n\
 2222222222222222222222222222222222222222222222222222222222222222  b.bin\n";
         assert_eq!(extract_single_sha256(content), None);
-        // same hash repeated (e.g. body quoted twice) is still unambiguous
+        // 同一哈希重复出现（例如正文中被引用两次）仍然无歧义
         let same = "1111111111111111111111111111111111111111111111111111111111111111  a.bin\n\
 1111111111111111111111111111111111111111111111111111111111111111  a.bin\n";
         assert_eq!(

@@ -1,9 +1,9 @@
-// GitHub Release check: fetch API (with proxy fallback + rate-limit retry),
-// match the firmware asset, compare versions.
+// GitHub Release 检查：拉取 API（带代理回退与限流重试）、
+// 匹配固件资产并比较版本。
 //
-// Source-agnostic by design: repo / tag / asset rule / proxy all come from UCI
-// (`online-upgrade.settings.*`). Empty values produce explicit "please
-// configure" errors instead of silently using a built-in repo.
+// 设计上不绑定固定来源：仓库 / 标签 / 资产规则 / 代理均来自 UCI
+// （`online-upgrade.settings.*`）。取值为空时会明确报“请先配置”，
+// 而不是静默使用内置仓库。
 
 use crate::json::{parse, Value};
 use crate::logline;
@@ -15,12 +15,12 @@ use std::time::Duration;
 pub const DEFAULT_TAG: &str = "latest"; // neutral mode default, not a source
 pub const DEFAULT_PROXY: &str = "https://gh.acg2.mom/";
 
-/// URL-prefix GitHub mirrors offered as quick-picks in the LuCI UI and
-/// suggested in the slow-speed abort log. Every entry was probed on
-/// 2026-11-10: each returned the exact same 709-byte payload
-/// (SHA-256 prefix `b96903f063dd`) for both raw.githubusercontent.com and
-/// github.com/.../raw/... targets. The previously configured
-/// `github.moeyy.xyz` no longer resolves and has been removed.
+/// 在 LuCI 界面中作为快捷选项提供、并在慢速中止日志中建议的
+/// URL 前缀式 GitHub 镜像。每个条目均在
+/// 2026-11-10 实测：对 raw.githubusercontent.com 与
+/// github.com/.../raw/... 两类地址，均返回完全相同的 709 字节内容
+/// （SHA-256 前缀 `b96903f063dd`）。此前配置的
+/// `github.moeyy.xyz` 已无法解析，因此被移除。
 pub const MIRRORS: &[&str] = &[
     DEFAULT_PROXY,
     "https://ghfast.top/",
@@ -39,9 +39,9 @@ pub struct Cfg {
     pub token: Option<String>,
 }
 
-/// Normalise a URL-prefix proxy: trim, require an http(s) host, and end with
-/// exactly one `/` so `format!("{proxy}{url}")` can never produce
-/// `https://mirrorhttps://github.com/...`.
+/// 归一化 URL 前缀代理：去除首尾空白、要求为 http(s) 主机，并以
+/// 恰好一个 `/` 结尾，确保 `format!("{proxy}{url}")` 不会拼出
+/// `https://mirrorhttps://github.com/...`。
 pub fn normalize_proxy(raw: &str) -> String {
     let t = raw.trim();
     if t.is_empty() {
@@ -69,7 +69,7 @@ pub fn normalize_proxy(raw: &str) -> String {
     s
 }
 
-/// Prefix `url` with the (already normalised) proxy. Empty proxy = direct.
+/// 为 `url` 加上（已归一化的）代理前缀。代理为空表示直连。
 pub fn prefixed(proxy: &str, url: &str) -> String {
     let p = normalize_proxy(proxy);
     if p.is_empty() {
@@ -106,8 +106,8 @@ fn host_of(url: &str) -> &str {
         .unwrap_or("")
 }
 
-/// Only api.github.com may receive the user's token: a prefix mirror is a
-/// third-party domain and must never see the Authorization header.
+/// 只有 api.github.com 可以收到用户令牌：前缀镜像属于第三方域名，
+/// 绝不能看到 Authorization 请求头。
 async fn api_get(
     client: &reqwest::Client,
     url: &str,
@@ -125,8 +125,8 @@ async fn api_get(
     Ok((code, body))
 }
 
-/// Fetch a GitHub API URL with the full resilience chain:
-/// direct → proxy-prefix fallback (connection failure) → 403 rate-limit retry.
+/// 按完整容错链路拉取 GitHub API URL：
+/// 直连 → 连接失败时回退代理前缀 → 403 限流重试。
 async fn api_fetch(
     client: &reqwest::Client,
     url: &str,
@@ -167,8 +167,8 @@ async fn api_fetch(
     Ok((code, body))
 }
 
-/// Fetch small text resources (checksum lists) over the same route policy as
-/// the API: direct first, proxy as fallback, and only 2xx bodies accepted.
+/// 按与 API 相同的线路策略拉取小型文本资源（校验清单）：
+/// 优先直连，失败回退代理，且只接受 2xx 响应体。
 async fn fetch_text(client: &reqwest::Client, url: &str, cfg: &Cfg) -> Option<String> {
     let mut urls = vec![url.to_string()];
     if !cfg.proxy.is_empty() {
@@ -194,9 +194,9 @@ async fn fetch_text(client: &reqwest::Client, url: &str, cfg: &Cfg) -> Option<St
     None
 }
 
-/// Candidate releases: `latest` mode yields the most recent releases (already
-/// sorted by GitHub, newest first) — optionally filtered by a tag-name regex
-/// given as `latest@<regex>`; explicit tag mode yields a single entry.
+/// 候选 Release：`latest` 模式返回最近的多个 Release（GitHub 已按
+/// 最新在前排序），可选地按标签名正则过滤，写法为
+/// `latest@<正则>`；指定标签模式只返回单个条目。
 fn release_candidates<'a>(
     parsed: &'a Value,
     use_latest: bool,
@@ -239,11 +239,11 @@ fn asset_size(a: &Value) -> u64 {
 struct Decision {
     has_update: bool,
     reason: String,
-    /// newer | same | older | unknown
+    /// 取值：newer | same | older | unknown
     relation: &'static str,
-    /// decidable | incomparable | suspect
+    /// 取值：decidable | incomparable | suspect
     state: &'static str,
-    /// Needs an explicit second confirmation (currently only a downgrade).
+    /// 是否需要用户二次确认（目前仅降级需要）。
     confirm_required: bool,
 }
 
@@ -272,19 +272,19 @@ fn local_basis(local: &crate::localver::LocalVersion, cur: &crate::version::Vers
     }
 }
 
-/// Version/update decision.
+/// 版本与更新判定。
 ///
-/// `target` is the version parsed from the asset name (tag fallback);
-/// `local_ver` is the local firmware version resolved by `localver::detect()`
-/// (which falls back to the build date when a SNAPSHOT image has no release
-/// number). Three outcomes are kept apart instead of being folded into one
-/// "cannot compare" bucket:
-///   - decidable  本地版本可信，关系为 新/旧/相同
+/// `target` 是从资产名解析出的版本（解析失败时回退到标签）；
+/// `local_ver` 是 `localver::detect()` 解析出的本地固件版本
+/// （SNAPSHOT 镜像没有发布号时会回退到构建日期）。
+/// 这里区分三种结果，而不是全部归入一个
+/// “无法比较”分类：
+///   - decidable  本地版本可信，可判定为新版/旧版/同版
 ///   - suspect    本地版本只能靠弱依据（构建时间、修订号、包版本）推断
 ///   - incomparable 确实取不到版本号：按「将升级到该发布版本」放行，但明确说明原因
 ///
-/// Only a downgrade needs a second confirmation; uncertainty never blocks by
-/// itself, and the model/arch/hash gates stay in force either way.
+/// 只有降级需要二次确认；不确定本身从不阻断，
+/// 且机型/架构/哈希校验在任何情况下都仍然生效。
 fn decide(
     last_ts: Option<&str>,
     last_version: Option<&str>,
@@ -400,13 +400,13 @@ fn decide(
     }
 }
 
-/// Parse the `latest@<regex>` channel filter.
+/// 解析 `latest@<正则>` 通道过滤器。
 ///
-/// An invalid regex must be a configuration error, never "no filter": silently
-/// dropping it would make `release_candidates` look at every recent release
-/// and possibly pick one from an unintended channel. A typo in the channel
-/// selector is exactly the kind of silent degradation this plugin refuses to
-/// do elsewhere, so it fails loudly here as well.
+/// 非法正则必须作为配置错误上报，绝不能退化为“不过滤”：若静默
+/// 忽略它，`release_candidates` 会检查所有近期 Release，
+/// 可能选中非预期通道的版本。通道选择器中的拼写错误
+/// 正是本插件在其他地方也拒绝的静默降级，
+/// 因此这里同样选择显式报错。
 fn parse_tag_filter(tag: &str) -> Result<Option<Regex>, String> {
     match tag.strip_prefix("latest@") {
         Some(p) => match Regex::new(p) {
@@ -419,8 +419,8 @@ fn parse_tag_filter(tag: &str) -> Result<Option<Regex>, String> {
     }
 }
 
-/// Full check flow. Returns the result object (also written into the status file
-/// by the caller).
+/// 完整的检查流程。返回结果对象（调用方还会将其写入
+/// 状态文件）。
 pub async fn check(client: &reqwest::Client) -> Value {
     let cfg = load_cfg();
     if cfg.repo.is_empty() {
@@ -429,8 +429,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
             "未配置 GitHub 仓库,请先在「仓库配置」中填写(owner/repo)",
         );
     }
-    // `latest` tracks the newest release; `latest@<regex>` restricts candidates
-    // to releases whose tag name matches the regex (e.g. `latest@^自用`).
+    // `latest` 追踪最新 Release；`latest@<正则>` 将候选限制为
+    // 标签名匹配该正则的 Release（例如 `latest@^自用`）。
     let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
     let tag_filter = match parse_tag_filter(&cfg.tag) {
         Ok(f) => f,
@@ -498,8 +498,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
 
         let pick: Option<(Value, crate::compat::CompatResult, Option<String>)> =
             if let Some(re) = &rule_re {
-                // Explicit rule: first name match above the size floor whose
-                // declared architecture does not conflict.
+                // 显式规则：取第一个体积达标且声明架构
+                // 不冲突的名称匹配项。
                 let mut found = None;
                 for a in assets {
                     if !name_matches(a, re, min_bytes) {
@@ -516,8 +516,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
                 }
                 found
             } else {
-                // Automatic mode: only assets whose model AND architecture are
-                // confirmed. No "score first, take whatever" fallback.
+                // 自动模式：只接受机型与架构都得到确认的资产。
+                // 不做“先打分、然后随便取一个”的兜底。
                 let mut scored: Vec<(i32, String, &Value, crate::compat::CompatResult)> = assets
                     .iter()
                     .filter_map(|a| {
@@ -620,8 +620,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
         .and_then(|u| u.as_str())
         .unwrap_or("")
         .to_string();
-    // API asset endpoint: redirects to a signed release-assets CDN URL, so it
-    // still serves the file when github.com's web frontend is unavailable.
+    // API 资产端点：会重定向到带签名的 release-assets CDN URL，
+    // 因此 github.com Web 前端不可用时仍能提供文件。
     let api_url = asset
         .get("url")
         .and_then(|u| u.as_str())
@@ -817,9 +817,9 @@ pub async fn check(client: &reqwest::Client) -> Value {
     ])
 }
 
-/// `probe` subcommand: list the assets of the newest release of an arbitrary
-/// repo (used by the web UI to let users pick a firmware file interactively).
-/// Reads repo/tag from arguments, NOT from UCI — fully source-agnostic.
+/// `probe` 子命令：列出任意仓库最新 Release 的资产
+///（供 Web 界面让用户交互式选择固件文件）。
+/// repo/tag 从参数读取，不读取 UCI —— 完全不绑定来源。
 pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
     let cur = load_cfg();
     let cfg = Cfg {
@@ -960,7 +960,7 @@ pub fn read_distrib() -> (String, String, String) {
     )
 }
 
-// ---- time helpers (UTC+8, matching the previous hardcoded behaviour) ----
+// ---- 时间辅助函数（UTC+8，与原硬编码行为一致）----
 
 /// "2026-11-07T09:00:00Z" → "2026-11-07 17:00:00"
 pub fn utc_to_local(iso: &str) -> String {
@@ -1145,7 +1145,7 @@ mod tests {
 
     #[test]
     fn decide_first_run_same_version_is_not_an_update() {
-        // default last_upgrade_version '0' must not fabricate an update
+        // 默认的 last_upgrade_version '0' 不能凭空制造出“有更新”
         let t = v("25.12.0");
         let d = decide_with(Some(&t), &local_of("25.12.0"), Some("0"), Some("0"));
         assert!(!d.has_update);
@@ -1300,8 +1300,8 @@ mod tests {
         let re = Regex::new(r"combined-efi.*\.img\.gz").unwrap();
         assert!(name_matches(&assets[1], &re, 0));
         assert!(!name_matches(&assets[0], &re, 0));
-        // Malformed pattern built at runtime: clippy's `invalid_regex` only
-        // inspects literals, and this is deliberately a negative test.
+        // 运行时构造的非法模式：clippy 的 `invalid_regex` 只检查
+        // 字面量，而这里刻意做的是反向测试。
         let broken = String::from("[");
         assert!(Regex::new(&broken).is_err());
     }

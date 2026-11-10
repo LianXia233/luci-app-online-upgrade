@@ -1,5 +1,5 @@
-// Progress state file: /tmp/online-upgrade-status.json
-// Written atomically (tmp + rename) so the LuCI page can poll it safely.
+// 进度状态文件：/tmp/online-upgrade-status.json
+// 以原子方式写入（先写临时文件再 rename），确保 LuCI 页面轮询时不会读到半截内容。
 
 use crate::json::Value;
 use std::fs;
@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const STATUS_FILE: &str = "/tmp/online-upgrade-status.json";
 pub const LOG_FILE: &str = "/tmp/online-upgrade.log";
-pub const MAX_LOG_SIZE: u64 = 2 * 1024 * 1024; // 2MB maximum RAM memory limit on tmpfs
-pub const KEEP_LOG_SIZE: usize = 1024 * 1024; // Keep latest 1MB when trimming exceeds 2MB
+pub const MAX_LOG_SIZE: u64 = 2 * 1024 * 1024; // tmpfs 中日志占用的内存上限为 2MB
+pub const KEEP_LOG_SIZE: usize = 1024 * 1024; // 超过 2MB 触发裁剪时仅保留最近 1MB
 
 fn now() -> u64 {
     SystemTime::now()
@@ -38,10 +38,10 @@ pub fn write(st: State) {
             },
         ),
         ("ts".into(), Value::num(now())),
-        // The writer's pid lets the UI tell a fresh run apart from the terminal
-        // state left behind by a previous run: rpcd spawns check/upgrade
-        // detached, so the first poll after a click would otherwise read the
-        // old "failed"/"check_done" entry and stop polling immediately.
+        // 写入者 pid 让界面能够区分新一轮运行与上一次运行留下的
+        // 终态：rpcd 以 detached 方式启动 check/upgrade，
+        // 否则点击后的第一次轮询会读到
+        // 旧的 "failed"/"check_done" 状态并立即停止轮询。
         ("pid".into(), Value::num(std::process::id() as u64)),
     ];
     if let Some(r) = st.result {
@@ -84,7 +84,7 @@ pub fn set_result(stage: &'static str, pct: u32, msg: &str, result: Value) {
     });
 }
 
-/// Append a human-readable line to the log file.
+/// 向日志文件追加一行可读日志。
 pub fn log(line: &str) {
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -103,8 +103,8 @@ pub fn log(line: &str) {
     }
 }
 
-/// Keep the human-readable log bounded in tmpfs memory (≤ 2MB):
-/// when exceeding 2MB, keep only the latest 1MB.
+/// 将可读日志限制在 tmpfs 的内存上限内（≤ 2MB）：
+/// 超过 2MB 时仅保留最近 1MB。
 pub fn trim_log() {
     let len = fs::metadata(LOG_FILE).map(|m| m.len()).unwrap_or(0);
     if len <= MAX_LOG_SIZE {
@@ -113,7 +113,7 @@ pub fn trim_log() {
     if let Ok(all) = fs::read(LOG_FILE) {
         if all.len() > KEEP_LOG_SIZE {
             let cut = all.len() - KEEP_LOG_SIZE;
-            // align to the next line boundary
+            // 对齐到下一条完整行的边界
             let cut = all[cut..]
                 .iter()
                 .position(|&b| b == b'\n')
@@ -124,7 +124,7 @@ pub fn trim_log() {
     }
 }
 
-/// Clear the log file contents immediately.
+/// 立即清空日志文件内容。
 pub fn clear_log() {
     let _ = fs::write(LOG_FILE, "");
 }
@@ -140,7 +140,7 @@ macro_rules! logline {
     };
 }
 
-/// Read the current status (used by the `status` subcommand for CLI debugging).
+/// 读取当前状态（供 `status` 子命令在命令行排查时使用）。
 pub fn read() -> Value {
     match fs::read_to_string(STATUS_FILE) {
         Ok(s) => crate::json::parse(&s).unwrap_or(Value::Null),

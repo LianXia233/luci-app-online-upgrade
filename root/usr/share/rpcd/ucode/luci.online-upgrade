@@ -1,11 +1,11 @@
 'use strict';
 
-// rpcd ucode backend for luci-app-online-upgrade.
-// Thin bridge: all real logic lives in /usr/bin/online-upgrade (Rust).
-// Pattern follows luci.wolultra; ucode gotchas respected:
-//   - no join(), string concat only
-//   - no `undefined` references (null checks only)
-//   - helper functions defined before use
+// luci-app-online-upgrade 的 rpcd ucode 后端。
+// 仅作轻量桥接：实际逻辑全部位于 /usr/bin/online-upgrade（Rust 实现）。
+// 实现方式参考 luci.wolultra，并规避了以下 ucode 陷阱：
+//   - 没有 join()，只能用字符串拼接
+//   - 不能引用 `undefined`，只能判空
+//   - 辅助函数必须先定义后使用
 
 import { popen, readfile, lsdir, stat, unlink } from 'fs';
 import { cursor } from 'uci';
@@ -20,8 +20,8 @@ function shellquote(s) {
 	return "'" + replace('' + s, "'", "'\\''") + "'";
 }
 
-// POSIX-ERE-safe "contains quote or whitespace" check: ucode regex has no
-// \s (it degrades to a literal 's'), so use split-based detection instead.
+// 兼容 POSIX ERE 的“是否含引号或空白”检查：ucode 正则不支持
+// \s（会被当作普通字符 s），因此改用 split 判断。
 function bad_field(s) {
 	if (type(s) != 'string')
 		return true;
@@ -40,7 +40,7 @@ function run_capture(cmd, args) {
 
 	let out = '';
 	let code = 126;
-	// stderr → app log file, keeps stdout clean JSON for parse_json_stdout()
+	// stderr 重定向到应用日志，保证 stdout 是干净的 JSON，供 parse_json_stdout() 解析
 	let fd = popen(cmdline + ' 2>>/tmp/online-upgrade.log');
 	if (fd) {
 		out = fd.read('all') ?? '';
@@ -57,16 +57,16 @@ function run_detached(cmd, args) {
 }
 
 function parse_json_stdout(text) {
-	// binary prints a single JSON object on stdout; log lines go to the log file
+	// 二进制在 stdout 输出单个 JSON 对象；日志行写入日志文件
 	let trimmed = trim('' + text);
 	if (length(trimmed) == 0)
 		return null;
 	return json(trimmed);
 }
 
-// Small synchronous CLI commands (pause/resume/cancel/tasks) share the same
-// stdout-JSON contract. They must stay synchronous so the UI can show the
-// result immediately instead of guessing whether the detached worker saw it.
+// 小型同步 CLI 命令（pause/resume/cancel/tasks）共用同一套
+// stdout-JSON 约定。它们必须保持同步，界面才能立即展示结果，
+// 而不必猜测后台 detached 进程是否收到了命令。
 function control_call(cmd, extra) {
 	let args = [cmd];
 	for (let a in (extra ?? []))
@@ -94,7 +94,7 @@ function read_log() {
 	if (!content)
 		return { log: '', size: 0 };
 	content = '' + content;
-	// Memory limit: restrict read buffer to maximum 2MB (2 * 1024 * 1024 = 2097152 bytes)
+	// 内存上限：读取缓冲区最大 2MB（2 * 1024 * 1024 = 2097152 字节）
 	if (length(content) > 2097152)
 		content = substr(content, length(content) - 2097152);
 	return { log: content, size: length(content) };
@@ -107,7 +107,7 @@ function list_backups() {
 		if (match('' + name, /^pre-upgrade-backup-.*\.tar\.gz$/) == null)
 			continue;
 		let st = stat(BACKUP_DIR + '/' + name);
-		// NB: ucode arrays have no .push() method — use the global push()
+		// 注意：ucode 数组没有 .push() 方法，需使用全局 push()
 		push(result, {
 			name: '' + name,
 			path: BACKUP_DIR + '/' + name,
@@ -115,15 +115,15 @@ function list_backups() {
 			mtime: st ? st.mtime : 0
 		});
 	}
-	// names embed a timestamp → lexicographic sort = newest first
+	// 文件名内含时间戳，故按字典序倒排即为最新在前
 	sort(result, (a, b) => a.name > b.name ? -1 : a.name < b.name ? 1 : 0);
 	return { backups: result };
 }
 
 function sysinfo() {
 	let text = readfile('/etc/openwrt_release') ?? '';
-	// NB: ucode match() with a string pattern does LITERAL matching, not regex —
-	// parse lines manually instead.
+	// 注意：ucode 的 match() 传入字符串时按字面量匹配而非正则，
+	// 因此这里手动逐行解析。
 	let grab = function(key) {
 		let prefix = key + "='";
 		for (let line in split(text, '\n')) {
@@ -147,7 +147,7 @@ function sysinfo() {
 }
 
 function valid_pattern(p) {
-	// ERE for the firmware matcher; quotes/whitespace rejected POSIX-safely
+	// 固件匹配用的 ERE；以 POSIX 安全的方式拒绝引号与空白
 	return type(p) == 'string' && length(p) > 0 && length(p) < 512 &&
 		!bad_field(p);
 }
@@ -200,10 +200,10 @@ const methods = {
 	},
 
 	start_upgrade: {
-		// rpcd derives the blobmsg policy from the *type of this value*, not from
-		// a type name: the string 'boolean' falls through to BLOBMSG_TYPE_STRING,
-		// so a JSON true/false argument is rejected with UBUS_STATUS_INVALID_ARGUMENT.
-		// A literal false yields BLOBMSG_TYPE_INT8 (= BLOBMSG_TYPE_BOOL).
+		// rpcd 依据该值的*类型*推导 blobmsg 策略，而不是依据
+		// 类型名字符串：写成 'boolean' 会落到 BLOBMSG_TYPE_STRING，
+		// 导致传入 JSON true/false 时被 UBUS_STATUS_INVALID_ARGUMENT 拒绝。
+		// 写成字面量 false 才能得到 BLOBMSG_TYPE_INT8（即 BLOBMSG_TYPE_BOOL）。
 		args: { force: false },
 		call: function(request) {
 			let pid = busy_pid();
@@ -217,8 +217,8 @@ const methods = {
 	},
 
 	start_download: {
-		// Dry-run download: check + segmented transfer + hash verification,
-		// never touches flash. Detached like check/upgrade.
+		// 试运行下载：检查 + 分段传输 + 哈希校验，
+		// 不会写入闪存；与 check/upgrade 一样以 detached 方式运行。
 		call: function() {
 			let pid = busy_pid();
 			if (length(pid) > 0)
@@ -248,8 +248,8 @@ const methods = {
 		args: { id: '', force: false },
 		call: function(request) {
 			let id = request.args?.id;
-			// ucode regex has no bounded quantifier {m,n}; bound the length
-			// separately instead.
+			// ucode 正则不支持有界量词 {m,n}，因此单独限制
+			// 长度。
 			if (type(id) != 'string' || length(id) > 64 || length(id) == 0 ||
 			    match(id, /^[0-9a-z-]+$/) == null)
 				return { ok: false, error: '任务 ID 不合法' };
@@ -313,8 +313,8 @@ const methods = {
 	},
 
 	probe_assets: {
-		// list the assets of an arbitrary repo's newest release — used by the
-		// web UI's "获取固件列表" helper; repo/tag come from arguments
+		// 列出任意仓库最新 Release 的资产，供 Web 界面
+		// “获取固件列表”功能使用；repo/tag 由参数传入
 		args: { repo: '', tag: '' },
 		call: function(request) {
 			let repo = request.args?.repo;
@@ -337,7 +337,7 @@ const methods = {
 		args: { path: '' },
 		call: function(request) {
 			let path = request.args?.path;
-			// deletion is deliberately narrow: only our own /root/ backup files
+			// 删除范围刻意收窄：仅允许本应用在 /root/ 下生成的备份文件
 			if (type(path) != 'string' ||
 			    match(path, /^\/root\/pre-upgrade-backup-[0-9]{8}-[0-9]{6}\.tar\.gz$/) == null)
 				return { ok: false, error: '不允许删除该路径' };
@@ -362,9 +362,9 @@ const methods = {
 	},
 
 	set_config: {
-		// Type hints are literal default values, never type-name strings or
-		// { type: '...' } specs: 0 → int32, '' → string, {} → table. Arguments
-		// absent from the request stay absent, so every key here is optional.
+		// 类型提示必须写成字面量默认值，不能写类型名字符串或
+		// { type: '...' } 这类声明：0 → int32，'' → string，{} → table。
+		// 请求中未出现的参数会保持缺省，因此这里每个键都是可选的。
 		args: {
 			repo: '',
 			tag: '',
@@ -386,7 +386,7 @@ const methods = {
 			let ctx = cursor();
 			let touched = 0;
 
-			// firmware minimum size floor in MB; 0 = no floor
+			// 固件最小体积下限（MB）；0 表示不设下限
 			if (type(a.min_size_mb) == 'int') {
 				let v = a.min_size_mb;
 				if (v < 0 || v > 512)
@@ -395,7 +395,7 @@ const methods = {
 				touched++;
 			}
 
-			// downloader advanced settings: accept 0 = reset to default
+			// 下载器高级参数：传 0 表示恢复默认值
 			let int_opts = [
 				['dl_workers', 1, 16, 6],
 				['dl_chunk_mb', 1, 32, 4],
@@ -415,9 +415,9 @@ const methods = {
 				}
 			}
 
-			// Slow-speed guard. Unlike int_opts, 0 is a meaningful value here
-			// (dl_min_speed_kb=0 disables the guard, grace=0 is allowed), so it
-			// must NOT be interpreted as "reset to default".
+			// 慢速保护参数。与 int_opts 不同，这里的 0 有实际含义
+			// （dl_min_speed_kb=0 表示关闭保护，grace=0 合法），
+			// 因此绝不能把 0 解释为“恢复默认值”。
 			let guard_opts = [
 				['dl_min_speed_kb', 0, 10240],
 				['dl_slow_window_sec', 3, 300],
@@ -441,7 +441,7 @@ const methods = {
 				touched++;
 			}
 			if (type(a.tag) == 'string' && length(a.tag) > 0) {
-				// allow `latest@<regex>` (incl. CJK tag names); forbid quotes/whitespace
+				// 允许 `latest@<正则>`（含中文标签名）；禁止引号与空白
 				if (length(a.tag) > 160 || bad_field(a.tag))
 					return { ok: false, error: '标签格式不正确(不能含引号或空白)' };
 				ctx.set('online-upgrade', 'settings', 'tag', a.tag);
