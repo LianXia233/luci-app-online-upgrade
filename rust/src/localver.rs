@@ -81,7 +81,11 @@ impl LocalVersion {
             }
             let four_digit = target.nums.first().copied().unwrap_or(0) >= 1900;
             return crate::version::from_ymd(
-                if four_digit { y as u64 } else { (y % 100) as u64 },
+                if four_digit {
+                    y as u64
+                } else {
+                    (y % 100) as u64
+                },
                 m,
                 d,
             );
@@ -96,7 +100,10 @@ const VERSION_FILES: [(&str, &str); 4] = [
         "/etc/online-upgrade-version",
         "构建写入的版本文件 /etc/online-upgrade-version",
     ),
-    ("/etc/build-version", "构建写入的版本文件 /etc/build-version"),
+    (
+        "/etc/build-version",
+        "构建写入的版本文件 /etc/build-version",
+    ),
     (
         "/etc/firmware-version",
         "构建写入的版本文件 /etc/firmware-version",
@@ -199,7 +206,12 @@ pub fn detect() -> LocalVersion {
         if let Some(v) = read_file(path) {
             let v = v.trim().to_string();
             if !v.is_empty() {
-                cands.push((format!("version_file:{path}"), label.to_string(), v, Confidence::Strong));
+                cands.push((
+                    format!("version_file:{path}"),
+                    label.to_string(),
+                    v,
+                    Confidence::Strong,
+                ));
             }
         }
     }
@@ -290,7 +302,11 @@ pub fn detect() -> LocalVersion {
             confidence: Confidence::Weak,
             build_ymd: Some((y, m, d)),
         },
-        None => LocalVersion::missing(if raw_marker.is_empty() { "未知" } else { &raw_marker }),
+        None => LocalVersion::missing(if raw_marker.is_empty() {
+            "未知"
+        } else {
+            &raw_marker
+        }),
     }
 }
 
@@ -317,7 +333,11 @@ mod tests {
     fn snapshot_only_means_no_version() {
         let cands = vec![
             c("SNAPSHOT", "DISTRIB_RELEASE", Confidence::Strong),
-            c("ImmortalWRT SNAPSHOT r0-23a1cd3", "DISTRIB_DESCRIPTION", Confidence::Strong),
+            c(
+                "ImmortalWRT SNAPSHOT r0-23a1cd3",
+                "DISTRIB_DESCRIPTION",
+                Confidence::Strong,
+            ),
         ];
         assert!(select(&cands).is_none());
     }
@@ -334,7 +354,9 @@ mod tests {
         };
         let short = local.comparable(Some(&pick("26.11.08").unwrap())).unwrap();
         assert_eq!(short.as_display(), "26.11.07");
-        let long = local.comparable(Some(&pick("2026.11.08").unwrap())).unwrap();
+        let long = local
+            .comparable(Some(&pick("2026.11.08").unwrap()))
+            .unwrap();
         assert_eq!(long.as_display(), "2026.11.07");
         // 2 位与 4 位不能混比：对齐后 26.11.07 < 26.11.08
         assert!(short.compare(&pick("26.11.08").unwrap()).is_lt());
@@ -354,7 +376,9 @@ mod tests {
         // 普通发布号与构建时间不可比：直接放弃比较，交给「无法比较」放行，
         // 否则 26.11.07 > 24.10.0 会被当成当前版本更高而拒绝升级。
         assert!(local.comparable(Some(&pick("24.10.0").unwrap())).is_none());
-        assert!(local.comparable(Some(&pick("25.12.0.1").unwrap())).is_none());
+        assert!(local
+            .comparable(Some(&pick("25.12.0.1").unwrap()))
+            .is_none());
         assert!(local.comparable(None).is_none());
     }
 

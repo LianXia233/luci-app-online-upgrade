@@ -2,6 +2,29 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.4.0] - 2026-11-10
+
+> 发布标签 `v2.4.0`，安装包 `luci-app-online-upgrade-2.4.0-r1_<arch>.apk`。标签、Release 标题与产物版本均由 `Makefile` 的 `PKG_VERSION` / `PKG_RELEASE` 派生，Release 正文自动同步自本条目；CI 在发布前校验安装包文件名版本一致。
+
+### Added
+
+- **下载任务管理（开始 / 暂停 / 继续 / 取消 / 删除历史任务）**：新增 `taskctl` 模块，提供跨进程控制文件 `/tmp/online-upgrade-control.json` 与持久化历史 `/root/.online-upgrade-tasks.json`（最多 30 条，重启不丢）。控制指令由下载进程的 Tokio 任务轮询后经 `tokio::sync::watch` 广播给每个分块 Worker；暂停在分块边界生效，不悬挂 HTTP 连接，继续时从 `.parts.json` 断点续传。新增 `download / pause / resume / cancel / tasks / task-delete <id> [--force]` 子命令，rpcd 增加 `start_download` 等 6 个方法与 LuCI「下载任务管理」卡片。删除历史任务时若已无「已完成」记录，会一并清理 `/tmp/firmware.img.gz` 及 `.ts` / `.parts.json`。
+- **慢速保护（自动停止并抛出原因）**：每秒采样实测吞吐，连续低于 `dl_min_speed_kb`（默认 32 KB/s）达 `dl_slow_window_sec`（默认 15 秒）即终止下载，状态文件、日志、任务历史三处输出具体原因（平均速度、阈值、观测窗口、当前线路）并列出可切换节点；`dl_slow_grace_sec`（默认 10 秒）覆盖 TLS 握手 / TCP 慢启动，`dl_min_speed_kb=0` 可关闭保护。停止属于任务级终止，**不触发**线路回退，断点续传记录保留。进度文案同时显示实时速度。
+- **加速节点实测更新**：`github.rs` 新增 `MIRRORS`，前端快捷按钮由 3 个扩充到 7 个已实测可用节点（`gh.acg2.mom`、`ghfast.top`、`ghproxy.net`、`gh-proxy.com`、`ghproxy.imciel.com`、`ghproxy.monkeyray.net`、`ghproxy.vip`），移除不再解析的 `github.moeyy.xyz`。2026-11-10 逐个验证均返回同一份 709 字节文件内容。
+
+### Changed
+
+- **下载错误分类**：`downloader::download` 现在返回 `DownloadError`（`Stopped(StopReason)` / `Other(String)`），区分用户取消、慢速保护与线路级网络失败；只有后者才会回退到 GitHub API 资产直链，避免把「用户点了取消」当成线路故障静默换源重下。
+- **Tokio 原生并发控制**：Cargo 启用 `tokio/sync`，数据块循环用 `tokio::select!` 同时等待响应流与 `watch::changed()`（cancel-safe），停滞看门狗统一使用 UCI 的 `dl_stall_sec`，`Mutex` 中毒改用 `into_inner()` 恢复而非 `unwrap()`。
+- **静态资源缓存版本**：`PKG_VERSION` / `Cargo.toml` / `Cargo.lock` / `main.ut` 的 `?v=` 同步到 `2.4.0`。
+- **Release 标签与产物版本统一**：CI 不再用 `v2.0.<github.run_number>` 作为标签（曾出现标签 `v2.0.17` 却挂载 `2.3.2-r1` 安装包的情况），改由 `verify` 任务输出 `PKG_VERSION` / `PKG_RELEASE`，发布标签固定为 `v<PKG_VERSION>`、标题同步；发布前逐个校验安装包文件名前缀，重复构建时先清理同名旧产物再上传，Release 正文由 `CHANGELOG.md` 对应版本段落自动生成。
+
+### Fixed
+
+- **watcher 初始化竞态**：控制文件轮询的基线 seq 若在异步任务内部读取，可能与启动后立即写入的暂停 / 取消命令竞争，导致该命令被当成基线而永不生效。现在在 `spawn` 之前同步读取基线；`taskctl::tests::watcher_publishes_commands` 覆盖该场景。
+- **预分配文件被截断**：`File::options().create(true)` 未声明 truncate 行为，clippy 要求显式指定；断点续传必须保留已写入分块，现显式 `.truncate(false)`。
+- **新版 Rust 1.93 clippy 门禁**：顺带修复基线代码在新 lint 下的告警（`explicit_auto_deref`、`useless_format`、`doc_lazy_continuation`、`vec_init_then_push`、`manual_is_multiple_of`、`invalid_regex` 测试），`cargo clippy --all-targets -- -D warnings` 恢复全绿。
+
 ## [2.3.2] - 2026-11-09
 
 ### Changed

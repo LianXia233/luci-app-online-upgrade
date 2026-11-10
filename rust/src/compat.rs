@@ -68,7 +68,11 @@ impl DeviceProfile {
         let pkg_arch = package_manager_arch();
 
         Self {
-            model: if model.is_empty() { "Generic Router".into() } else { model },
+            model: if model.is_empty() {
+                "Generic Router".into()
+            } else {
+                model
+            },
             board_name,
             board_id,
             target,
@@ -77,12 +81,19 @@ impl DeviceProfile {
             uname_arch,
             release: first_non_empty(&[&release, &ubus_release]),
             revision,
-            distro: if distro.is_empty() { "OpenWrt".into() } else { distro },
+            distro: if distro.is_empty() {
+                "OpenWrt".into()
+            } else {
+                distro
+            },
         }
     }
 
     pub fn arch_family(&self) -> Arch {
-        Arch::from_device(&format!("{} {} {}", self.arch, self.pkg_arch, self.uname_arch))
+        Arch::from_device(&format!(
+            "{} {} {}",
+            self.arch, self.pkg_arch, self.uname_arch
+        ))
     }
 
     pub fn to_json(&self) -> Value {
@@ -97,10 +108,7 @@ impl DeviceProfile {
             ("distro".into(), Value::str(&self.distro)),
             ("release".into(), Value::str(&self.release)),
             ("revision".into(), Value::str(&self.revision)),
-            (
-                "arch_family".into(),
-                Value::str(self.arch_family().label()),
-            ),
+            ("arch_family".into(), Value::str(self.arch_family().label())),
         ])
     }
 }
@@ -155,7 +163,7 @@ fn read_ubus_board() -> (String, String, String, String) {
     let grab = |path: &[&str]| -> String {
         let mut cur = &val;
         for key in path {
-            match cur.get(*key) {
+            match cur.get(key) {
                 Some(next) => cur = next,
                 None => return String::new(),
             }
@@ -277,22 +285,132 @@ impl Arch {
 /// not device identifiers, so they are never evidence for a model match.
 const NON_IDENTITY_TOKENS: &[&str] = &[
     // SoC / vendor / target platforms
-    "mediatek", "mtk", "qualcomm", "qualcommax", "rockchip", "allwinner", "sunxi", "broadcom",
-    "bcm", "realtek", "marvell", "amlogic", "lantiq", "ath79", "ramips", "filogic", "ipq",
-    "layerscape", "nxp", "intel", "amd", "generic", "router", "wireless", "wifi", "wlan",
+    "mediatek",
+    "mtk",
+    "qualcomm",
+    "qualcommax",
+    "rockchip",
+    "allwinner",
+    "sunxi",
+    "broadcom",
+    "bcm",
+    "realtek",
+    "marvell",
+    "amlogic",
+    "lantiq",
+    "ath79",
+    "ramips",
+    "filogic",
+    "ipq",
+    "layerscape",
+    "nxp",
+    "intel",
+    "amd",
+    "generic",
+    "router",
+    "wireless",
+    "wifi",
+    "wlan",
     // architectures
-    "aarch64", "arm64", "arm", "armv7", "armhf", "cortex", "cortex-a7", "cortex-a9", "cortex-a53",
-    "cortex-a55", "cortex-a72", "mips", "mipsel", "mips64", "x86", "x86-64", "x86_64", "amd64",
-    "i386", "i686", "mt7620", "mt7621", "mt7622", "mt7623", "mt7628", "mt7629", "mt7688",
-    "mt7981", "mt7985", "mt7986", "mt7987", "mt7988", "rk3399", "rk3568", "rk3588", "ipq6010",
-    "ipq6018", "ipq807x", "ipq9574", "bcm2711", "bcm2712", "cn913x", "24kc", "74kc", "1004kc",
+    "aarch64",
+    "arm64",
+    "arm",
+    "armv7",
+    "armhf",
+    "cortex",
+    "cortex-a7",
+    "cortex-a9",
+    "cortex-a53",
+    "cortex-a55",
+    "cortex-a72",
+    "mips",
+    "mipsel",
+    "mips64",
+    "x86",
+    "x86-64",
+    "x86_64",
+    "amd64",
+    "i386",
+    "i686",
+    "mt7620",
+    "mt7621",
+    "mt7622",
+    "mt7623",
+    "mt7628",
+    "mt7629",
+    "mt7688",
+    "mt7981",
+    "mt7985",
+    "mt7986",
+    "mt7987",
+    "mt7988",
+    "rk3399",
+    "rk3568",
+    "rk3588",
+    "ipq6010",
+    "ipq6018",
+    "ipq807x",
+    "ipq9574",
+    "bcm2711",
+    "bcm2712",
+    "cn913x",
+    "24kc",
+    "74kc",
+    "1004kc",
     // distro / release words
-    "openwrt", "immortalwrt", "lede", "snapshot", "stable", "release", "r", "rc", "beta", "alpha",
-    "pre", "build", "builds", "test", "debug", "official", "self", "custom", "diyp",
+    "openwrt",
+    "immortalwrt",
+    "lede",
+    "snapshot",
+    "stable",
+    "release",
+    "r",
+    "rc",
+    "beta",
+    "alpha",
+    "pre",
+    "build",
+    "builds",
+    "test",
+    "debug",
+    "official",
+    "self",
+    "custom",
+    "diyp",
     // image / packaging words
-    "sysupgrade", "factory", "initramfs", "squashfs", "ext4", "combined", "efi", "nand", "nor",
-    "emmc", "sdcard", "ubi", "tftp", "kernel", "rootfs", "firmware", "image", "img", "bin", "gz",
-    "tar", "xz", "zip", "full", "mini", "lite", "pro", "plus", "max", "v1", "v2", "v3", "v4",
+    "sysupgrade",
+    "factory",
+    "initramfs",
+    "squashfs",
+    "ext4",
+    "combined",
+    "efi",
+    "nand",
+    "nor",
+    "emmc",
+    "sdcard",
+    "ubi",
+    "tftp",
+    "kernel",
+    "rootfs",
+    "firmware",
+    "image",
+    "img",
+    "bin",
+    "gz",
+    "tar",
+    "xz",
+    "zip",
+    "full",
+    "mini",
+    "lite",
+    "pro",
+    "plus",
+    "max",
+    "v1",
+    "v2",
+    "v3",
+    "v4",
 ];
 
 fn norm(s: &str) -> String {
@@ -361,13 +479,42 @@ impl DeviceProfile {
 
 fn asset_arch(fname_norm: &str) -> (Arch, Vec<String>) {
     const AARCH64: &[&str] = &[
-        "aarch64", "arm64", "cortex-a53", "cortex-a55", "cortex-a72", "filogic", "mt7622",
-        "mt7981", "mt7985", "mt7986", "mt7987", "mt7988", "rk3568", "rk3588", "rk3399",
-        "ipq6010", "ipq6018", "ipq807x", "ipq9574", "bcm2711", "bcm2712", "cn913x",
+        "aarch64",
+        "arm64",
+        "cortex-a53",
+        "cortex-a55",
+        "cortex-a72",
+        "filogic",
+        "mt7622",
+        "mt7981",
+        "mt7985",
+        "mt7986",
+        "mt7987",
+        "mt7988",
+        "rk3568",
+        "rk3588",
+        "rk3399",
+        "ipq6010",
+        "ipq6018",
+        "ipq807x",
+        "ipq9574",
+        "bcm2711",
+        "bcm2712",
+        "cn913x",
     ];
     const X86: &[&str] = &["x86", "x86-64", "x86_64", "amd64", "i386", "i686"];
-    const MIPS: &[&str] = &["mipsel", "mips", "mips64", "mt7620", "mt7621", "mt7628", "mt7688", "24kc", "74kc", "1004kc"];
-    const ARM32: &[&str] = &["armv7", "armhf", "cortex-a7", "cortex-a9", "mt7623", "mt7629"];
+    const MIPS: &[&str] = &[
+        "mipsel", "mips", "mips64", "mt7620", "mt7621", "mt7628", "mt7688", "24kc", "74kc",
+        "1004kc",
+    ];
+    const ARM32: &[&str] = &[
+        "armv7",
+        "armhf",
+        "cortex-a7",
+        "cortex-a9",
+        "mt7623",
+        "mt7629",
+    ];
 
     let mut evidence = Vec::new();
     let mut found: Option<Arch> = None;
@@ -381,9 +528,7 @@ fn asset_arch(fname_norm: &str) -> (Arch, Vec<String>) {
             let hit = if marker.contains('-') || marker.contains('_') {
                 fname_norm.contains(marker) || fname_norm.replace('-', "_").contains(marker)
             } else {
-                fname_norm
-                    .split('-')
-                    .any(|t| t == *marker)
+                fname_norm.split('-').any(|t| t == *marker)
                     || fname_norm.contains(&format!("-{marker}-"))
                     || fname_norm.starts_with(&format!("{marker}-"))
             };
@@ -441,7 +586,10 @@ impl CompatResult {
                 }),
             ),
             ("can_upgrade".into(), Value::Bool(self.can_upgrade)),
-            ("requires_confirm".into(), Value::Bool(self.requires_confirm)),
+            (
+                "requires_confirm".into(),
+                Value::Bool(self.requires_confirm),
+            ),
             ("score".into(), Value::num(self.score.max(0) as u64)),
             ("badge".into(), Value::str(&self.badge)),
             ("reason".into(), Value::str(&self.reason)),
@@ -628,10 +776,7 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
     if let Some(full) = identities.iter().find(|id| fname.contains(id.as_str())) {
         model_check = "exact";
         detected_model = full.clone();
-        model_reason = format!(
-            "机型一致：文件名包含完整本机标识 [{}]",
-            full
-        );
+        model_reason = format!("机型一致：文件名包含完整本机标识 [{}]", full);
     } else {
         let matched: Vec<&String> = tokens
             .iter()
@@ -639,7 +784,11 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
             .collect();
         if matched.len() >= 2 {
             model_check = "exact";
-            detected_model = matched.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",");
+            detected_model = matched
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
             model_reason = format!(
                 "机型一致：文件名同时命中本机标识 [{}]（{} 个独立标识）",
                 detected_model,
@@ -654,10 +803,7 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
             } else {
                 model_check = "partial";
                 detected_model = t.clone();
-                model_reason = format!(
-                    "机型部分匹配：文件名仅命中通用词 [{}]，不足以确认机型",
-                    t
-                );
+                model_reason = format!("机型部分匹配：文件名仅命中通用词 [{}]，不足以确认机型", t);
             }
         } else {
             model_reason = format!(
@@ -735,9 +881,8 @@ fn evaluate(device: &DeviceProfile, filename: &str, rule: Option<&str>) -> Compa
             false,
             true,
             "无法确认是否适配",
-            format!(
-                "机型与架构均无法确认，禁止自动升级；如需升级请先配置 firmware_pattern 或手动指定文件"
-            ),
+            "机型与架构均无法确认，禁止自动升级；如需升级请先配置 firmware_pattern 或手动指定文件"
+                .to_string(),
             15 + arch_score,
         ),
     };
@@ -771,9 +916,7 @@ pub fn verify_downloaded_image(device: &DeviceProfile, path: &str) -> Result<(),
     if which("fwtool") {
         let meta_tmp = "/tmp/.fwtool-meta.json";
         let _ = std::fs::remove_file(meta_tmp);
-        let out = Command::new("fwtool")
-            .args(["-i", meta_tmp, path])
-            .output();
+        let out = Command::new("fwtool").args(["-i", meta_tmp, path]).output();
         if let Ok(o) = out {
             if o.status.success() {
                 if let Ok(content) = std::fs::read_to_string(meta_tmp) {
@@ -784,9 +927,8 @@ pub fn verify_downloaded_image(device: &DeviceProfile, path: &str) -> Result<(),
                                 .filter_map(|d| d.as_str().map(|s| s.to_string()))
                                 .collect();
                             if !supported.is_empty() && !device.board_name.is_empty() {
-                                let hit = supported
-                                    .iter()
-                                    .any(|s| board_match(s, &device.board_name));
+                                let hit =
+                                    supported.iter().any(|s| board_match(s, &device.board_name));
                                 crate::logline!(
                                     "[compat] 固件元数据支持机型: {}, 本机机型: {}",
                                     supported.join(", "),
@@ -878,7 +1020,10 @@ mod tests {
     #[test]
     fn platform_word_does_not_match() {
         // mt7621 is a platform word: it must never turn an unrelated asset into a match.
-        let r = evaluate_asset(&dev(), "openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin");
+        let r = evaluate_asset(
+            &dev(),
+            "openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin",
+        );
         assert_ne!(r.level, CompatLevel::Compatible);
         assert_eq!(r.model_check, "unmatched");
         assert!(!r.can_upgrade);
@@ -886,7 +1031,10 @@ mod tests {
 
     #[test]
     fn exact_model_and_arch_match() {
-        let r = evaluate_asset(&dev(), "ImmortalWRT-25.12.0-mediatek-filogic-hiveton_h5000m-squashfs-sysupgrade.bin");
+        let r = evaluate_asset(
+            &dev(),
+            "ImmortalWRT-25.12.0-mediatek-filogic-hiveton_h5000m-squashfs-sysupgrade.bin",
+        );
         assert_eq!(r.level, CompatLevel::Compatible);
         assert_eq!(r.model_check, "exact");
         assert_eq!(r.arch_check, "ok");
@@ -920,7 +1068,11 @@ mod tests {
 
     #[test]
     fn rule_gives_explicit_basis() {
-        let r = evaluate_with_rule(&dev(), "my-private-build-26.11.07.bin", "^my-private-build-");
+        let r = evaluate_with_rule(
+            &dev(),
+            "my-private-build-26.11.07.bin",
+            "^my-private-build-",
+        );
         assert_eq!(r.model_check, "rule");
         assert_eq!(r.matched_rule.as_deref(), Some("^my-private-build-"));
         assert!(r.basis.iter().any(|b| b.contains("firmware_pattern")));
@@ -930,7 +1082,11 @@ mod tests {
     fn self_build_rule_hit_is_usable_even_without_arch_word() {
         // 「自用构建」兜底：文件名不含机型也不含架构，只有用户配置的规则能认出来。
         // 命中规则即视为本机可用，但依据必须写清楚「资产未声明架构」。
-        let r = evaluate_with_rule(&dev(), "my-private-build-26.11.07.bin", "^my-private-build-");
+        let r = evaluate_with_rule(
+            &dev(),
+            "my-private-build-26.11.07.bin",
+            "^my-private-build-",
+        );
         assert_eq!(r.arch_check, "undeclared");
         assert_eq!(r.level, CompatLevel::Compatible);
         assert!(r.can_upgrade);

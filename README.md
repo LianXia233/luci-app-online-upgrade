@@ -59,11 +59,24 @@
 - **智能过滤小文件（≥15MB）**：点击「获取固件列表」时，自动探查目标 Release 附件产物，**全自动剔除小于 15MB 的非固件文件**（如 `.txt` 配置单、`.manifest` 清单、`.sha256` 校验和），仅保留真正可刷写的固件包供用户点选，一键自动生成固件匹配正则。
 - **版本解析与升级方向判定**：版本号优先取自资产文件名，其次取自 Release tag；支持多段版本（`25.12.0.1`）、`-rc`/`-beta`/`-alpha` 后缀、有无 `v` 前缀、版本号不在首段的命名（如 `vendor-2.1.0-immortalwrt-24.10.0-...`），也不会把 SoC/架构里的数字当版本。比较结果分为「目标更高 / 同版本 / 目标更低 / 无法比较」四种，目标更低时默认拒绝降级（需强制模式）；目标版本与当前固件相同时不算「有更新」，界面不摆普通升级入口，重装只能手动点「强制升级」。
 
-### 5. 多线程分段加速下载
+### 5. 多线程分段加速下载与任务管理
 - **动态切片与 Work-Stealing**：自动探测 HTTP Range 支持，按 4MB 动态切片并分派给多达 6 个 Tokio 异步 Worker 并发拉取，快连接自动偷取慢连接分块，拉满带宽潜能。
-- **断点续传与故障恢复**：内置 `.parts.json` 侧车机制，意外断网无缝续传；支持块级独立重试与 30 秒停滞看门狗（Stall Watchdog），遇不支持分段的目标自动平滑降级单流传输。
-- **内置常用镜像代理**：预置快捷镜像节点（`gh.acg2.mom`、`ghfast.top`、`moeyy.xyz` 等），一键切换 GitHub 加速或直连模式。
-- **下载线路自动回退**：优先使用所选镜像/直连的 Release 下载地址；当 `github.com` 网页前端返回 5xx 或超时时，自动回退到 GitHub API 资产直链（`api.github.com/repos/<owner>/<repo>/releases/assets/<id>` → 签名 CDN），网页前端故障期间仍能完成升级。
+- **断点续传与故障恢复**：内置 `.parts.json` 侧车机制，意外断网无缝续传；支持块级独立重试与停滞看门狗（Stall Watchdog，默认 30 秒），遇不支持分段的目标自动平滑降级单流传输。
+- **开始 / 暂停 / 继续 / 取消**：下载全程由 Rust + Tokio 调度。控制指令写入 `/tmp/online-upgrade-control.json`，由下载进程的 Tokio 任务轮询后经 `tokio::sync::watch` 广播给每个分块 Worker；暂停在**分块边界**生效（不会把 HTTP 响应流悬挂在空闲状态），继续时从断点续传记录接着下；取消立即终止，且不会被误判为线路故障而换源重下。
+- **删除历史任务**：任务记录持久化在 `/root/.online-upgrade-tasks.json`（最多 30 条，重启不丢），状态、进度、实测速度与停止原因都可查，支持单条删除。仍在运行/暂停的任务需先取消；删除时若已无「已完成」记录，会一并清理 `/tmp/firmware.img.gz` 及 `.ts` / `.parts.json` 侧车，避免残留占满 tmpfs。
+- **慢速保护（自动停止并抛出原因）**：每秒采样共享字节计数器计算实测吞吐，连续低于 `dl_min_speed_kb`（默认 32 KB/s）达到 `dl_slow_window_sec`（默认 15 秒）即停止下载，并在状态文件、运行日志和任务历史中输出具体原因（窗口内平均速度、阈值、观测时长、当前线路），同时列出可切换的加速节点。TLS 握手与 TCP 慢启动由 `dl_slow_grace_sec`（默认 10 秒）宽限；`dl_min_speed_kb=0` 可关闭保护。慢速停止是**任务级终止**，不自动换线路重试，断点续传记录会保留。
+- **已实测可用镜像代理**：预置 7 个快捷节点 `gh.acg2.mom`（默认）、`ghfast.top`、`ghproxy.net`、`gh-proxy.com`、`ghproxy.imciel.com`、`ghproxy.monkeyray.net`、`ghproxy.vip`，2026-11-10 逐个验证均能正确返回同一份文件内容；已移除不再解析的 `github.moeyy.xyz`。
+- **下载线路自动回退**：优先使用所选镜像/直连的 Release 下载地址；当 `github.com` 网页前端返回 5xx 或超时时，自动回退到 GitHub API 资产直链（`api.github.com/repos/<owner>/<repo>/releases/assets/<id>` → 签名 CDN），网页前端故障期间仍能完成升级。**只有线路级网络失败才回退**，用户取消与慢速保护触发的停止不会回退。
+
+#### 下载任务 CLI（SSH 排查用）
+
+| 命令 | 作用 |
+| :--- | :--- |
+| `online-upgrade download` | 开始一个下载任务（只下载并校验，不刷机） |
+| `online-upgrade pause` / `resume` | 暂停 / 继续当前下载 |
+| `online-upgrade cancel` | 取消当前下载 |
+| `online-upgrade tasks` | 输出历史任务 JSON（状态、进度、速度、原因） |
+| `online-upgrade task-delete <id> [--force]` | 删除历史任务；`--force` 用于清理进程崩溃后残留的 `running` 记录 |
 
 ### 6. 固件哈希校验与配置容灾安全升级
 - **固件 SHA-256 完整性校验（来源链）**：按 `expected_sha256`（配置）→ Release 校验单（`sha256sums` / `sha256sums.txt` / `<firmware>.sha256`）→ Release 说明正文的顺序取期望哈希；哈希不符立即终止刷写并清理固件。上游三种来源都拿不到哈希时不会静默跳过：界面与日志明确标注「无校验依据，仅记录本地 SHA256」，此时不做比对校验，也不宣称“已校验”。
@@ -124,8 +137,9 @@
 3. 从下拉菜单中点选您设备对应的固件型号（如 `xxx-sysupgrade.bin`），点击「**使用此文件 → 生成规则**」，插件将自动生成精准的匹配规则。
 
 ### 步骤三：选择加速代理并保存
-1. 在「**3. 下载加速代理**」中，可直接点击常用推荐按钮（如 `gh.acg2.mom`、`ghfast.top` 等）快速填入代理，国内网络环境强烈推荐启用。
-2. 点击「**保存配置**」，此时当前配置已被持久化至路由器的 UCI 配置文件中。
+1. 在「**3. 下载加速代理**」中，可直接点击已实测可用的节点按钮（`gh.acg2.mom`、`ghfast.top`、`ghproxy.net` 等 7 个）或「直连 GitHub」快速填入代理，国内网络环境强烈推荐启用。
+2. 下载任务的开始 / 暂停 / 继续 / 取消与历史删除在「**下载任务管理**」卡片操作；慢速保护阈值可在「高级配置」中调整（默认低于 32 KB/s 持续 15 秒自动停止）。
+3. 点击「**保存配置**」，此时当前配置已被持久化至路由器的 UCI 配置文件中。
 
 ### 步骤四：一键检测与极速升级
 1. 点击「**检查更新**」按钮，系统开始向 GitHub 查询最新版本。
@@ -239,6 +253,8 @@
 apk add --allow-untrusted luci-app-online-upgrade_*.apk
 ```
 
+> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.4.0`），安装包文件名为 `luci-app-online-upgrade-<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`。三者由 `Makefile` 统一派生，`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定；发布前 CI 会校验安装包名与版本相符，Release 正文自动取自 `CHANGELOG.md` 对应版本段落，因此标签、产物版本与更新日志始终同步。
+
 ### 方式 B：从源码编译打包
 
 #### 1. 编译 Rust 后端内核（宿主机交叉编译，无需 OpenWrt 全量环境）
@@ -287,6 +303,9 @@ make package/luci-app-online-upgrade/compile V=s
 | `dl_chunk_mb` | integer | `4` | 动态分段切片大小（MB），默认 4MB |
 | `dl_stall_sec` | integer | `30` | 分块传输停滞超时看门狗阈值（秒），分片停滞时自动重调度与故障转移 |
 | `dl_retries` | integer | `3` | 单个分块下载失败后允许的最大重试次数 |
+| `dl_min_speed_kb` | integer | `32` | **慢速保护阈值 (KB/s)**：实测速度持续低于该值达到判定窗口即自动停止下载并输出原因；设为 `0` 关闭保护 |
+| `dl_slow_window_sec` | integer | `15` | 慢速判定窗口（秒，范围 3~300）：速度连续低于阈值达到该时长才判为异常 |
+| `dl_slow_grace_sec` | integer | `10` | 启动宽限期（秒，范围 0~300）：TLS 握手与 TCP 慢启动期间不做慢速判定 |
 | `github_token` | string | 空 | 可选。GitHub Personal Access Token（只读权限即可），用于防止局域网内公网 IP 触发 GitHub API 403 限流。令牌只会发给 `api.github.com`，经镜像前缀转发或回退到镜像下载时一律不带 Authorization 头 |
 
 ### 2. 标准 UCI 配置文件示例 (`/etc/config/online-upgrade`)
@@ -304,6 +323,9 @@ config online-upgrade 'settings'
 	option dl_chunk_mb '4'
 	option dl_stall_sec '30'
 	option dl_retries '3'
+	option dl_min_speed_kb '32'
+	option dl_slow_window_sec '15'
+	option dl_slow_grace_sec '10'
 ```
 
 ---
@@ -334,6 +356,9 @@ OpenWrt 编译系统原生支持 `files` 目录树自动覆盖打包进根文件
    	option dl_chunk_mb '4'
    	option dl_stall_sec '30'
    	option dl_retries '3'
+   	option dl_min_speed_kb '32'
+   	option dl_slow_window_sec '15'
+   	option dl_slow_grace_sec '10'
    ```
    > [!TIP]
    > 将 `your-username/your-firmware-repo` 替换为存放固件 Release 的 GitHub 仓库；将 `firmware_pattern` 替换为您编译生成的固件文件名正则。
@@ -509,8 +534,9 @@ ubus call luci.online-upgrade probe_assets '{"repo":"owner/repo","tag":"latest"}
 
 <details>
 <summary><b>Q3: 国内网络访问 GitHub Releases API 偶尔超时怎么办？</b></summary>
-1. 可以在插件的「第 3 步」选用预置的国内反代加速节点（如 <code>gh.acg2.mom</code>、<code>ghfast.top</code> 等）；<br>
-2. 如果提示 API 限速（403 Rate Limit），可在「高级配置」中填入您自己的 GitHub Token（仅需 <code>public_repo</code> 只读权限）。
+1. 可以在插件的「第 3 步」选用已实测可用的反代加速节点（<code>gh.acg2.mom</code>、<code>ghfast.top</code>、<code>ghproxy.net</code>、<code>gh-proxy.com</code> 等共 7 个）或直连；<br>
+2. 如果提示 API 限速（403 Rate Limit），可在「高级配置」中填入您自己的 GitHub Token（仅需 <code>public_repo</code> 只读权限）；<br>
+3. 下载持续过慢时插件会<b>自动停止并输出原因</b>（实测速度、阈值、观测窗口、当前线路），可换一个节点后点「开始下载」从断点继续；阈值与窗口在「高级配置」中可调，<code>dl_min_speed_kb=0</code> 可关闭该保护。
 </details>
 
 <details>

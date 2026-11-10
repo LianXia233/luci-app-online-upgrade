@@ -13,6 +13,9 @@ if [ -z "$(uci -q get online-upgrade.settings)" ]; then
 		set online-upgrade.settings.proxy='https://gh.acg2.mom/'
 		set online-upgrade.settings.keep_config='1'
 		set online-upgrade.settings.last_upgrade_version='0'
+		set online-upgrade.settings.dl_min_speed_kb='32'
+		set online-upgrade.settings.dl_slow_window_sec='15'
+		set online-upgrade.settings.dl_slow_grace_sec='10'
 		commit online-upgrade
 	EOF
 fi

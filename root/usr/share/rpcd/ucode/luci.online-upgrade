@@ -64,6 +64,20 @@ function parse_json_stdout(text) {
 	return json(trimmed);
 }
 
+// Small synchronous CLI commands (pause/resume/cancel/tasks) share the same
+// stdout-JSON contract. They must stay synchronous so the UI can show the
+// result immediately instead of guessing whether the detached worker saw it.
+function control_call(cmd, extra) {
+	let args = [cmd];
+	for (let a in (extra ?? []))
+		push(args, a);
+	let r = run_capture(BIN, args);
+	let obj = parse_json_stdout(r.out);
+	if (type(obj) == 'object')
+		return obj;
+	return { ok: false, error: trim(r.out) != '' ? trim(r.out) : cmd + ' 执行失败 (code ' + r.code + ')' };
+}
+
 function read_status() {
 	let content = readfile(STATUS_FILE);
 	if (!content)
@@ -202,6 +216,50 @@ const methods = {
 		}
 	},
 
+	start_download: {
+		// Dry-run download: check + segmented transfer + hash verification,
+		// never touches flash. Detached like check/upgrade.
+		call: function() {
+			let pid = busy_pid();
+			if (length(pid) > 0)
+				return { ok: false, error: '已有任务正在执行(pid ' + pid + ')，请先暂停或取消' };
+			run_detached(BIN, ['download']);
+			return { ok: true };
+		}
+	},
+
+	pause_download: {
+		call: function() { return control_call('pause'); }
+	},
+
+	resume_download: {
+		call: function() { return control_call('resume'); }
+	},
+
+	cancel_download: {
+		call: function() { return control_call('cancel'); }
+	},
+
+	list_tasks: {
+		call: function() { return control_call('tasks'); }
+	},
+
+	delete_task: {
+		args: { id: '', force: false },
+		call: function(request) {
+			let id = request.args?.id;
+			// ucode regex has no bounded quantifier {m,n}; bound the length
+			// separately instead.
+			if (type(id) != 'string' || length(id) > 64 || length(id) == 0 ||
+			    match(id, /^[0-9a-z-]+$/) == null)
+				return { ok: false, error: '任务 ID 不合法' };
+			let extra = [id];
+			if (request.args?.force === true)
+				push(extra, '--force');
+			return control_call('task-delete', extra);
+		}
+	},
+
 	get_status: {
 		call: function() {
 			return read_status();
@@ -318,6 +376,9 @@ const methods = {
 			dl_stall_sec: 0,
 			dl_retries: 0,
 			min_size_mb: 0,
+			dl_min_speed_kb: 0,
+			dl_slow_window_sec: 0,
+			dl_slow_grace_sec: 0,
 			expected_sha256: ''
 		},
 		call: function(request) {
@@ -347,6 +408,25 @@ const methods = {
 					let v = a[key];
 					if (v == 0)
 						v = def;
+					if (v < lo || v > hi)
+						return { ok: false, error: key + ' 超出范围 (' + lo + '-' + hi + ')' };
+					ctx.set('online-upgrade', 'settings', key, '' + v);
+					touched++;
+				}
+			}
+
+			// Slow-speed guard. Unlike int_opts, 0 is a meaningful value here
+			// (dl_min_speed_kb=0 disables the guard, grace=0 is allowed), so it
+			// must NOT be interpreted as "reset to default".
+			let guard_opts = [
+				['dl_min_speed_kb', 0, 10240],
+				['dl_slow_window_sec', 3, 300],
+				['dl_slow_grace_sec', 0, 300]
+			];
+			for (let idx, opt in guard_opts) {
+				let key = opt[0], lo = opt[1], hi = opt[2];
+				if (type(a[key]) == 'int') {
+					let v = a[key];
 					if (v < lo || v > hi)
 						return { ok: false, error: key + ' 超出范围 (' + lo + '-' + hi + ')' };
 					ctx.set('online-upgrade', 'settings', key, '' + v);

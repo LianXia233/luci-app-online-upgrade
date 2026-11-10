@@ -1,7 +1,7 @@
 {% include(`themes/${theme}/header`) %}
 
 <!-- luci-app-online-upgrade v2 — Modern Pure White Aesthetic -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.3.2">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.4.0">
 
 <div class="cbi-map ou-container">
 	<!-- Hero Header Banner with Bespoke Vector Graphic -->
@@ -286,6 +286,59 @@
 		</div>
 	</div>
 
+	<!-- 2.5 下载任务管理 -->
+	<div class="cbi-section ou-card" id="card-tasks">
+		<div class="ou-card-head">
+			<div class="ou-head-title-wrap">
+				<div class="ou-icon-badge cyan">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-head-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+				</div>
+				<div>
+					<div class="ou-head-title-row">
+						<h3>下载任务管理</h3>
+					</div>
+					<p class="ou-head-sub">开始 / 暂停 / 继续 / 取消下载；速度异常缓慢自动停止并输出原因；历史任务可单条删除</p>
+				</div>
+			</div>
+			<div class="ou-btn-row">
+				<button id="btn-start-download" class="btn ou-btn ou-btn-primary" type="button" title="仅下载并校验固件，不执行刷写">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+					<span class="btn-label">开始下载</span>
+				</button>
+				<button id="btn-pause-download" class="btn ou-btn ou-btn-default" type="button" title="在下一个分块边界暂停">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+					<span class="btn-label">暂停</span>
+				</button>
+				<button id="btn-resume-download" class="btn ou-btn ou-btn-default" type="button" title="继续已暂停的下载">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+					<span class="btn-label">继续</span>
+				</button>
+				<button id="btn-cancel-download" class="btn ou-btn ou-btn-danger" type="button" title="取消当前下载，保留断点续传记录">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+					<span class="btn-label">取消</span>
+				</button>
+			</div>
+		</div>
+
+		<div class="ou-table-responsive">
+			<table class="ou-table" id="task-table">
+				<thead>
+					<tr>
+						<th>固件文件</th>
+						<th>状态 / 进度</th>
+						<th>速度</th>
+						<th>原因 / 备注</th>
+						<th style="width:100px;text-align:right">操作</th>
+					</tr>
+				</thead>
+				<tbody>
+					<tr><td colspan="5" class="ou-empty">暂无下载任务</td></tr>
+				</tbody>
+			</table>
+		</div>
+		<p class="ou-hint" id="task-hint"></p>
+	</div>
+
 	<!-- 3. 备份 & 恢复 -->
 	<div class="cbi-section ou-card" id="card-backup">
 		<div class="ou-card-head">
@@ -406,16 +459,20 @@
 					<span class="ou-step-number">3</span>
 					<label class="ou-step-label" for="cfg-proxy">下载加速代理</label>
 				</div>
-				<p class="ou-field-help">加速 GitHub Releases 固件下载，国内网络环境强烈推荐启用：</p>
+				<p class="ou-field-help">加速 GitHub Releases 固件下载，国内网络环境强烈推荐启用。下列节点均已于 2026-11-10 实测可正常代理文件下载：</p>
 				<div class="ou-input-wrap">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-input-svg"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
 					<input type="text" id="cfg-proxy" class="ou-input-text" placeholder="https://gh.acg2.mom/ (留空直连 GitHub)" spellcheck="false">
 				</div>
 				<div class="ou-proxy-quick-pills">
-					<span class="ou-pill-title">常用推荐:</span>
+					<span class="ou-pill-title">可用节点:</span>
 					<button type="button" class="ou-quick-pill" data-proxy="https://gh.acg2.mom/">gh.acg2.mom</button>
 					<button type="button" class="ou-quick-pill" data-proxy="https://ghfast.top/">ghfast.top</button>
-					<button type="button" class="ou-quick-pill" data-proxy="https://github.moeyy.xyz/">moeyy.xyz</button>
+					<button type="button" class="ou-quick-pill" data-proxy="https://ghproxy.net/">ghproxy.net</button>
+					<button type="button" class="ou-quick-pill" data-proxy="https://gh-proxy.com/">gh-proxy.com</button>
+					<button type="button" class="ou-quick-pill" data-proxy="https://ghproxy.imciel.com/">imciel.com</button>
+					<button type="button" class="ou-quick-pill" data-proxy="https://ghproxy.monkeyray.net/">monkeyray.net</button>
+					<button type="button" class="ou-quick-pill" data-proxy="https://ghproxy.vip/">ghproxy.vip</button>
 					<button type="button" class="ou-quick-pill" data-proxy="">直连 GitHub</button>
 				</div>
 			</div>
@@ -486,6 +543,21 @@
 					<label for="cfg-retries">单块最大重试次数</label>
 					<input type="number" id="cfg-retries" class="ou-input-text" min="1" max="10" step="1" placeholder="3">
 					<p class="ou-field-help">单个分片下载失败后最大自动重试次数，默认 3 次</p>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-minspeed">最低可接受速度 (KB/s)</label>
+					<input type="number" id="cfg-minspeed" class="ou-input-text" min="0" max="10240" step="1" placeholder="32">
+					<p class="ou-field-help">持续低于该速度会自动停止下载并输出原因；0 表示关闭慢速保护，默认 32 KB/s</p>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-slowwin">慢速判定窗口 (秒)</label>
+					<input type="number" id="cfg-slowwin" class="ou-input-text" min="3" max="300" step="1" placeholder="15">
+					<p class="ou-field-help">速度连续低于阈值达到该时长才判定为异常，默认 15 秒</p>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-slowgrace">启动宽限期 (秒)</label>
+					<input type="number" id="cfg-slowgrace" class="ou-input-text" min="0" max="300" step="1" placeholder="10">
+					<p class="ou-field-help">TLS 握手与 TCP 慢启动期间不做慢速判定，默认 10 秒</p>
 				</div>
 			</div>
 		</details>
@@ -581,6 +653,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.3.2"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.4.0"></script>
 
 {% include(`footer`) %}

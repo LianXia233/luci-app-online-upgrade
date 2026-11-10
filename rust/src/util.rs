@@ -1,8 +1,8 @@
 // Standalone backup / restore subcommands (pure sync — run outside the tokio runtime).
 
 use crate::json::Value;
-use crate::status;
 use crate::logline;
+use crate::status;
 use std::process::Command;
 
 fn run(cmd: &str, args: &[&str]) -> Option<String> {
@@ -35,7 +35,9 @@ pub fn backup() -> i32 {
 
     let rc = Command::new("sysupgrade").args(["-b", &tmp]).status();
     let ok = rc.map(|s| s.success()).unwrap_or(false)
-        && std::fs::metadata(&tmp).map(|m| m.len() > 0).unwrap_or(false);
+        && std::fs::metadata(&tmp)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
     if !ok {
         status::set_error("failed", 100, "备份失败", "sysupgrade -b 执行失败");
         print_result(false, "error", "sysupgrade -b 执行失败");
@@ -50,7 +52,8 @@ pub fn backup() -> i32 {
         print_result(false, "error", &msg);
         return 1;
     }
-    let files = run("sh", &["-c", &format!("tar tzf {tmp} 2>/dev/null | wc -l")]).unwrap_or_default();
+    let files =
+        run("sh", &["-c", &format!("tar tzf {tmp} 2>/dev/null | wc -l")]).unwrap_or_default();
     let size = std::fs::metadata(&root).map(|m| m.len()).unwrap_or(0);
     logline!("[backup] 完成 {root} ({files} 个文件)");
     status::set_result(
@@ -60,7 +63,10 @@ pub fn backup() -> i32 {
         Value::Obj(vec![
             ("path".into(), Value::str(&root)),
             ("size".into(), Value::num(size)),
-            ("size_human".into(), Value::str(&crate::github::human_size(size))),
+            (
+                "size_human".into(),
+                Value::str(&crate::github::human_size(size)),
+            ),
             ("files".into(), Value::str(&files)),
         ]),
     );
@@ -70,7 +76,10 @@ pub fn backup() -> i32 {
             ("ok".into(), Value::Bool(true)),
             ("path".into(), Value::str(&root)),
             ("size".into(), Value::num(size)),
-            ("size_human".into(), Value::str(&crate::github::human_size(size))),
+            (
+                "size_human".into(),
+                Value::str(&crate::github::human_size(size))
+            ),
             ("files".into(), Value::str(&files)),
         ])
         .dump()

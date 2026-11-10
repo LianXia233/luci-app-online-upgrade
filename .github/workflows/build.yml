@@ -15,25 +15,38 @@ jobs:
   # upgrade, so the mismatch must fail CI instead of shipping silently.
   verify:
     runs-on: ubuntu-latest
+    # Single source of truth: every later job (tag, release title, package
+    # filename check, release notes) consumes these outputs, so the published
+    # Release can never drift from the version baked into the .apk.
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      pkg_release: ${{ steps.ver.outputs.pkg_release }}
+      tag: ${{ steps.ver.outputs.tag }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Version consistency (Makefile / Cargo.toml / templates)
+        id: ver
         run: |
           set -eu
           pkg_ver=$(sed -n 's/^PKG_VERSION:=//p' Makefile)
+          pkg_rel=$(sed -n 's/^PKG_RELEASE:=//p' Makefile)
           cargo_ver=$(sed -n 's/^version = "\(.*\)"$/\1/p' rust/Cargo.toml)
           tpl="root/usr/share/ucode/luci/template/online-upgrade/main.ut"
           js_ver=$(grep -o 'app\.js?v=[0-9A-Za-z._-]*' "$tpl" | head -1 | sed 's/.*v=/v/')
           css_ver=$(grep -o 'style.css?v=[0-9A-Za-z._-]*' "$tpl" | head -1 | sed 's/.*v=/v/')
-          echo "PKG_VERSION=$pkg_ver Cargo=$cargo_ver app.js=$js_ver style.css=$css_ver"
+          echo "PKG_VERSION=$pkg_ver PKG_RELEASE=$pkg_rel Cargo=$cargo_ver app.js=$js_ver style.css=$css_ver"
           fail=0
           [ -n "$pkg_ver" ] || { echo "PKG_VERSION 为空" >&2; fail=1; }
+          case "$pkg_rel" in ''|*[!0-9]*) echo "PKG_RELEASE 非法或为空: '$pkg_rel'" >&2; fail=1 ;; esac
           [ "$pkg_ver" = "$cargo_ver" ] || { echo "rust/Cargo.toml 版本与 PKG_VERSION 不一致" >&2; fail=1; }
           [ "v$pkg_ver" = "$js_ver" ] || { echo "main.ut 中 app.js?v= 与 PKG_VERSION 不一致" >&2; fail=1; }
           [ "v$pkg_ver" = "$css_ver" ] || { echo "main.ut 中 style.css?v= 与 PKG_VERSION 不一致" >&2; fail=1; }
-          exit $fail
+          [ "$fail" -eq 0 ] || exit 1
+          echo "version=$pkg_ver" >> "$GITHUB_OUTPUT"
+          echo "pkg_release=$pkg_rel" >> "$GITHUB_OUTPUT"
+          echo "tag=v$pkg_ver" >> "$GITHUB_OUTPUT"
 
   # ---------- 1. Rust backend: cross-compile both targets ----------
   rust:
@@ -149,8 +162,15 @@ jobs:
   # ---------- 3. Release ----------
   release:
     runs-on: ubuntu-latest
-    needs: package
+    # verify supplies the version; package supplies the .apk files. Both the
+    # tag and the release title come from PKG_VERSION, never from run_number.
+    needs: [verify, package]
     steps:
+      - name: Checkout source (CHANGELOG drives the release notes)
+        uses: actions/checkout@v4
+        with:
+          path: src
+
       - name: Download all package artifacts
         uses: actions/download-artifact@v4
         with:
@@ -158,18 +178,84 @@ jobs:
           merge-multiple: true
           path: /tmp/pkgs
 
+      - name: Verify package filenames match PKG_VERSION / PKG_RELEASE
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          RELEASE: ${{ needs.verify.outputs.pkg_release }}
+        run: |
+          set -eu
+          ls -lh /tmp/pkgs/
+          prefix="luci-app-online-upgrade-${VERSION}-r${RELEASE}_"
+          found=0
+          for f in /tmp/pkgs/*; do
+            [ -f "$f" ] || continue
+            case "$(basename "$f")" in
+              "$prefix"*) found=$((found + 1)) ;;
+              *) echo "产物版本与 Makefile 不一致: $(basename "$f") (期望前缀 $prefix)" >&2; exit 1 ;;
+            esac
+          done
+          [ "$found" -gt 0 ] || { echo "没有找到任何安装包产物" >&2; exit 1; }
+          echo "版本校验通过: $found 个产物均为 ${VERSION}-r${RELEASE}"
+
+      - name: Build release notes from CHANGELOG
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          RELEASE: ${{ needs.verify.outputs.pkg_release }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import os
+          import re
+
+          version = os.environ["VERSION"]
+          release = os.environ["RELEASE"]
+          tag = os.environ["TAG"]
+          with open("src/CHANGELOG.md", encoding="utf-8") as fh:
+              text = fh.read()
+          pattern = r"^## \[" + re.escape(version) + r"\][^\n]*\n(.*?)(?=^## \[|\Z)"
+          match = re.search(pattern, text, re.M | re.S)
+          section = match.group(1).strip() if match else "_CHANGELOG 中未找到该版本条目，请补充。_"
+          header = (
+              "## luci-app-online-upgrade " + tag + "\n\n"
+              "发布标签与安装包版本统一由 `Makefile` 的 `PKG_VERSION=" + version
+              + "` / `PKG_RELEASE=" + release + "` 派生；本 Release 的产物为 "
+              "`luci-app-online-upgrade-" + version + "-r" + release
+              + "_<arch>.apk`。\n\n"
+              "适用 ImmortalWrt 25.12+ / OpenWrt 25+（apk 包管理器），提供 "
+              "`aarch64_cortex-a53`（mediatek/filogic）与 `x86_64` 两个架构。\n\n"
+              "---\n\n"
+              "### 更新日志（同步自 CHANGELOG.md [" + version + "]）\n\n"
+          )
+          with open("/tmp/release-notes.md", "w", encoding="utf-8") as fh:
+              fh.write(header + section + "\n")
+          print(open("/tmp/release-notes.md", encoding="utf-8").read()[:500])
+          PY
+
+      - name: Drop stale assets on re-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -eu
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' > /tmp/old-assets.txt || true
+            while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
+              echo "删除旧产物: $asset"
+              gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" -y || true
+            done < /tmp/old-assets.txt
+          else
+            echo "首次发布 $TAG，无需清理旧产物"
+          fi
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.${{ github.run_number }}
-          name: v2.0.${{ github.run_number }}
-          body: |
-            luci-app-online-upgrade v2 (Rust backend)
-
-            - Tokio 多线程分段下载内核
-            - ucode rpcd 后端 + 原生 JS/CSS 前端(零 Lua)
-            - .apk (apk) — 适用于 ImmortalWrt 25.12+ / SNAPSHOT
-              - mediatek/filogic (aarch64) 与 x86/64 两个架构
+          tag_name: ${{ needs.verify.outputs.tag }}
+          name: v${{ needs.verify.outputs.version }}
+          body_path: /tmp/release-notes.md
           files: /tmp/pkgs/*
           token: ${{ github.token }}
           make_latest: true

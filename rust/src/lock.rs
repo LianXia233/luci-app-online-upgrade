@@ -62,7 +62,11 @@ fn lock_age_secs() -> Option<u64> {
 /// status file: the process that owns the lock is the one reporting progress.
 pub fn acquire(owner: &str) -> Result<Lock, String> {
     for attempt in 0..2 {
-        match OpenOptions::new().write(true).create_new(true).open(LOCK_FILE) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(LOCK_FILE)
+        {
             Ok(mut f) => {
                 let _ = writeln!(f, "{} {} {}", std::process::id(), owner, now());
                 let _ = f.flush();

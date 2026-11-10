@@ -524,6 +524,7 @@
 		check_done: '检测完成',
 		check_failed: '检测失败',
 		downloading: '正在下载固件...',
+		paused: '下载已暂停，点击「继续」恢复',
 		downloaded: '固件下载完成',
 		saving: '记录固件版本...',
 		backing_up: '正在创建配置备份...',
@@ -566,6 +567,7 @@
 	function pollUpgrade() {
 		stopPoll();
 		var skipped = 0;
+		var ticks = 0;
 		function tick() {
 			Promise.all([ubus('get_status'), ubus('get_log')]).then(function (rs) {
 				var st = rs[0], lg = rs[1];
@@ -587,6 +589,8 @@
 					lv.scrollTop = lv.scrollHeight;
 				}
 				renderProgress(st);
+				ticks++;
+				if (ticks % 3 === 0) refreshTasks();
 				if (st.stage === 'flashing') {
 					showRebootOverlay();
 				} else if (st.stage === 'failed') {
@@ -594,7 +598,11 @@
 					setBusy('btn-check', false, '检查更新');
 					showBtn('btn-force', true);
 					$('card-progress').style.display = 'none';
-					hint('check-result', '升级失败: ' + (st.error || '未知错误'), 'err');
+					hint('check-result', '操作失败: ' + (st.error || '未知错误'), 'err');
+					// Surface the stop reason (slow-speed evidence, cancel, ...)
+					// in the task card as well and refresh the final history state.
+					if (st.error) hint('task-hint', ' ' + st.error, 'err');
+					refreshTasks();
 				}
 			}).catch(function () { /* keep polling; device may reboot mid-poll */ });
 		}
@@ -651,6 +659,124 @@
 			setBusy('btn-upgrade', false, '立即升级');
 			setBusy('btn-force', false, forceLabel());
 			hint('check-result', '升级请求失败: ' + e.message, 'err');
+		});
+	}
+
+	/* ---------------- download tasks ---------------- */
+
+	var taskTimer = null;
+	var taskActive = null;
+
+	function taskStateLabel(s) {
+		var m = {
+			running: '下载中', paused: '已暂停', done: '已完成',
+			failed: '失败', aborted: '已停止'
+		};
+		return m[s] || s || '未知';
+	}
+
+	function fmtSpeed(bps) {
+		var n = Number(bps || 0);
+		if (n <= 0) return '—';
+		if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB/s';
+		return (n / 1024).toFixed(1) + ' KB/s';
+	}
+
+	function syncTaskButtons(active) {
+		var busy = !!active;
+		setBusy('btn-start-download', busy, '开始下载');
+		setBusy('btn-pause-download', active !== 'running', '暂停');
+		setBusy('btn-resume-download', active !== 'paused', '继续');
+		setBusy('btn-cancel-download', !busy, '取消');
+	}
+
+	function renderTasks(list) {
+		var tbody = $('task-table').querySelector('tbody');
+		tbody.innerHTML = '';
+		var active = null;
+		(list || []).forEach(function (t) {
+			if (t.state === 'running' || t.state === 'paused') active = t.state;
+			var pct = t.total > 0 ? Math.min(100, Math.round(t.done / t.total * 100)) : 0;
+			var progress = (t.state === 'running' || t.state === 'paused')
+				? (pct + '% · ' + fmtSize(t.done) + ' / ' + fmtSize(t.total))
+				: (pct + '% · ' + fmtSize(t.done));
+			var tr = document.createElement('tr');
+			tr.innerHTML = '<td><div class="ou-file-cell"><span class="ou-file-text">' + esc(t.name) + '</span></div></td>' +
+				'<td><span class="ou-badge-size">' + esc(taskStateLabel(t.state)) + ' · ' + esc(progress) + '</span></td>' +
+				'<td><span class="ou-time-text">' + esc(fmtSpeed(t.speed_bps)) + '</span></td>' +
+				'<td><span class="ou-time-text">' + esc(t.reason || '—') + '</span></td>' +
+				'<td style="text-align:right"><button type="button" class="btn ou-btn ou-btn-danger ou-task-del" data-id="' + esc(t.id) + '"><span>删除</span></button></td>';
+			tr.querySelector('.ou-task-del').addEventListener('click', function () { deleteTask(t.id, t.state); });
+			tbody.appendChild(tr);
+		});
+		if (!list || !list.length) {
+			tbody.innerHTML = '<tr><td colspan="5" class="ou-empty">暂无下载任务</td></tr>';
+		}
+		taskActive = active;
+		syncTaskButtons(active);
+		// Poll only while a task is actually running/paused: a stopped or empty
+		// history must not keep spawning a CLI process every few seconds.
+		if (active && !taskTimer) {
+			taskTimer = setInterval(refreshTasks, 3000);
+		} else if (!active && taskTimer) {
+			clearInterval(taskTimer);
+			taskTimer = null;
+		}
+	}
+
+	function refreshTasks() {
+		return ubus('list_tasks').then(function (r) {
+			renderTasks(r && r.tasks ? r.tasks : []);
+		}).catch(function (e) {
+			hint('task-hint', ' 任务列表读取失败: ' + e.message, 'err');
+		});
+	}
+
+	function taskCommand(method, label) {
+		return ubus(method).then(function (r) {
+			if (r && r.ok === false) hint('task-hint', ' ' + (r.error || (label + '失败')), 'err');
+			else hint('task-hint', ' ' + label + '已生效', 'ok');
+			return refreshTasks();
+		}).catch(function (e) {
+			hint('task-hint', ' ' + label + '请求失败: ' + e.message, 'err');
+		});
+	}
+
+	function startDownload() {
+		setBusy('btn-start-download', true, '启动中...');
+		snapshotStatus().then(function () {
+			pollFilter = true;
+			return ubus('start_download');
+		}).then(function (r) {
+			if (r && r.ok === false) {
+				hint('task-hint', ' ' + (r.error || '下载未能启动'), 'err');
+				return refreshTasks();
+			}
+			hint('task-hint', ' 下载任务已启动', 'ok');
+			$('card-progress').style.display = '';
+			pollUpgrade();
+			return refreshTasks();
+		}).catch(function (e) {
+			hint('task-hint', ' 启动下载失败: ' + e.message, 'err');
+			return refreshTasks();
+		});
+	}
+
+	function deleteTask(id, state) {
+		var busy = (state === 'running' || state === 'paused');
+		var extra = busy ? '\n\n该任务仍在进行中，请先点击「取消」停止后再删除。' : '';
+		if (!confirm('确定删除该下载历史任务?\n\n' + id + extra +
+			'\n\n删除后不可恢复；若已无「已完成」记录，会一并清理临时固件文件。')) return;
+		ubus('delete_task', { id: id }).then(function (r) {
+			if (r && r.ok) {
+				hint('task-hint', ' 已删除任务 ' + id +
+					(r.files_removed ? '（清理 ' + r.files_removed + ' 个临时文件）' : ''), 'ok');
+			} else {
+				hint('task-hint', ' ' + (r && r.error ? r.error : '删除失败'), 'err');
+			}
+			return refreshTasks();
+		}).catch(function (e) {
+			hint('task-hint', ' 删除失败: ' + e.message, 'err');
 		});
 	}
 
@@ -809,6 +935,15 @@
 		$('cfg-chunk').value = settings.dl_chunk_mb || '4';
 		$('cfg-stall').value = settings.dl_stall_sec || '30';
 		$('cfg-retries').value = settings.dl_retries || '3';
+		// 0 is a valid value for the slow-speed guard (disable / no grace), so
+		// it must not be replaced by the default with `||`.
+		[['cfg-minspeed', settings.dl_min_speed_kb, '32'],
+		 ['cfg-slowwin', settings.dl_slow_window_sec, '15'],
+		 ['cfg-slowgrace', settings.dl_slow_grace_sec, '10']].forEach(function (f) {
+			if ($(f[0])) {
+				$(f[0]).value = (f[1] == null || f[1] === '') ? f[2] : f[1];
+			}
+		});
 		if ($('cfg-expected-sha256')) {
 			$('cfg-expected-sha256').value = settings.expected_sha256 || '';
 		}
@@ -994,10 +1129,13 @@
 		};
 		[['dl_workers', 'cfg-workers'], ['dl_chunk_mb', 'cfg-chunk'],
 		 ['dl_stall_sec', 'cfg-stall'], ['dl_retries', 'cfg-retries'],
-		 ['min_size_mb', 'cfg-minsize']].forEach(function (f) {
-			var v = parseInt($(f[1]).value, 10);
-			if (!isNaN(v)) cfg[f[0]] = v;
-		});
+		 ['min_size_mb', 'cfg-minsize'], ['dl_min_speed_kb', 'cfg-minspeed'],
+		 ['dl_slow_window_sec', 'cfg-slowwin'], ['dl_slow_grace_sec', 'cfg-slowgrace']]
+			.forEach(function (f) {
+				if (!$(f[1])) return;
+				var v = parseInt($(f[1]).value, 10);
+				if (!isNaN(v)) cfg[f[0]] = v;
+			});
 		ubus('set_config', cfg).then(function (r) {
 			if (r && r.ok) {
 				hint('config-hint', ' 配置已保存', 'ok');
@@ -1080,6 +1218,10 @@
 		$('btn-save-config').addEventListener('click', saveConfig);
 		$('btn-refresh-log').addEventListener('click', refreshLog);
 		$('btn-clear-log').addEventListener('click', clearLog);
+		$('btn-start-download').addEventListener('click', startDownload);
+		$('btn-pause-download').addEventListener('click', function () { taskCommand('pause_download', '暂停'); });
+		$('btn-resume-download').addEventListener('click', function () { taskCommand('resume_download', '继续'); });
+		$('btn-cancel-download').addEventListener('click', function () { taskCommand('cancel_download', '取消'); });
 		$('btn-reload').addEventListener('click', function () { location.reload(); });
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {
@@ -1096,6 +1238,7 @@
 			hint('config-hint', ' 读取配置失败: ' + e.message, 'err');
 		});
 		refreshBackups();
+		refreshTasks();
 
 		// resume UI if an operation is already running (e.g. page reloaded mid-upgrade)
 		ubus('get_status').then(function (st) {
@@ -1104,7 +1247,8 @@
 				return;
 			}
 			if (st.stage === 'flashing') { showRebootOverlay(); return; }
-			if (st.stage === 'downloading' || st.stage === 'downloaded' || st.stage === 'saving' || st.stage === 'backing_up' || st.stage === 'backup_done') {
+			if (st.stage === 'downloading' || st.stage === 'paused' || st.stage === 'downloaded' ||
+				st.stage === 'saving' || st.stage === 'backing_up' || st.stage === 'backup_done') {
 				renderProgress(st);
 				pollUpgrade();
 			}

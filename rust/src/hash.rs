@@ -15,7 +15,11 @@ pub fn sha256_file(path: &str) -> Result<String, String> {
         ctx.update(&buf[..n]);
     }
     let digest = ctx.finish();
-    let hex: String = digest.as_ref().iter().map(|b| format!("{:02x}", b)).collect();
+    let hex: String = digest
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
     Ok(hex)
 }
 
@@ -73,14 +77,20 @@ mod tests {
     fn test_find_sha256() {
         let content = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 *H5000M-.-sysupgrade.bin\n1111111111111111111111111111111111111111111111111111111111111111 other.bin";
         let h = find_sha256_in_text(content, "H5000M-.-sysupgrade.bin");
-        assert_eq!(h, Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into()));
+        assert_eq!(
+            h,
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into())
+        );
     }
 
     #[test]
     fn test_single_sha256() {
         let content = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n";
         let h = extract_single_sha256(content);
-        assert_eq!(h, Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into()));
+        assert_eq!(
+            h,
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into())
+        );
     }
 
     #[test]

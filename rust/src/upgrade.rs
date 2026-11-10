@@ -2,21 +2,30 @@
 // verify SHA256 + image integrity → record version → backup → package list →
 // sysupgrade.
 
-use crate::downloader;
+use crate::downloader::{self, DownloadError};
 use crate::github::{self, Cfg};
 use crate::json::Value;
 use crate::logline;
 use crate::status;
+use crate::taskctl::{
+    DownloadControl, RunState, StopReason, Task, TaskStore, ST_ABORTED, ST_DONE, ST_FAILED,
+    ST_PAUSED, ST_RUNNING,
+};
 use crate::uci;
 use std::io::Write;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 const TMP_FIRMWARE: &str = "/tmp/firmware.img.gz";
 const TMP_FIRMWARE_TS: &str = "/tmp/firmware.img.gz.ts";
 const TMP_FIRMWARE_PARTS: &str = "/tmp/firmware.img.gz.parts.json";
 const PKG_LIST: &str = "/root/.pkg-list.txt";
-const AUTO_REINSTALL_SCRIPT: &str = include_str!("../../root/etc/uci-defaults/90-online-upgrade-auto");
+const AUTO_REINSTALL_SCRIPT: &str =
+    include_str!("../../root/etc/uci-defaults/90-online-upgrade-auto");
 const UCI_DEFAULTS_AUTO: &str = "/etc/uci-defaults/90-online-upgrade-auto";
 
 fn sh(cmd: &str, args: &[&str]) -> Option<String> {
@@ -34,6 +43,158 @@ fn now_stamp() -> String {
 
 fn full_url(cfg: &Cfg, url: &str) -> String {
     github::prefixed(&cfg.proxy, url)
+}
+
+/// Shared progress callback handed to the downloader.
+type ProgressFn = Arc<dyn Fn(u64, u64) + Send + Sync>;
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Apply a change to one history entry and persist it atomically.
+fn task_update(id: &str, f: impl FnOnce(&mut Task)) {
+    let mut store = TaskStore::open();
+    if let Some(t) = store.get_mut(id) {
+        f(t);
+    }
+    let _ = store.save();
+}
+
+/// Record a terminal task state (done / failed / aborted).
+fn task_finish(id: &str, state: &str, reason: &str, done: u64, speed: u64) {
+    task_update(id, |t| {
+        t.done = done;
+        t.speed_bps = speed;
+        t.finish(state, reason);
+    });
+}
+
+/// Write a download stop to the status file, the log and the task history.
+/// A slow-speed abort gets its own headline and keeps the measured evidence in
+/// the log, so the reason is never reduced to a generic "download failed".
+fn report_download_stop(
+    err: &DownloadError,
+    task_id: Option<&str>,
+    control: Option<&DownloadControl>,
+    done: u64,
+) {
+    let msg = err.message();
+    let (headline, state) = match err {
+        DownloadError::Stopped(StopReason::Slow {
+            bps,
+            min_bps,
+            window_secs,
+            ..
+        }) => {
+            logline!(
+                "[download] 慢速保护触发: 实测 {} B/s, 阈值 {} B/s, 窗口 {}s",
+                bps,
+                min_bps,
+                window_secs
+            );
+            logline!(
+                "[download] 建议切换加速节点后重试: {}",
+                github::MIRRORS.join(" / ")
+            );
+            ("下载速度异常缓慢，已自动停止", ST_ABORTED)
+        }
+        DownloadError::Stopped(_) => ("下载已取消", ST_ABORTED),
+        DownloadError::Other(_) => ("固件下载失败", ST_FAILED),
+    };
+    status::set_error("failed", 100, headline, &msg);
+    logline!("[download] {headline}: {msg}");
+    if let Some(id) = task_id {
+        let speed = control.map(DownloadControl::current_speed).unwrap_or(0);
+        task_finish(id, state, &msg, done, speed);
+    }
+}
+
+/// Mirror Tokio watch state into the status file and the history entry.
+/// Progress writes are left to the downloader's reporter; this task only
+/// handles the pause / resume transitions (which produce no byte progress).
+fn spawn_state_reporter(mut rx: watch::Receiver<RunState>, task_id: String) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            if rx.changed().await.is_err() {
+                return;
+            }
+            // Bind the cloned state first: `watch::Ref` is !Send and must not
+            // be held across an await inside this spawned future.
+            let st = rx.borrow_and_update().clone();
+            match st {
+                RunState::Paused => {
+                    let id = task_id.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let pct = status::read()
+                            .get("pct")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                        status::set("paused", pct, "下载已暂停，点击「继续」恢复");
+                        task_update(&id, |t| t.state = ST_PAUSED.to_string());
+                    })
+                    .await;
+                }
+                RunState::Running => {
+                    let id = task_id.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        task_update(&id, |t| t.state = ST_RUNNING.to_string());
+                    })
+                    .await;
+                }
+                RunState::Stopped(_) => return,
+            }
+        }
+    })
+}
+
+/// Build a progress callback that shows live throughput and throttles history
+/// writes to once every 5 seconds (the history lives on flash).
+fn progress_reporter(
+    total_hint: u64,
+    control: &DownloadControl,
+    task_id: &str,
+) -> (ProgressFn, Arc<AtomicU64>) {
+    let speed = control.speed();
+    let last_hist = Arc::new(AtomicU64::new(0));
+    let last_done = Arc::new(AtomicU64::new(0));
+    let hist_id = task_id.to_string();
+    let hist_ts = Arc::clone(&last_hist);
+    let done_ref = Arc::clone(&last_done);
+    let bps_ref = Arc::clone(&speed);
+    let report: ProgressFn = Arc::new(move |done: u64, total: u64| {
+        let total_eff = if total > 0 { total } else { total_hint };
+        let pct = if total_eff > 0 {
+            5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
+        } else {
+            5
+        };
+        let bps = bps_ref.load(Ordering::Relaxed);
+        done_ref.store(done, Ordering::Relaxed);
+        status::set(
+            "downloading",
+            pct,
+            &format!(
+                "正在下载固件... {:.1}/{:.1} MB · {:.1} KB/s",
+                done as f64 / 1048576.0,
+                total_eff as f64 / 1048576.0,
+                bps as f64 / 1024.0
+            ),
+        );
+        let now = unix_now();
+        if now.saturating_sub(hist_ts.load(Ordering::Relaxed)) >= 5 {
+            hist_ts.store(now, Ordering::Relaxed);
+            task_update(&hist_id, |t| {
+                t.done = done;
+                t.total = total_eff;
+                t.speed_bps = bps;
+            });
+        }
+    });
+    (report, last_done)
 }
 
 /// Remove every artefact of a download attempt (firmware, timestamp marker and
@@ -119,31 +280,43 @@ struct Integrity {
 /// Try the configured proxy route first, then GitHub's API asset endpoint.
 /// `browser_download_url` is served by github.com's web frontend, which can
 /// return 504 while the API + release-assets CDN path still serves the file.
+///
+/// Only route-level failures fall through to the next URL. A user cancel or a
+/// slow-speed abort is terminal for the whole task and must not be masked by a
+/// silent retry on a different mirror.
 async fn fetch_firmware(
     client: &reqwest::Client,
     asset: &Asset,
     out: &str,
-    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
-) -> Result<downloader::Downloaded, String> {
+    report: ProgressFn,
+    control: &DownloadControl,
+) -> Result<downloader::Downloaded, DownloadError> {
     let mut candidates = vec![full_url(&github::load_cfg(), &asset.url)];
     if !asset.api_url.is_empty() {
         candidates.push(asset.api_url.clone());
     }
-    let mut last = String::from("没有可用的下载地址");
+    let mut last = DownloadError::Other("没有可用的下载地址".to_string());
     for (i, url) in candidates.iter().enumerate() {
         if i > 0 {
-            logline!("[download] 上一线路失败({last}),回退到 GitHub API 资产直链");
+            logline!(
+                "[download] 上一线路失败({}),回退到 GitHub API 资产直链",
+                last.message()
+            );
             // the sidecar is keyed by URL, but a half-written file from another
             // route must not be mistaken for resumable progress
             let _ = std::fs::remove_file(out);
             let _ = std::fs::remove_file(format!("{out}.parts.json"));
         }
-        // byte-slicing can panic on a non-ASCII URL (e.g. a custom proxy host)
-        let shown = url.get(..url.len().min(90)).unwrap_or(url);
+        let shown = downloader::short_url(url);
         logline!("[download] 线路{}: {}", i + 1, shown);
-        match downloader::download(client, url, out, report.clone()).await {
+        match downloader::download(client, url, out, report.clone(), control).await {
             Ok(d) => return Ok(d),
-            Err(e) => last = e,
+            Err(e) => {
+                if !e.is_route_failure() {
+                    return Err(e);
+                }
+                last = e;
+            }
         }
     }
     Err(last)
@@ -239,7 +412,10 @@ fn verify_firmware_integrity(
     let (expected, source) = if !manual_expected.is_empty() {
         (manual_expected, "config")
     } else {
-        (asset.sha256.trim().to_lowercase(), asset.sha256_source.as_str())
+        (
+            asset.sha256.trim().to_lowercase(),
+            asset.sha256_source.as_str(),
+        )
     };
 
     let verified = if !expected.is_empty() {
@@ -295,6 +471,8 @@ pub async fn download_only() -> i32 {
     let total: u64;
     let mut segments = 0usize;
     let mut resumed_chunks = 0usize;
+    let task_id: Option<String>;
+    let mut control: Option<DownloadControl> = None;
     if reuse_download(&asset.updated, asset.size) {
         // A leftover file is reused only when its marker carries the hash of
         // the completed bytes; the hash is re-checked below either way.
@@ -307,32 +485,47 @@ pub async fn download_only() -> i32 {
             github::human_size(total)
         );
         status::set("verifying", 90, "复用已下载固件,正在重新校验...");
+        // A re-used download is still a task the user can see and delete.
+        let mut store = TaskStore::open();
+        let mut t = Task::new(
+            &asset.name,
+            &full_url(&github::load_cfg(), &asset.url),
+            total,
+        );
+        t.done = total;
+        t.finish(ST_DONE, "复用上一轮已校验固件");
+        task_id = Some(t.id.clone());
+        store.upsert(t);
+        let _ = store.save();
     } else {
         // Do not wipe the firmware + sidecar here: load_parts() already rejects
         // a sidecar whose url/etag/total/chunk grid no longer matches, and a
         // surviving sidecar is exactly what makes a download interrupted in a
         // previous process resumable. Wiping it forced every restart to begin
         // from byte 0.
+        let ctl = match DownloadControl::start() {
+            Ok(c) => c,
+            Err(e) => {
+                status::set_error("failed", 100, "无法启动下载任务", &e);
+                logline!("[download] control init failed: {e}");
+                return 1;
+            }
+        };
+        let mut store = TaskStore::open();
+        let t = Task::new(
+            &asset.name,
+            &full_url(&github::load_cfg(), &asset.url),
+            asset.size,
+        );
+        let id = t.id.clone();
+        store.upsert(t);
+        let _ = store.save();
+        task_id = Some(id.clone());
+        let state_reporter = spawn_state_reporter(ctl.rx(), id.clone());
+
         status::set("downloading", 5, "正在下载固件...");
-        let total_hint = asset.size;
-        let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
-            let total_eff = if total > 0 { total } else { total_hint };
-            let pct = if total_eff > 0 {
-                5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
-            } else {
-                5
-            };
-            status::set(
-                "downloading",
-                pct,
-                &format!(
-                    "正在下载固件... {:.1}/{:.1} MB",
-                    done as f64 / 1048576.0,
-                    total_eff as f64 / 1048576.0
-                ),
-            );
-        });
-        match fetch_firmware(&client, &asset, TMP_FIRMWARE, report).await {
+        let (report, last_done) = progress_reporter(asset.size, &ctl, &id);
+        match fetch_firmware(&client, &asset, TMP_FIRMWARE, report, &ctl).await {
             Ok(d) => {
                 total = d.total;
                 segments = d.segments;
@@ -345,24 +538,47 @@ pub async fn download_only() -> i32 {
                 );
             }
             Err(e) => {
-                status::set_error("failed", 100, "固件下载失败", &e);
-                logline!("[download] failed: {e}");
+                state_reporter.abort();
+                report_download_stop(
+                    &e,
+                    task_id.as_deref(),
+                    Some(&ctl),
+                    last_done.load(Ordering::Relaxed),
+                );
                 // keep whatever the downloader judged resumable
                 return 1;
             }
         }
+        state_reporter.abort();
+        control = Some(ctl);
     }
 
     let integrity = match verify_firmware_integrity(&device, &asset, false) {
         Ok(i) => i,
         Err(e) => {
             status::set_error("failed", 100, "固件校验或兼容性预检失败", &e);
+            if let Some(id) = &task_id {
+                task_finish(id, ST_FAILED, &e, total, 0);
+            }
             return 1;
         }
     };
     // Marker is written only after verification: it advertises "this file
     // passed the hash gate", which is what makes reuse safe next time.
     write_download_marker(&asset.updated, &integrity.sha256);
+    if let Some(id) = &task_id {
+        let speed = control
+            .as_ref()
+            .map(DownloadControl::current_speed)
+            .unwrap_or(0);
+        task_update(id, |t| {
+            if t.state != ST_DONE {
+                t.done = total;
+                t.speed_bps = speed;
+                t.finish(ST_DONE, "");
+            }
+        });
+    }
     let compat = crate::compat::evaluate_asset(&device, &asset.name);
     let msg = if integrity.verified {
         "固件下载完成,SHA256 校验一致(未执行任何升级操作)"
@@ -376,10 +592,7 @@ pub async fn download_only() -> i32 {
         Value::Obj(vec![
             ("firmware".into(), Value::str(&asset.name)),
             ("size".into(), Value::num(total)),
-            (
-                "size_human".into(),
-                Value::str(&github::human_size(total)),
-            ),
+            ("size_human".into(), Value::str(&github::human_size(total))),
             ("sha256".into(), Value::str(&integrity.sha256)),
             ("verified".into(), Value::Bool(integrity.verified)),
             ("hash_source".into(), Value::str(&integrity.source)),
@@ -388,7 +601,10 @@ pub async fn download_only() -> i32 {
             ("relation".into(), Value::str(&asset.relation)),
             ("segments".into(), Value::num(segments as u64)),
             ("resumed_chunks".into(), Value::num(resumed_chunks as u64)),
-            ("reused".into(), Value::Bool(resumed_chunks == 0 && segments == 0)),
+            (
+                "reused".into(),
+                Value::Bool(resumed_chunks == 0 && segments == 0),
+            ),
             ("compatibility".into(), compat.to_json()),
             ("dry_run".into(), Value::Bool(true)),
         ]),
@@ -468,32 +684,33 @@ pub async fn run(force: bool) -> i32 {
     // Reuse is gated on the marker's recorded hash (see reuse_download); the
     // verification below runs in both branches, so a reused file still has to
     // match the expected checksum before anything touches flash.
+    let task_id: Option<String>;
+    let mut control: Option<DownloadControl> = None;
     if reuse_download(&updated, size_hint) {
         logline!("[upgrade] 复用上一轮已校验的固件副本,跳过传输({})", name);
         status::set("downloaded", 90, "复用已下载固件,正在重新校验...");
+        task_id = None;
     } else {
         // See download_only(): the sidecar is what enables resume across
         // processes, and load_parts() already validates it.
+        let ctl = match DownloadControl::start() {
+            Ok(c) => c,
+            Err(e) => {
+                status::set_error("failed", 100, "无法启动下载任务", &e);
+                return 1;
+            }
+        };
+        let mut store = TaskStore::open();
+        let t = Task::new(&name, &full_url(&github::load_cfg(), &asset.url), size_hint);
+        let id = t.id.clone();
+        store.upsert(t);
+        let _ = store.save();
+        task_id = Some(id.clone());
+        let state_reporter = spawn_state_reporter(ctl.rx(), id.clone());
+
         status::set("downloading", 5, "正在下载固件...");
-        let total_hint = size_hint;
-        let report: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done: u64, total: u64| {
-            let total_eff = if total > 0 { total } else { total_hint };
-            let pct = if total_eff > 0 {
-                5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
-            } else {
-                5
-            };
-            status::set(
-                "downloading",
-                pct,
-                &format!(
-                    "正在下载固件... {:.1}/{:.1} MB",
-                    done as f64 / 1048576.0,
-                    total_eff as f64 / 1048576.0
-                ),
-            );
-        });
-        match fetch_firmware(&client, &asset, TMP_FIRMWARE, report).await {
+        let (report, last_done) = progress_reporter(size_hint, &ctl, &id);
+        match fetch_firmware(&client, &asset, TMP_FIRMWARE, report, &ctl).await {
             Ok(d) => {
                 logline!(
                     "[upgrade] 下载完成 {} (分段 {} 并发, 续传 {} 块)",
@@ -504,12 +721,19 @@ pub async fn run(force: bool) -> i32 {
                 status::set("downloaded", 90, "固件下载完成");
             }
             Err(e) => {
-                status::set_error("failed", 100, "固件下载失败", &e);
-                logline!("[upgrade] download failed: {e}");
+                state_reporter.abort();
+                report_download_stop(
+                    &e,
+                    task_id.as_deref(),
+                    Some(&ctl),
+                    last_done.load(Ordering::Relaxed),
+                );
                 // keep whatever the downloader judged resumable
                 return 1;
             }
         }
+        state_reporter.abort();
+        control = Some(ctl);
     }
 
     // ---- Step 1.5: verify SHA256 checksum and image integrity ----
@@ -517,9 +741,19 @@ pub async fn run(force: bool) -> i32 {
         Ok(i) => i,
         Err(e) => {
             status::set_error("failed", 100, "固件校验或预检失败", &e);
+            if let Some(id) = &task_id {
+                task_finish(id, ST_FAILED, &e, 0, 0);
+            }
             return 1;
         }
     };
+    if let Some(id) = &task_id {
+        let speed = control
+            .as_ref()
+            .map(DownloadControl::current_speed)
+            .unwrap_or(0);
+        task_finish(id, ST_DONE, "", size_hint, speed);
+    }
     logline!(
         "[upgrade] 校验结果: verified={} source={} sha256={}",
         integrity.verified,
@@ -552,10 +786,7 @@ pub async fn run(force: bool) -> i32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(
-            UCI_DEFAULTS_AUTO,
-            std::fs::Permissions::from_mode(0o755),
-        );
+        let _ = std::fs::set_permissions(UCI_DEFAULTS_AUTO, std::fs::Permissions::from_mode(0o755));
     }
     let stamp = now_stamp();
     let backup_tmp = format!("/tmp/pre-upgrade-backup-{stamp}.tar.gz");
@@ -649,6 +880,10 @@ pub async fn run(force: bool) -> i32 {
 }
 
 fn which(cmd: &str) -> bool {
-    sh("sh", &["-c", &format!("command -v {cmd} >/dev/null 2>&1 && echo y")]).as_deref()
+    sh(
+        "sh",
+        &["-c", &format!("command -v {cmd} >/dev/null 2>&1 && echo y")],
+    )
+    .as_deref()
         == Some("y")
 }

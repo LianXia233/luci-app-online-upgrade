@@ -223,7 +223,10 @@ mod tests {
     #[test]
     fn self_build_dated_tag() {
         assert_eq!(picked("自用-26.11.07").as_deref(), Some("26.11.07"));
-        assert_eq!(picked("MyBuild-2026.11.07-1200").as_deref(), Some("2026.11.07"));
+        assert_eq!(
+            picked("MyBuild-2026.11.07-1200").as_deref(),
+            Some("2026.11.07")
+        );
         assert_eq!(picked("自用构建"), None);
     }
 

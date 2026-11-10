@@ -15,6 +15,22 @@ use std::time::Duration;
 pub const DEFAULT_TAG: &str = "latest"; // neutral mode default, not a source
 pub const DEFAULT_PROXY: &str = "https://gh.acg2.mom/";
 
+/// URL-prefix GitHub mirrors offered as quick-picks in the LuCI UI and
+/// suggested in the slow-speed abort log. Every entry was probed on
+/// 2026-11-10: each returned the exact same 709-byte payload
+/// (SHA-256 prefix `b96903f063dd`) for both raw.githubusercontent.com and
+/// github.com/.../raw/... targets. The previously configured
+/// `github.moeyy.xyz` no longer resolves and has been removed.
+pub const MIRRORS: &[&str] = &[
+    DEFAULT_PROXY,
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+    "https://gh-proxy.com/",
+    "https://ghproxy.imciel.com/",
+    "https://ghproxy.monkeyray.net/",
+    "https://ghproxy.vip/",
+];
+
 pub struct Cfg {
     pub repo: String,
     pub tag: String,
@@ -159,12 +175,7 @@ async fn fetch_text(client: &reqwest::Client, url: &str, cfg: &Cfg) -> Option<St
         urls.push(prefixed(&cfg.proxy, url));
     }
     for u in urls {
-        let resp = match client
-            .get(&u)
-            .timeout(Duration::from_secs(15))
-            .send()
-            .await
-        {
+        let resp = match client.get(&u).timeout(Duration::from_secs(15)).send().await {
             Ok(r) => r,
             Err(e) => {
                 logline!("[check] 校验单请求失败({}): {e}", u);
@@ -215,7 +226,10 @@ fn release_candidates<'a>(
 }
 
 fn asset_name(a: &Value) -> String {
-    a.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string()
+    a.get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 fn asset_size(a: &Value) -> u64 {
@@ -268,6 +282,7 @@ fn local_basis(local: &crate::localver::LocalVersion, cur: &crate::version::Vers
 ///   - decidable  本地版本可信，关系为 新/旧/相同
 ///   - suspect    本地版本只能靠弱依据（构建时间、修订号、包版本）推断
 ///   - incomparable 确实取不到版本号：按「将升级到该发布版本」放行，但明确说明原因
+///
 /// Only a downgrade needs a second confirmation; uncertainty never blocks by
 /// itself, and the model/arch/hash gates stay in force either way.
 fn decide(
@@ -284,7 +299,11 @@ fn decide(
             std::cmp::Ordering::Less => Decision {
                 has_update: true,
                 reason: if weak {
-                    format!("发现新版本 v{}（{}）", t.as_display(), local_basis(local, c))
+                    format!(
+                        "发现新版本 v{}（{}）",
+                        t.as_display(),
+                        local_basis(local, c)
+                    )
                 } else {
                     format!("发现新版本 v{}（当前 v{}）", t.as_display(), c.as_display())
                 },
@@ -327,8 +346,8 @@ fn decide(
             }
         },
         (None, Some(t)) => {
-            let already = last_version == Some(t.as_display().as_str())
-                && last_ts == Some(asset_updated);
+            let already =
+                last_version == Some(t.as_display().as_str()) && last_ts == Some(asset_updated);
             if already {
                 Decision {
                     has_update: false,
@@ -405,7 +424,10 @@ fn parse_tag_filter(tag: &str) -> Result<Option<Regex>, String> {
 pub async fn check(client: &reqwest::Client) -> Value {
     let cfg = load_cfg();
     if cfg.repo.is_empty() {
-        return check_error(&cfg, "未配置 GitHub 仓库,请先在「仓库配置」中填写(owner/repo)");
+        return check_error(
+            &cfg,
+            "未配置 GitHub 仓库,请先在「仓库配置」中填写(owner/repo)",
+        );
     }
     // `latest` tracks the newest release; `latest@<regex>` restricts candidates
     // to releases whose tag name matches the regex (e.g. `latest@^自用`).
@@ -415,7 +437,10 @@ pub async fn check(client: &reqwest::Client) -> Value {
         Err(e) => return check_error(&cfg, &e),
     };
     let api = if use_latest {
-        format!("https://api.github.com/repos/{}/releases?per_page=30", cfg.repo)
+        format!(
+            "https://api.github.com/repos/{}/releases?per_page=30",
+            cfg.repo
+        )
     } else {
         format!(
             "https://api.github.com/repos/{}/releases/tags/{}",
@@ -454,9 +479,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
     } else {
         match Regex::new(&cfg.pattern) {
             Ok(r) => Some(r),
-            Err(e) => {
-                return check_error(&cfg, &format!("firmware_pattern 正则无效: {e}"))
-            }
+            Err(e) => return check_error(&cfg, &format!("firmware_pattern 正则无效: {e}")),
         }
     };
 
@@ -635,8 +658,15 @@ pub async fn check(client: &reqwest::Client) -> Value {
         local_ver.as_ref(),
     );
 
-    let mut sha256_hash = uci::get("expected_sha256").unwrap_or_default().trim().to_lowercase();
-    let mut hash_source = if sha256_hash.is_empty() { "none" } else { "config" };
+    let mut sha256_hash = uci::get("expected_sha256")
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let mut hash_source = if sha256_hash.is_empty() {
+        "none"
+    } else {
+        "config"
+    };
     if sha256_hash.is_empty() {
         if let Some(rel) = matched_rel {
             if let Some(assets) = rel.get("assets").and_then(|a| a.as_arr()) {
@@ -678,23 +708,28 @@ pub async fn check(client: &reqwest::Client) -> Value {
         hash_source = "none";
     }
 
-    let mut latest = Vec::new();
-    latest.push(("name".into(), Value::str(&file_name)));
-    latest.push(("size".into(), Value::num(size)));
-    latest.push(("size_human".into(), Value::str(&human_size(size))));
-    latest.push(("updated".into(), Value::str(&updated)));
-    latest.push(("updated_local".into(), Value::str(&utc_to_local(&updated))));
-    latest.push(("version".into(), Value::str(&fw_version)));
-    latest.push(("version_source".into(), Value::str(version_source)));
-    latest.push(("url".into(), Value::str(&url)));
-    latest.push(("api_url".into(), Value::str(&api_url)));
-    latest.push(("sha256".into(), Value::str(&sha256_hash)));
-    latest.push(("sha256_source".into(), Value::str(hash_source)));
+    let latest = vec![
+        ("name".into(), Value::str(&file_name)),
+        ("size".into(), Value::num(size)),
+        ("size_human".into(), Value::str(&human_size(size))),
+        ("updated".into(), Value::str(&updated)),
+        ("updated_local".into(), Value::str(&utc_to_local(&updated))),
+        ("version".into(), Value::str(&fw_version)),
+        ("version_source".into(), Value::str(version_source)),
+        ("url".into(), Value::str(&url)),
+        ("api_url".into(), Value::str(&api_url)),
+        ("sha256".into(), Value::str(&sha256_hash)),
+        ("sha256_source".into(), Value::str(hash_source)),
+    ];
 
     logline!(
         "[check] 选定资产: {} | 版本 {} (来源 {}) | 识别: {} ({}) | {}",
         file_name,
-        if fw_version.is_empty() { "<无法解析>" } else { &fw_version },
+        if fw_version.is_empty() {
+            "<无法解析>"
+        } else {
+            &fw_version
+        },
         version_source,
         compat.badge,
         compat.model_check,
@@ -702,7 +737,11 @@ pub async fn check(client: &reqwest::Client) -> Value {
     );
     logline!(
         "[check] 本机版本: {} (来源 {} / {}, 判定状态 {})",
-        if local_display.is_empty() { "<无法比较>" } else { &local_display },
+        if local_display.is_empty() {
+            "<无法比较>"
+        } else {
+            &local_display
+        },
         local.source,
         local.confidence.as_str(),
         decision.state
@@ -767,10 +806,13 @@ pub async fn check(client: &reqwest::Client) -> Value {
         ("has_update".into(), Value::Bool(decision.has_update)),
         ("reason".into(), Value::str(&decision.reason)),
         ("compatibility".into(), compat.to_json()),
-        ("matched_rule".into(), match &chosen_rule {
-            Some(r) => Value::str(r),
-            None => Value::Null,
-        }),
+        (
+            "matched_rule".into(),
+            match &chosen_rule {
+                Some(r) => Value::str(r),
+                None => Value::Null,
+            },
+        ),
         ("device".into(), device.to_json()),
     ])
 }
@@ -782,7 +824,11 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
     let cur = load_cfg();
     let cfg = Cfg {
         repo: repo.to_string(),
-        tag: if tag.is_empty() { "latest".into() } else { tag.to_string() },
+        tag: if tag.is_empty() {
+            "latest".into()
+        } else {
+            tag.to_string()
+        },
         proxy: cur.proxy,
         pattern: String::new(),
         token: cur.token,
@@ -790,7 +836,10 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
     if cfg.repo.is_empty() || !cfg.repo.contains('/') {
         return Value::Obj(vec![
             ("ok".into(), Value::Bool(false)),
-            ("error".into(), Value::str("仓库格式不正确(应为 owner/repo)")),
+            (
+                "error".into(),
+                Value::str("仓库格式不正确(应为 owner/repo)"),
+            ),
         ]);
     }
     let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
@@ -804,7 +853,10 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
         }
     };
     let api = if use_latest {
-        format!("https://api.github.com/repos/{}/releases?per_page=30", cfg.repo)
+        format!(
+            "https://api.github.com/repos/{}/releases?per_page=30",
+            cfg.repo
+        )
     } else {
         format!(
             "https://api.github.com/repos/{}/releases/tags/{}",
@@ -917,7 +969,9 @@ pub fn utc_to_local(iso: &str) -> String {
         return iso.to_string();
     }
     let num = |a: usize, z: usize| -> i64 {
-        iso.get(a..z).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0)
+        iso.get(a..z)
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0)
     };
     let (y, mo, d) = (num(0, 4), num(5, 7), num(8, 10));
     let (h, mi, s) = (num(11, 13), num(14, 16), num(17, 19));
@@ -1137,7 +1191,12 @@ mod tests {
     fn decide_self_build_by_build_time() {
         // 自用 SNAPSHOT 构建：版本从构建时间推断，结论可用但要标明弱依据
         let t = v("26.11.08");
-        let d = decide_with(Some(&t), &local_by_build_date(2026, 11, 7), Some("old"), Some("0"));
+        let d = decide_with(
+            Some(&t),
+            &local_by_build_date(2026, 11, 7),
+            Some("old"),
+            Some("0"),
+        );
         assert!(d.has_update);
         assert_eq!(d.relation, "newer");
         assert_eq!(d.state, "suspect");
@@ -1150,7 +1209,12 @@ mod tests {
         // 构建时间只能和日期型标签比较；遇到 24.10.0 这类普通发布号必须放弃比较，
         // 否则 26.11.07 > 24.10.0 会被当成当前版本更高而判定降级、挡住升级。
         let t = v("24.10.0");
-        let d = decide_with(Some(&t), &local_by_build_date(2026, 11, 7), Some("old"), Some("0"));
+        let d = decide_with(
+            Some(&t),
+            &local_by_build_date(2026, 11, 7),
+            Some("old"),
+            Some("0"),
+        );
         assert!(d.has_update, "不可比时应放行升级");
         assert_eq!(d.relation, "unknown");
         assert_eq!(d.state, "incomparable");
@@ -1168,8 +1232,14 @@ mod tests {
 
     #[test]
     fn proxy_normalisation() {
-        assert_eq!(normalize_proxy("https://gh.acg2.mom"), "https://gh.acg2.mom/");
-        assert_eq!(normalize_proxy(" https://gh.acg2.mom// "), "https://gh.acg2.mom/");
+        assert_eq!(
+            normalize_proxy("https://gh.acg2.mom"),
+            "https://gh.acg2.mom/"
+        );
+        assert_eq!(
+            normalize_proxy(" https://gh.acg2.mom// "),
+            "https://gh.acg2.mom/"
+        );
         assert_eq!(normalize_proxy("https://"), "");
         assert_eq!(normalize_proxy("gh.acg2.mom"), "");
         assert_eq!(normalize_proxy(""), "");
@@ -1180,10 +1250,39 @@ mod tests {
     }
 
     #[test]
+    fn mirror_list_is_usable() {
+        assert_eq!(
+            MIRRORS[0], DEFAULT_PROXY,
+            "gh.acg2.mom must stay the default"
+        );
+        assert!(
+            MIRRORS.len() >= 5,
+            "keep several verified mirrors available"
+        );
+        let mut seen: Vec<String> = Vec::new();
+        for m in MIRRORS {
+            assert_eq!(
+                normalize_proxy(m).as_str(),
+                *m,
+                "mirror must already be normalised: {m}"
+            );
+            assert!(!seen.contains(&m.to_string()), "duplicate mirror: {m}");
+            seen.push(m.to_string());
+        }
+        assert!(
+            !MIRRORS.iter().any(|m| m.contains("moeyy.xyz")),
+            "dead mirror must be gone"
+        );
+    }
+
+    #[test]
     fn token_only_for_api_host() {
         assert!(host_of("https://api.github.com/repos/a/b").eq_ignore_ascii_case("api.github.com"));
-        assert!(!host_of("https://gh.acg2.mom/https://api.github.com/x").eq_ignore_ascii_case("api.github.com"));
-        assert!(!host_of("https://evil.example/api.github.com").eq_ignore_ascii_case("api.github.com"));
+        assert!(!host_of("https://gh.acg2.mom/https://api.github.com/x")
+            .eq_ignore_ascii_case("api.github.com"));
+        assert!(
+            !host_of("https://evil.example/api.github.com").eq_ignore_ascii_case("api.github.com")
+        );
     }
 
     #[test]
@@ -1201,7 +1300,10 @@ mod tests {
         let re = Regex::new(r"combined-efi.*\.img\.gz").unwrap();
         assert!(name_matches(&assets[1], &re, 0));
         assert!(!name_matches(&assets[0], &re, 0));
-        assert!(Regex::new("[").is_err());
+        // Malformed pattern built at runtime: clippy's `invalid_regex` only
+        // inspects literals, and this is deliberately a negative test.
+        let broken = String::from("[");
+        assert!(Regex::new(&broken).is_err());
     }
 
     #[test]
@@ -1226,7 +1328,8 @@ mod tests {
             r#"[{"tag_name":"自用-26.11.07","assets":[{"name":"H5000M-NETMONITOR-sysupgrade.bin"}]},
                 {"tag_name":"MT5700-26.11.07","assets":[{"name":"H5000M-MT5700-sysupgrade.bin"}]},
                 {"tag_name":"NetWiz-26.11.06","assets":[{"name":"X86-combined.img.gz"}]}]"#,
-        ).unwrap();
+        )
+        .unwrap();
         let f = Some(Regex::new("^自用").unwrap());
         let c = release_candidates(&parsed, true, "latest", &f);
         assert_eq!(c.len(), 1);

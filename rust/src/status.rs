@@ -90,11 +90,15 @@ pub fn log(line: &str) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(LOG_FILE) {
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(LOG_FILE)
+    {
         let _ = writeln!(f, "{}", line);
     }
 
-    if COUNTER.fetch_add(1, Ordering::Relaxed) % 32 == 0 {
+    if COUNTER.fetch_add(1, Ordering::Relaxed).is_multiple_of(32) {
         trim_log();
     }
 }
