@@ -3373,3 +3373,51 @@ body.ou-modal-open {
 		grid-template-columns: 1fr;
 	}
 }
+/* ==========================================================================
+   插件更新卡：PC / 手机统一默认折叠
+   ========================================================================== */
+
+.ou-plugin-toggle {
+	display: flex !important;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	width: 100%;
+	margin: 0;
+	padding: 7px 0;
+	border: 1px dashed #dbeafe;
+	border-radius: 8px;
+	background: #f8fbff;
+	color: #2563eb;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.ou-plugin-toggle:hover {
+	background: #eff6ff;
+	border-color: #93c5fd;
+}
+
+.ou-plugin-toggle-svg {
+	width: 12px;
+	height: 12px;
+	transition: transform 0.18s ease;
+}
+
+.ou-card-plugin:not(.ou-card-collapsed) .ou-plugin-toggle-svg {
+	transform: rotate(90deg);
+}
+
+.ou-card-plugin.ou-card-collapsed > *:not(.ou-card-head):not(.ou-plugin-toggle) {
+	display: none !important;
+}
+
+.ou-card-plugin.ou-card-collapsed .ou-card-head {
+	margin-bottom: 4px !important;
+}
+
+.ou-card-plugin.ou-card-collapsed .ou-card-head .ou-head-sub,
+.ou-card-plugin.ou-card-collapsed .ou-card-head .ou-btn-row {
+	display: none !important;
+}

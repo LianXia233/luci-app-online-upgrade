@@ -1998,7 +1998,6 @@
 	// 桌面端完全不受影响；按钮由 JS 动态插入，模板里不增加额外结构。
 	var MOBILE_MQ = window.matchMedia('(max-width: 760px)');
 	var MOBILE_SECTIONS = [
-		['card-tasks', '下载任务'],
 		['card-backup', '备份与恢复'],
 		['card-config', '仓库配置'],
 		['card-log', '运行日志']
@@ -2040,6 +2039,23 @@
 		MOBILE_MQ.addListener(applyMobileSections);
 	}
 
+	// 插件更新卡在 PC 与手机都默认折叠；展开后显示操作按钮、版本元信息与更新规范。
+	function setupPluginCollapse() {
+		var card = $('card-plugin');
+		var btn = $('plugin-toggle');
+		if (!card || !btn) return;
+		var label = btn.querySelector('span');
+		var apply = function (collapsed) {
+			card.classList.toggle('ou-card-collapsed', collapsed);
+			btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+			if (label) label.textContent = collapsed ? '展开插件更新' : '收起插件更新';
+		};
+		apply(true);
+		btn.addEventListener('click', function () {
+			apply(!card.classList.contains('ou-card-collapsed'));
+		});
+	}
+
 	/* ---------------- 初始化 ---------------- */
 
 	function boot() {
@@ -2071,6 +2087,7 @@
 		});
 		bindDialog();
 		applyMobileSections();
+		setupPluginCollapse();
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {
 			pill.addEventListener('click', function () {

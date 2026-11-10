@@ -9,6 +9,14 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 升级到 Node 24 版本（`checkout@v5`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v5`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.5.6] - 2026-11-10
+
+### Changed
+
+- **插件卡位置调整**：将「插件版本与自我更新」移动到「仓库与更新源配置」之后、运行日志之前。
+- **插件卡默认折叠**：PC 与手机均默认收起，只显示标题、状态与「展开插件更新」入口；展开后显示检查/更新按钮、版本元信息、进度与发布规范。
+- **手机下载任务不再默认折叠**：下载任务管理从手机默认折叠列表移除，进入页面即可看到任务列表与详情入口；备份、仓库配置、运行日志仍默认收起。
+
 ## [2.5.5] - 2026-11-10
 
 ### Added
