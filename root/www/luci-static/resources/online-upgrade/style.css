@@ -863,7 +863,8 @@
 .ou-file-cell {
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	flex-wrap: wrap;
+	gap: 8px;
 }
 
 .ou-file-svg {
@@ -888,6 +889,24 @@
 	font-size: 11.5px;
 	font-weight: 500;
 	white-space: nowrap;
+}
+
+/* 任务类型标签：插件自更新任务与固件下载共用历史列表 */
+.ou-task-kind {
+	display: inline-flex;
+	align-items: center;
+	padding: 1px 6px;
+	border-radius: 999px;
+	font-size: 10px;
+	font-weight: 600;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.ou-task-kind.plugin {
+	color: #4f46e5 !important;
+	background: #eef2ff !important;
+	border: 1px solid #e0e7ff !important;
 }
 
 .ou-time-text {
@@ -2699,6 +2718,86 @@ details[open] > .ou-plugin-convention-summary .ou-evidence-chevron {
 	.ou-table td {
 		font-size: 11px !important;
 		padding: 10px !important;
+	}
+
+	.ou-task-kind {
+		font-size: 9px !important;
+		padding: 1px 5px !important;
+	}
+
+	/* 手机端任务表改为卡片式，避免 5 列在窄屏把文件名挤成碎行 */
+	#card-tasks .ou-table-responsive {
+		overflow: visible !important;
+		border: 0 !important;
+		background: transparent !important;
+	}
+
+	#task-table {
+		min-width: 0 !important;
+		border-collapse: separate !important;
+	}
+
+	#task-table thead {
+		display: none !important;
+	}
+
+	#task-table tbody,
+	#task-table tr,
+	#task-table td {
+		display: block !important;
+		width: 100% !important;
+	}
+
+	#task-table tr {
+		margin-bottom: 8px;
+		padding: 9px 10px;
+		border: 1px solid #e2e8f0 !important;
+		border-radius: 10px !important;
+		background: #ffffff !important;
+	}
+
+	#task-table td {
+		display: flex !important;
+		align-items: flex-start !important;
+		gap: 8px;
+		padding: 3px 0 !important;
+		border: 0 !important;
+		text-align: left !important;
+	}
+
+	#task-table td::before {
+		content: attr(data-label);
+		flex: 0 0 34px;
+		color: #64748b !important;
+		font-size: 10px !important;
+		font-weight: 600 !important;
+		line-height: 1.6 !important;
+	}
+
+	#task-table td:first-child {
+		padding-bottom: 7px !important;
+		border-bottom: 1px dashed #f1f5f9 !important;
+	}
+
+	#task-table td:first-child::before,
+	#task-table td:nth-child(5)::before,
+	#task-table td.ou-empty::before {
+		display: none !important;
+	}
+
+	/* 速度列在手机上让位给状态与原因 */
+	#task-table td:nth-child(3) {
+		display: none !important;
+	}
+
+	#task-table td:nth-child(5) {
+		justify-content: flex-end !important;
+		padding-top: 7px !important;
+	}
+
+	#task-table td.ou-empty {
+		text-align: center !important;
+		justify-content: center !important;
 	}
 
 	.ou-terminal {

@@ -8,6 +8,19 @@
 
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 升级到 Node 24 版本（`checkout@v5`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v5`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.5.3] - 2026-11-10
+
+### Added
+
+- **插件更新下载任务**：插件自更新现在会在 `/root/.online-upgrade-tasks.json` 创建 `kind=plugin` 的任务，复用下载任务列表展示插件包名称、插件更新标签、下载/校验/安装阶段、进度、速度、原因与终态；任务完成或失败会写入 `done` / `failed`。
+- **任务类型字段**：任务 JSON 新增 `kind`（`firmware` / `plugin`），旧任务缺少该字段时按 `firmware` 兼容；插件任务不会被固件的暂停/继续/取消按钮误操作。
+- **插件状态同步**：插件更新完成（或失败）后，前端自动刷新插件版本、运行环境、任务列表与状态标识；下载完成不再停留在“发现新版本/下载中”。
+- **资源缓存版本戳**：`plugin_info.cache_version` 返回安装后的版本号；前端读取当前模板 `style.css?v=` / `app.js?v=` 的静态版本戳，二者不一致时提示刷新页面。自更新安装后清理 `/tmp/luci-indexcache*` 与 `/tmp/luci-modulecache*`，确保 LuCI 模块缓存及时失效。
+
+### Changed
+
+- 任务表表头由“固件文件”改为“文件 / 任务”，插件任务在文件名旁显示“插件更新”标签，状态列按阶段显示下载中/校验中/安装中。
+
 ## [2.5.2] - 2026-11-10
 
 ### Changed

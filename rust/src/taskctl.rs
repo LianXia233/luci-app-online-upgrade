@@ -38,6 +38,11 @@ pub const ST_FAILED: &str = "failed";
 /// 任务状态：被用户或慢速保护中止。
 pub const ST_ABORTED: &str = "aborted";
 
+/// 固件下载任务。
+pub const KIND_FIRMWARE: &str = "firmware";
+/// 插件自身更新任务。
+pub const KIND_PLUGIN: &str = "plugin";
+
 /// 下载被停止的原因。保留类型信息，使界面与历史记录能够把
 /// 慢速中止与普通用户取消区分展示。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +167,9 @@ fn now_secs() -> u64 {
 pub struct Task {
     /// 稳定 ID（`<unix>-<pid>-<seq>`）。
     pub id: String,
+    /// 任务类型：`firmware`（固件下载）或 `plugin`（插件自更新）。
+    /// 旧版本任务没有该字段，加载时按固件任务兼容。
+    pub kind: String,
     /// 固件资产名称。
     pub name: String,
     /// 下载 URL（可能带镜像前缀）。
@@ -204,6 +212,7 @@ impl Task {
     pub fn new(name: &str, url: &str, total: u64) -> Task {
         Task {
             id: new_task_id(),
+            kind: KIND_FIRMWARE.to_string(),
             name: name.to_string(),
             url: url.to_string(),
             state: ST_RUNNING.to_string(),
@@ -223,9 +232,16 @@ impl Task {
         self.finished = now_secs();
     }
 
+    /// 指定任务类型（固件/插件）。
+    pub fn with_kind(mut self, kind: &str) -> Task {
+        self.kind = kind.to_string();
+        self
+    }
+
     fn to_value(&self) -> Value {
         Value::Obj(vec![
             ("id".into(), Value::str(&self.id)),
+            ("kind".into(), Value::str(&self.kind)),
             ("name".into(), Value::str(&self.name)),
             ("url".into(), Value::str(&self.url)),
             ("state".into(), Value::str(&self.state)),
@@ -247,6 +263,14 @@ impl Task {
         }
         Some(Task {
             id,
+            kind: {
+                let k = s("kind");
+                if k.is_empty() {
+                    KIND_FIRMWARE.to_string()
+                } else {
+                    k
+                }
+            },
             name: s("name"),
             url: s("url"),
             state: s("state"),
@@ -568,6 +592,32 @@ mod tests {
         assert!(!valid_task_id("../etc/passwd"));
         assert!(!valid_task_id(""));
         assert!(!valid_task_id("ABC"));
+    }
+
+    #[test]
+    fn plugin_kind_roundtrip_and_legacy_default() {
+        let p = tmp("kind");
+        let mut s = TaskStore::with_path(&p);
+        let plugin = Task::new("pkg.apk", "https://example.test/pkg.apk", 10)
+            .with_kind(KIND_PLUGIN);
+        let id = plugin.id.clone();
+        s.upsert(plugin);
+        s.save().unwrap();
+
+        let mut reloaded = TaskStore::with_path(&p);
+        reloaded.load();
+        assert_eq!(reloaded.tasks()[0].id, id);
+        assert_eq!(reloaded.tasks()[0].kind, KIND_PLUGIN);
+
+        // 旧版本任务没有 kind 字段，必须按固件任务兼容。
+        let legacy = Value::Obj(vec![
+            ("id".into(), Value::str("legacy-id")),
+            ("name".into(), Value::str("fw.bin")),
+            ("state".into(), Value::str(ST_DONE)),
+        ]);
+        let task = Task::from_value(&legacy).unwrap();
+        assert_eq!(task.kind, KIND_FIRMWARE);
+        let _ = fs::remove_file(&p);
     }
 
     #[test]

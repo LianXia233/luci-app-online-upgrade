@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=2.5.2
+PKG_VERSION:=2.5.3
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
@@ -102,8 +102,8 @@ define Package/luci-app-online-upgrade/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	# ucode 版 LuCI（26.x）：不再提供 /lib/functions/luci.sh 和 luci-reload，
-	# 菜单或 ACL 变更后只需让调度器缓存失效即可。
-	rm -f /tmp/luci-indexcache*
+	# 菜单/模板或前端资源变更后让调度器与模块缓存失效即可。
+	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache*
 	exit 0
 }
 endef

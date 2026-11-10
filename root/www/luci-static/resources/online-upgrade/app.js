@@ -801,6 +801,20 @@
 		return m[s] || s || '未知';
 	}
 
+	// 插件任务在下载完成后还要校验与安装；用 reason 展示当前阶段，
+	// 避免任务表一直显示“下载中”。
+	function taskDisplayState(t) {
+		if (t && t.kind === 'plugin' && t.state === 'running') {
+			var reason = t.reason || '';
+			// 注意“安装包”是下载阶段的文案，不能因此误判为安装中；
+			// 只有“正在安装/安装插件包”才进入安装阶段。
+			if (reason.indexOf('正在安装') >= 0 || reason.indexOf('安装插件包') >= 0) return '安装中';
+			if (reason.indexOf('校验') >= 0) return '校验中';
+			return '下载中';
+		}
+		return taskStateLabel(t && t.state);
+	}
+
 	function fmtSpeed(bps) {
 		var n = Number(bps || 0);
 		if (n <= 0) return '—';
@@ -808,9 +822,11 @@
 		return (n / 1024).toFixed(1) + ' KB/s';
 	}
 
-	function syncTaskButtons(active) {
+	function syncTaskButtons(active, anyRunning) {
 		var busy = !!active;
-		setBusy('btn-start-download', busy, '开始下载');
+		// 插件更新任务也占用后端操作锁，因此任何任务运行期间都不应
+		// 再启动新的固件下载；暂停/继续/取消仍只针对固件任务。
+		setBusy('btn-start-download', busy || !!anyRunning, '开始下载');
 		setBusy('btn-pause-download', active !== 'running', '暂停');
 		setBusy('btn-resume-download', active !== 'paused', '继续');
 		setBusy('btn-cancel-download', !busy, '取消');
@@ -820,31 +836,45 @@
 		var tbody = $('task-table').querySelector('tbody');
 		tbody.innerHTML = '';
 		var active = null;
+		var anyRunning = false;
 		(list || []).forEach(function (t) {
-			if (t.state === 'running' || t.state === 'paused') active = t.state;
+			var isPlugin = t.kind === 'plugin';
+			var running = t.state === 'running' || t.state === 'paused';
+			if (running) {
+				anyRunning = true;
+				// 固件下载控制按钮只跟随固件任务；插件任务由更新流程自动管理。
+				if (!isPlugin) active = t.state;
+			}
 			var pct = t.total > 0 ? Math.min(100, Math.round(t.done / t.total * 100)) : 0;
-			var progress = (t.state === 'running' || t.state === 'paused')
+			var progress = (running)
 				? (pct + '% · ' + fmtSize(t.done) + ' / ' + fmtSize(t.total))
 				: (pct + '% · ' + fmtSize(t.done));
+			var kindChip = isPlugin
+				? '<span class="ou-task-kind plugin">插件更新</span>'
+				: '';
+			var action = (isPlugin && running)
+				? '<span class="ou-time-text">自动更新中</span>'
+				: '<button type="button" class="btn ou-btn ou-btn-danger ou-task-del" data-id="' + esc(t.id) + '"><span>删除</span></button>';
 			var tr = document.createElement('tr');
-			tr.innerHTML = '<td><div class="ou-file-cell"><span class="ou-file-text">' + esc(t.name) + '</span></div></td>' +
-				'<td><span class="ou-badge-size">' + esc(taskStateLabel(t.state)) + ' · ' + esc(progress) + '</span></td>' +
-				'<td><span class="ou-time-text">' + esc(fmtSpeed(t.speed_bps)) + '</span></td>' +
-				'<td><span class="ou-time-text">' + esc(t.reason || '—') + '</span></td>' +
-				'<td style="text-align:right"><button type="button" class="btn ou-btn ou-btn-danger ou-task-del" data-id="' + esc(t.id) + '"><span>删除</span></button></td>';
-			tr.querySelector('.ou-task-del').addEventListener('click', function () { deleteTask(t.id, t.state); });
+				tr.innerHTML = '<td><div class="ou-file-cell"><span class="ou-file-text">' + esc(t.name) + '</span>' + kindChip + '</div></td>' +
+				'<td data-label="状态"><span class="ou-badge-size">' + esc(taskDisplayState(t)) + ' · ' + esc(progress) + '</span></td>' +
+				'<td data-label="速度"><span class="ou-time-text">' + esc(fmtSpeed(t.speed_bps)) + '</span></td>' +
+				'<td data-label="原因"><span class="ou-time-text">' + esc(t.reason || '—') + '</span></td>' +
+				'<td data-label="操作" style="text-align:right">' + action + '</td>';
+			var del = tr.querySelector('.ou-task-del');
+			if (del) del.addEventListener('click', function () { deleteTask(t.id, t.state); });
 			tbody.appendChild(tr);
 		});
 		if (!list || !list.length) {
 			tbody.innerHTML = '<tr><td colspan="5" class="ou-empty">暂无下载任务</td></tr>';
 		}
 		taskActive = active;
-		syncTaskButtons(active);
-		// 仅在任务确实处于运行或暂停状态时轮询：已停止或空历史
-		// 不应每隔几秒就反复拉起一次 CLI 进程。
-		if (active && !taskTimer) {
+		syncTaskButtons(active, anyRunning);
+		// 任意运行中的任务都需要刷新列表（插件任务没有暂停/取消按钮，
+		// 但必须持续展示下载/安装阶段和最终状态）。
+		if (anyRunning && !taskTimer) {
 			taskTimer = setInterval(refreshTasks, 3000);
-		} else if (!active && taskTimer) {
+		} else if (!anyRunning && taskTimer) {
 			clearInterval(taskTimer);
 			taskTimer = null;
 		}
@@ -1363,6 +1393,50 @@
 		return v.charAt(0) === 'v' ? v : 'v' + v;
 	}
 
+	// 当前页面模板写入的静态资源版本戳（style.css?v=）。
+	// 自更新安装后新的版本文件会变化，可据此判断页面是否仍在用旧资源。
+	function assetVersion() {
+		var link = document.querySelector('link[href*="online-upgrade/style.css?v="]') ||
+			document.querySelector('script[src*="online-upgrade/app.js?v="]');
+		var url = link ? (link.href || link.src || '') : '';
+		var m = url.match(/[?&]v=([^&]+)/);
+		return m ? decodeURIComponent(m[1]) : '';
+	}
+
+	function refreshPluginAfterUpdate(result, ts) {
+		var r = result || {};
+		setPluginProgress(100, true);
+		pluginBadge('已更新', 'ok');
+		pluginHint(r.message || '插件已更新完成，刷新页面即可加载新界面；无需重启路由器', 'ok');
+		setText('plugin-current', pluginVersionText(r.installed_version || r.to || ''));
+		setText('plugin-latest', r.to ? 'v' + r.to : '—');
+		setText('plugin-checked', fmtTime(ts));
+		showBtn('btn-plugin-update', false);
+		showBtn('btn-plugin-reload', true);
+		lastPluginCheck = null;
+
+		// 重新读取安装后的本地版本；同时对比模板资源版本与后端版本戳。
+		// 若不一致，明确提示刷新页面，避免仍显示更新前的旧界面状态。
+		ubus('plugin_info').then(function (info) {
+			if (info && info.local) {
+				setText('plugin-current', pluginVersionText(info.local.display));
+			}
+			if (info) {
+				setText('plugin-env', (info.manager || '未检测到包管理器') + ' · ' +
+					(info.pkg_arch || info.arch || '未知架构'));
+			}
+			var pageVer = assetVersion();
+			var installedVer = info && info.cache_version;
+			if (pageVer && installedVer && pageVer !== installedVer) {
+				pluginHint('插件已更新到 ' + pluginVersionText(installedVer || r.to) +
+					'；当前页面资源仍是 v' + pageVer +
+					'，请刷新页面后新界面才会生效。', 'warn');
+			}
+		}).catch(function () { /* 版本读取失败不影响“已更新”终态 */ });
+
+		refreshTasks();
+	}
+
 	function stopPluginPoll() {
 		if (pluginStatusTimer) {
 			clearInterval(pluginStatusTimer);
@@ -1506,16 +1580,7 @@
 			return false;
 		}
 		if (state === 'done') {
-			setPluginProgress(100, true);
-			pluginBadge('已更新', 'ok');
-			var r = st.result || {};
-			pluginHint(r.message || '插件已更新，刷新页面即可加载新界面', 'ok');
-			setText('plugin-current', pluginVersionText(r.installed_version || r.to || ''));
-			setText('plugin-latest', r.to ? 'v' + r.to : '—');
-			setText('plugin-checked', fmtTime(st.ts));
-			showBtn('btn-plugin-update', false);
-			showBtn('btn-plugin-reload', true);
-			lastPluginCheck = null;
+			refreshPluginAfterUpdate(st.result, st.ts);
 			return false;
 		}
 		if (state === 'failed') {
@@ -1527,6 +1592,7 @@
 			} else {
 				showBtn('btn-plugin-update', false);
 			}
+			refreshTasks();
 			return false;
 		}
 		return false;
@@ -1602,6 +1668,7 @@
 		pluginBadge('更新中', 'update');
 		pluginHint('正在校验最新版本并准备下载...', '');
 		stopPluginPoll();
+		refreshTasks();
 		snapshotPluginStatus().then(function () {
 			pluginFresh = true;
 			return ubus('start_plugin_update');

@@ -17,6 +17,7 @@
 use crate::compat::DeviceProfile;
 use crate::github::{self, Cfg};
 use crate::json::{parse, Value};
+use crate::taskctl::{Task, TaskStore, KIND_PLUGIN, ST_DONE, ST_FAILED};
 use crate::{logline, uci};
 use futures_util::StreamExt;
 use regex::Regex;
@@ -290,12 +291,51 @@ fn write_status(state: &str, pct: u32, msg: &str, error: Option<&str>, result: O
     }
 }
 
+/// 对插件任务记录做一次原子更新。
+fn plugin_task_update(id: &str, f: impl FnOnce(&mut Task)) {
+    let mut store = TaskStore::open();
+    if let Some(t) = store.get_mut(id) {
+        f(t);
+    }
+    let _ = store.save();
+}
+
+/// 将插件任务标记为终态。
+fn plugin_task_finish(id: &str, state: &str, reason: &str, done: u64, speed: u64) {
+    plugin_task_update(id, |t| {
+        t.done = done;
+        t.speed_bps = speed;
+        t.finish(state, reason);
+    });
+}
+
+/// 在下载开始前创建用户可见的插件更新任务。任务与固件下载共用
+/// `/root/.online-upgrade-tasks.json`，通过 `kind=plugin` 区分。
+fn create_plugin_task(plan: &Plan) -> String {
+    let mut store = TaskStore::open();
+    let mut t = Task::new(&plan.asset.file, &plan.asset_url, plan.asset.size)
+        .with_kind(KIND_PLUGIN);
+    t.reason = format!("插件更新 {} → v{}", plan.local.display, plan.latest);
+    let id = t.id.clone();
+    store.upsert(t);
+    let _ = store.save();
+    logline!("[plugin] 已创建插件更新任务 {id}");
+    id
+}
+
 /// `plugin-info`：纯本地信息，不访问网络，供页面初始化使用。
 pub fn info() -> Value {
     let local = detect_local();
     let manager = detect_manager().unwrap_or("");
     let device = DeviceProfile::current();
     let supported = !manager.is_empty() && local.version.is_some();
+    // 资源缓存戳与模板中的 style.css?v= / app.js?v= 使用同一个
+    // PKG_VERSION；自更新安装后版本文件变化，前端可据此判断
+    // 当前页面是否仍是旧资源。
+    let cache_version = local
+        .version
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| local.display.clone());
     let reason = if manager.is_empty() {
         "本机未检测到 apk 或 opkg，无法自动安装插件更新".to_string()
     } else if local.version.is_none() {
@@ -316,6 +356,7 @@ pub fn info() -> Value {
         ("arch_family".into(), Value::str(device.arch_family().label())),
         ("supported".into(), Value::Bool(supported)),
         ("reason".into(), Value::str(&reason)),
+        ("cache_version".into(), Value::str(&cache_version)),
         ("local".into(), local_json(&local)),
         (
             "convention".into(),
@@ -914,6 +955,7 @@ async fn download_one(
     url: &str,
     api_mode: bool,
     out: &str,
+    task_id: Option<&str>,
 ) -> Result<u64, String> {
     let mut req = client
         .get(url)
@@ -940,6 +982,9 @@ async fn download_one(
     let total = resp.content_length().unwrap_or(0);
     let mut got: u64 = 0;
     let mut last_pct = 0u32;
+    let started = now_ts();
+    let mut last_task_pct: i64 = -1;
+    let mut last_task_ts = started;
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.to_string())?;
@@ -974,11 +1019,43 @@ async fn download_one(
                 None,
             );
         }
+
+        if let Some(id) = task_id {
+            let pct100 = if total > 0 {
+                ((got.min(total) * 100) / total) as i64
+            } else {
+                0
+            };
+            let ts = now_ts();
+            if pct100 >= last_task_pct + 5 || ts > last_task_ts {
+                last_task_pct = pct100;
+                last_task_ts = ts;
+                let speed = if ts > started {
+                    got / (ts - started).max(1)
+                } else {
+                    0
+                };
+                plugin_task_update(id, |t| {
+                    t.done = got;
+                    t.total = total.max(got);
+                    t.speed_bps = speed;
+                    t.reason = "正在下载插件安装包".into();
+                });
+            }
+        }
     }
     file.flush().map_err(|e| format!("刷新安装包失败: {e}"))?;
     if got == 0 {
         let _ = fs::remove_file(out);
         return Err("下载得到空文件".into());
+    }
+    if let Some(id) = task_id {
+        plugin_task_update(id, |t| {
+            t.done = got;
+            t.total = total.max(got);
+            t.speed_bps = 0;
+            t.reason = "下载完成，正在校验 SHA256".into();
+        });
     }
     Ok(got)
 }
@@ -1096,6 +1173,23 @@ pub async fn run_update() -> i32 {
     let client = crate::http::client();
     let outcome = check(&client).await;
     let Some(plan) = outcome.plan else {
+        let state = outcome
+            .json
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("error");
+        if state == "up_to_date" {
+            // 竞态下用户可能在检查后再次点击更新；这不是失败，
+            // 应回到“已是最新”而不是留下“更新失败”的错误标识。
+            write_status(
+                "checked",
+                100,
+                "插件已是最新版本",
+                None,
+                Some(outcome.json),
+            );
+            return 0;
+        }
         let err = outcome
             .json
             .get("reason")
@@ -1113,6 +1207,8 @@ pub async fn run_update() -> i32 {
         return 1;
     };
 
+    let task_id = create_plugin_task(&plan);
+
     write_status(
         "downloading",
         20,
@@ -1129,6 +1225,7 @@ pub async fn run_update() -> i32 {
     let cfg = cfg_for_download();
     let mut last_err = String::from("没有可用的下载线路");
     let mut downloaded = false;
+    let mut downloaded_bytes = 0u64;
     for (url, api_mode) in &urls {
         let mut candidates = vec![url.clone()];
         let proxied = github::prefixed(&cfg.proxy, url);
@@ -1137,8 +1234,9 @@ pub async fn run_update() -> i32 {
         }
         for candidate in candidates {
             logline!("[plugin] 下载线路: {candidate}");
-            match download_one(&client, &cfg, &candidate, *api_mode, &tmp_pkg).await {
-                Ok(_) => {
+            match download_one(&client, &cfg, &candidate, *api_mode, &tmp_pkg, Some(&task_id)).await {
+                Ok(bytes) => {
+                    downloaded_bytes = bytes;
                     downloaded = true;
                     break;
                 }
@@ -1154,6 +1252,7 @@ pub async fn run_update() -> i32 {
     }
     if !downloaded {
         let msg = format!("插件安装包下载失败: {last_err}");
+        plugin_task_finish(&task_id, ST_FAILED, &msg, 0, 0);
         write_status("failed", 100, "下载失败", Some(&msg), None);
         return 1;
     }
@@ -1164,6 +1263,7 @@ pub async fn run_update() -> i32 {
         Err(e) => {
             let msg = format!("SHA256 计算失败: {e}");
             let _ = fs::remove_file(&tmp_pkg);
+            plugin_task_finish(&task_id, ST_FAILED, &msg, downloaded_bytes, 0);
             write_status("failed", 100, "校验失败", Some(&msg), None);
             return 1;
         }
@@ -1174,16 +1274,24 @@ pub async fn run_update() -> i32 {
             plan.asset.sha256, actual
         );
         let _ = fs::remove_file(&tmp_pkg);
+        plugin_task_finish(&task_id, ST_FAILED, &msg, downloaded_bytes, 0);
         write_status("failed", 100, "校验失败", Some(&msg), None);
         return 1;
     }
     if !looks_like_package(&tmp_pkg, &plan.asset.file) {
         let msg = "下载文件不是有效的 apk/ipk 压缩包，已拒绝安装".to_string();
         let _ = fs::remove_file(&tmp_pkg);
+        plugin_task_finish(&task_id, ST_FAILED, &msg, downloaded_bytes, 0);
         write_status("failed", 100, "校验失败", Some(&msg), None);
         return 1;
     }
 
+    plugin_task_update(&task_id, |t| {
+        t.done = downloaded_bytes;
+        t.total = downloaded_bytes.max(t.total);
+        t.speed_bps = 0;
+        t.reason = "校验通过，正在安装插件包".into();
+    });
     write_status(
         "installing",
         90,
@@ -1200,6 +1308,7 @@ pub async fn run_update() -> i32 {
         }
         Err(e) => {
             let _ = fs::remove_file(&tmp_pkg);
+            plugin_task_finish(&task_id, ST_FAILED, &e, downloaded_bytes, 0);
             write_status("failed", 100, "安装失败", Some(&e), None);
             return 1;
         }
@@ -1215,6 +1324,7 @@ pub async fn run_update() -> i32 {
                 "安装命令已返回，但当前版本仍为 {}（期望 v{}），请检查包管理器状态",
                 after.display, plan.latest
             );
+            plugin_task_finish(&task_id, ST_FAILED, &msg, downloaded_bytes, 0);
             write_status("failed", 100, "版本复核失败", Some(&msg), None);
             return 1;
         }
@@ -1223,6 +1333,7 @@ pub async fn run_update() -> i32 {
     let result = Value::Obj(vec![
         ("ok".into(), Value::Bool(true)),
         ("state".into(), Value::str("done")),
+        ("task_id".into(), Value::str(&task_id)),
         ("from".into(), Value::str(&plan.local.display)),
         ("to".into(), Value::str(&plan.latest.to_string())),
         ("tag".into(), Value::str(&plan.latest_tag)),
@@ -1236,6 +1347,15 @@ pub async fn run_update() -> i32 {
             Value::Bool(plan.manifest_used),
         ),
         ("installed_version".into(), Value::str(&after.display)),
+        (
+            "cache_version".into(),
+            Value::str(
+                &after
+                    .version
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| after.display.clone()),
+            ),
+        ),
         ("reload_required".into(), Value::Bool(true)),
         ("reboot_required".into(), Value::Bool(false)),
         (
@@ -1243,6 +1363,13 @@ pub async fn run_update() -> i32 {
             Value::str("插件已更新完成，刷新页面即可加载新界面；无需重启路由器"),
         ),
     ]);
+    plugin_task_finish(
+        &task_id,
+        ST_DONE,
+        &format!("插件已更新到 v{}；刷新页面加载新界面", plan.latest),
+        downloaded_bytes,
+        0,
+    );
     logline!(
         "[plugin] 更新完成: {} -> {}（{}）",
         plan.local.display,

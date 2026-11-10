@@ -171,7 +171,13 @@ fn main() {
                 };
                 match res {
                     Ok(t) => {
-                        let removed = taskctl::purge_orphan_artifacts(&store);
+                        // 只有删除固件任务才需要回收固件产物；删除插件
+                        // 任务不能顺带清掉仍在续传/已校验的固件文件。
+                        let removed = if t.kind == taskctl::KIND_FIRMWARE {
+                            taskctl::purge_orphan_artifacts(&store)
+                        } else {
+                            0
+                        };
                         println!(
                             "{}",
                             ok_json(vec![

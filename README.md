@@ -94,6 +94,7 @@
 - **固定发布契约**：始终读取本仓库的稳定 Release，按固定名称的 `online-upgrade-manifest.json` 选择与本机包架构匹配的 `.apk`，并用清单内 SHA256 校验；清单缺失时退回 `SHA256SUMS`，两者都没有就**拒绝安装**，绝不“下载了就装”。
 - **安装后复核**：调用本机 `apk` / `opkg` 原地安装，安装完成后重新读取版本文件与包管理器版本，确认已到目标版本才上报成功；随后清理 LuCI 索引缓存，刷新页面即可加载新界面。
 - **状态隔离**：插件检查/更新写入独立的 `/tmp/online-upgrade-plugin-status.json`，不会覆盖固件检查或升级进度；但仍与固件任务共用操作锁，避免同时改写 `/usr/bin/online-upgrade`。
+- **任务列表联动**：插件更新会创建 `kind=plugin` 的下载任务，在「下载任务管理」中显示下载/校验/安装阶段与完成、失败终态；完成后自动刷新插件版本、状态标识与任务列表。
 
 ---
 
@@ -336,6 +337,32 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 - 每次发布必须同时上传 `online-upgrade-manifest.json` 与 `SHA256SUMS`；CI 会在发布前自动生成并校验。
 - **自更新只比较 `PKG_VERSION`**：任何对外发布的功能或修复都必须提升 `PKG_VERSION`。仅提升 `PKG_RELEASE` 的同版本重打包不会被识别为更新，需要手动安装；这是为了避免同版本重装被误当成升级。
 - 清单中的 `version` 必须与标签一致，`assets[].file` 必须真实存在于同一 Release，大小必须与 Release 资产一致；任一不一致后端都会拒绝更新。
+
+### 4. 下载任务、接口与状态字段
+
+插件更新下载复用固件下载的任务历史，但通过 `kind=plugin` 与固件任务区分。
+
+| 接口 / 字段 | 说明 |
+| :--- | :--- |
+| `start_plugin_update`（ubus） | 启动 detached 的 `online-upgrade plugin-update`；进程创建插件任务后执行检查、下载、校验、安装 |
+| `get_plugin_status` | 返回 `/tmp/online-upgrade-plugin-status.json`，包含 `state`、`pct`、`msg`、`error`、`ts`、`pid`、`result` |
+| `plugin_info` | 返回本地版本、`cache_version`、包管理器、包架构、更新源与命名约定 |
+| `list_tasks` | 返回 `/root/.online-upgrade-tasks.json` 中的任务；插件任务带 `kind=plugin` |
+| 任务字段 | `id`、`kind`、`name`、`url`、`state`、`total`、`done`、`speed_bps`、`reason`、`created`、`finished` |
+| 插件状态字段 | `state` 取值 `checking/checked/check_failed/updating/downloading/verifying/installing/done/failed`；`result.task_id` 关联任务，`result.installed_version` / `result.cache_version` 为安装后的版本 |
+
+任务状态：固件任务使用 `running/paused/done/failed/aborted`；插件任务使用 `running/done/failed`，下载、校验、安装阶段通过 `reason` 与插件状态 `pct/msg` 区分。插件任务运行期间，固件下载的暂停/继续/取消按钮不会作用到它；任务列表中的「自动更新中」表示由自更新流程管理。
+
+### 5. 缓存版本戳与失效时机
+
+| 时机 | 行为 |
+| :--- | :--- |
+| 构建/安装 | `Makefile` 写入 `/usr/share/online-upgrade/version`（`<PKG_VERSION>-r<PKG_RELEASE>`）；模板中的 `style.css?v=` / `app.js?v=` 使用同一 `PKG_VERSION` |
+| 页面加载 | 前端从 `style.css?v=` / `app.js?v=` 读取当前静态资源版本戳，并通过 `plugin_info.cache_version` 获取后端版本 |
+| 自更新安装完成 | `apk/opkg` 替换文件并写入新版本文件；`clear_luci_cache()` 删除 `/tmp/luci-indexcache*` 与 `/tmp/luci-modulecache*`；插件状态写为 `done` |
+| 完成后刷新 | 前端重新读取 `plugin_info`，若 `cache_version` 与页面资源版本不一致，提示刷新页面；刷新后模板携带新 `?v=`，浏览器重新拉取 CSS/JS |
+
+任何对外发布的内容变化都必须提升 `PKG_VERSION`，这样安装版本、资源查询串和缓存戳会一起变化。
 
 ---
 
