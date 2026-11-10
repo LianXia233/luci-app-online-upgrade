@@ -108,7 +108,7 @@ jobs:
   # ---------- 2. 使用 ImmortalWrt SDK 打包 ----------
   package:
     runs-on: ubuntu-latest
-    needs: rust
+    needs: [verify, rust]
     strategy:
       matrix:
         include:
@@ -177,13 +177,20 @@ jobs:
           make -j$(nproc) package/luci-app-online-upgrade/compile V=s
 
       - name: Collect artifacts
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          RELEASE: ${{ needs.verify.outputs.pkg_release }}
         run: |
+          set -eu
           mkdir -p /tmp/pkgs
-          # 注意：25.12 SDK 会把产物统一放到 bin/packages/base/，因此
-          # 架构必须取自矩阵配置而非目录名，否则
-          # 两个 apk 会重名，发布上传时互相覆盖
+          # 统一产物命名：luci-app-online-upgrade_<version>-r<release>_<arch>.<ext>
+          # 插件自更新会按这个固定结构解析架构；不再沿用
+          # “包名-版本-r发布号_架构”的混用连字符形式。
+          # 25.12 SDK 会把产物统一放到 bin/packages/，因此架构必须取自
+          # 矩阵配置而非目录名，否则两个 apk 会重名、发布时互相覆盖。
           find sdk/bin/packages -name "luci-app-online-upgrade*.${{ matrix.ext }}" | while read f; do
-            cp "$f" "/tmp/pkgs/$(basename "$f" ".${{ matrix.ext }}")_${{ matrix.pkg_arch }}.${{ matrix.ext }}"
+            out="luci-app-online-upgrade_${VERSION}-r${RELEASE}_${{ matrix.pkg_arch }}.${{ matrix.ext }}"
+            cp "$f" "/tmp/pkgs/$out"
           done
           ls -lh /tmp/pkgs/
 
@@ -220,7 +227,7 @@ jobs:
         run: |
           set -eu
           ls -lh /tmp/pkgs/
-          prefix="luci-app-online-upgrade-${VERSION}-r${RELEASE}_"
+          prefix="luci-app-online-upgrade_${VERSION}-r${RELEASE}_"
           found=0
           for f in /tmp/pkgs/*; do
             [ -f "$f" ] || continue
@@ -231,6 +238,79 @@ jobs:
           done
           [ "$found" -gt 0 ] || { echo "没有找到任何安装包产物" >&2; exit 1; }
           echo "版本校验通过: $found 个产物均为 ${VERSION}-r${RELEASE}"
+
+      # 生成自更新依赖的机器清单与校验单。固定文件名是有意为之：
+      # 插件不需要猜“哪个资产是清单”，也不会被版本号变化影响。
+      - name: Generate manifest and SHA256SUMS
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          RELEASE: ${{ needs.verify.outputs.pkg_release }}
+          TAG: ${{ needs.verify.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          python3 - <<'PY'
+          import glob
+          import hashlib
+          import json
+          import os
+
+          version = os.environ["VERSION"]
+          release = os.environ["RELEASE"]
+          tag = os.environ["TAG"]
+          repo = os.environ["REPO"]
+          root = "/tmp/pkgs"
+
+          def sha256(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          assets = []
+          sums = []
+          for path in sorted(glob.glob(os.path.join(root, "*.apk"))):
+              name = os.path.basename(path)
+              stem = name[:-4]
+              prefix = f"luci-app-online-upgrade_{version}-r{release}_"
+              if not stem.startswith(prefix):
+                  raise SystemExit(f"产物命名不符合约定: {name}")
+              # 架构本身可能含下划线（aarch64_cortex-a53），不能按最后一个
+              # 下划线切分；按固定前缀取剩余部分才是完整包架构。
+              arch = stem[len(prefix):]
+              if not arch:
+                  raise SystemExit(f"产物缺少架构: {name}")
+              digest = sha256(path)
+              assets.append({
+                  "arch": arch,
+                  "manager": "apk",
+                  "file": name,
+                  "sha256": digest,
+                  "size": os.path.getsize(path),
+              })
+              sums.append(f"{digest}  {name}")
+
+          manifest = {
+              "schema": 1,
+              "package": "luci-app-online-upgrade",
+              "version": version,
+              "pkg_release": release,
+              "tag": tag,
+              "repo": repo,
+              "assets": assets,
+          }
+          manifest_path = os.path.join(root, "online-upgrade-manifest.json")
+          with open(manifest_path, "w", encoding="utf-8", newline="\n") as fh:
+              json.dump(manifest, fh, ensure_ascii=False, indent=2)
+              fh.write("\n")
+          sums.append(f"{sha256(manifest_path)}  online-upgrade-manifest.json")
+          with open(os.path.join(root, "SHA256SUMS"), "w", encoding="utf-8", newline="\n") as fh:
+              fh.write("\n".join(sorted(sums)) + "\n")
+
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          PY
+          ls -lh /tmp/pkgs/
 
       - name: Build release notes from CHANGELOG
         env:
@@ -255,8 +335,12 @@ jobs:
               "## luci-app-online-upgrade " + tag + "\n\n"
               "发布标签与安装包版本统一由 `Makefile` 的 `PKG_VERSION=" + version
               + "` / `PKG_RELEASE=" + release + "` 派生；本 Release 的产物为 "
-              "`luci-app-online-upgrade-" + version + "-r" + release
-              + "_<arch>.apk`。\n\n"
+              "`luci-app-online-upgrade_" + version + "-r" + release
+              + "_<arch>.apk`，并附带固定名称的 `online-upgrade-manifest.json` "
+              "与 `SHA256SUMS`。\n\n"
+              "标签规范：`v<MAJOR>.<MINOR>.<PATCH>`（本版 `" + tag + "`），"
+              "不使用日期标签或预发布标签；插件自我更新只读取稳定的 "
+              "`vX.Y.Z` Release，并按 manifest 中的架构与 SHA256 选择安装包。\n\n"
               "适用 ImmortalWrt 25.12+ / OpenWrt 25+（apk 包管理器），提供 "
               "`aarch64_cortex-a53`（mediatek/filogic）与 `x86_64` 两个架构。\n\n"
               "---\n\n"

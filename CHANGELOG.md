@@ -8,7 +8,23 @@
 
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 升级到 Node 24 版本（`checkout@v5`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v5`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
-## [2.4.1] - 2026-11-10
+## [2.5.0] - 2026-11-10
+
+> 发布标签 `v2.5.0`；安装包 `luci-app-online-upgrade_2.5.0-r1_<arch>.apk`，并附带固定名称的 `online-upgrade-manifest.json` 与 `SHA256SUMS`。
+
+### Added
+
+- **插件自我更新**：新增 `plugin-info` / `plugin-check` / `plugin-update` 子命令，以及 rpcd 的 `plugin_info` / `start_plugin_check` / `start_plugin_update` / `get_plugin_status` 方法。自更新固定读取本插件仓库的稳定 Release，按 `online-upgrade-manifest.json` 选择与本机包架构匹配的安装包，校验 SHA256 与文件大小后调用 `apk` / `opkg` 原地安装，并在安装后重新读取版本确认到位。清单缺失时退回 `SHA256SUMS`；两者都没有校验值时拒绝安装，不提供“无校验更新”路径。
+- **独立插件更新卡片**：页面新增「插件版本与自我更新」区块，展示当前版本、最新版本、运行环境、最近检查时间、目标安装包与 SHA256 摘要，提供「检查插件更新」「更新插件」「刷新页面」三个动作；检查/更新状态写入独立的 `/tmp/online-upgrade-plugin-status.json`，不会覆盖固件任务进度。
+- **发布清单与校验单**：CI 在发布前自动生成 `online-upgrade-manifest.json`（`schema` / `version` / `pkg_release` / `tag` / 每个架构的 `file`、`sha256`、`size`）与 `SHA256SUMS`，随安装包一起上传；发布标签严格为 `vMAJOR.MINOR.PATCH`，自更新忽略 draft、prerelease 与日期型标签。
+- **安装版本事实来源**：`Makefile` 安装时写入 `/usr/share/online-upgrade/version`（内容为 `<PKG_VERSION>-r<PKG_RELEASE>`），避免只依赖运行中二进制或用户手工配置来判断本地版本。
+
+### Changed
+
+- **检测依据排版重构**：原先挤在一行里的判定文案与标签流改为「结论 → 短标签 → 关键事实网格 → 可展开证据链」四层结构；本机身份、机型通道、架构通道、版本通道、本地版本依据、校验依据、发布信息分别成格，长正则、板型与哈希允许任意换行，不再把标题挤成参差的胶囊行。Release 链接移到面板右上角，证据链默认折叠并显示条数。
+- **全局排版统一**：统一卡片标题区间距、说明文字行高、按钮字号与内边距、表头字号/字距、标签芯片圆角与换行规则；桌面端保持三列统计卡，平板两列、手机单列，插件卡片在窄屏自动改为上下布局。
+- **Release 产物命名统一**：安装包从 `luci-app-online-upgrade-<版本>-r<发布号>_<架构>.apk` 改为 `luci-app-online-upgrade_<版本>-r<发布号>_<架构>.apk`；CI 的版本校验、Release 说明与 README 同步更新，避免自更新解析时混淆包名、版本与架构分隔符。
+
 
 ### Fixed
 

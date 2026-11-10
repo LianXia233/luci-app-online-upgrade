@@ -205,67 +205,161 @@
 		el.style.display = on ? '' : 'none';
 	}
 
-	function renderCompatDetail(ci, res) {
-		var html = '<span class="ou-reason-text">' + esc(res.reason) + '</span>';
+	function tagChip(text, cls, title) {
+		return '<span class="ou-tag-chip' + (cls ? ' ' + cls : '') + '"' +
+			(title ? ' title="' + esc(title) + '"' : '') + '>' + esc(text) + '</span>';
+	}
+
+	function factRow(label, valueHtml, opts) {
+		opts = opts || {};
+		return '<div class="ou-fact' + (opts.wide ? ' ou-fact-wide' : '') + '">' +
+			'<span class="ou-fact-label">' + esc(label) + '</span>' +
+			'<span class="ou-fact-value' + (opts.mono ? ' ou-mono' : '') + '">' + valueHtml + '</span>' +
+			'</div>';
+	}
+
+	function setEvidenceState(text, cls) {
+		var el = $('evidence-state');
+		if (!el) return;
+		el.className = 'ou-evidence-state' + (cls ? ' ' + cls : '');
+		el.textContent = text;
+	}
+
+	function hideEvidenceDetail() {
+		var d = $('evidence-detail');
+		if (d) d.classList.add('is-hidden');
+		var l = $('evidence-release-link');
+		if (l) l.classList.add('is-hidden');
+	}
+
+	function renderEvidenceLoading() {
+		setEvidenceState('检测中', 'busy');
+		setText('evidence-verdict', '正在连接 GitHub 并读取 Release 清单，请稍候…');
+		if ($('evidence-chips')) $('evidence-chips').innerHTML = '';
+		if ($('evidence-facts')) $('evidence-facts').innerHTML = '';
+		hideEvidenceDetail();
+	}
+
+	function renderEvidenceError(msg) {
+		setEvidenceState('检测异常', 'err');
+		setText('evidence-verdict', msg || '检测失败');
+		if ($('evidence-chips')) $('evidence-chips').innerHTML = '';
+		if ($('evidence-facts')) {
+			$('evidence-facts').innerHTML = factRow('错误信息', esc(msg || '检测失败'), { wide: true });
+		}
+		hideEvidenceDetail();
+	}
+
+	// 把检测结果拆成「结论 / 短标签 / 关键事实 / 可展开依据」四层。
+	// 长值（规则正则、板型、哈希）进入事实网格并允许任意换行，
+	// 不再挤在标题旁形成参差的标签流。
+	function renderEvidence(ci, res, lv, hasUpdate, sameVersion) {
+		var dev = res.device || {};
+		var ver = res.version || {};
+		var latest = res.latest || {};
+		var checks = (ci && ci.checks) || {};
+		var stateText = hasUpdate ? '发现新版本' : '已是最新';
+		var stateCls = 'ok';
+		if (lv === 'incompatible') { stateText = '固件不匹配'; stateCls = 'err'; }
+		else if (lv === 'warning') { stateText = '需人工核对'; stateCls = 'warn'; }
+		else if (lv === 'unknown') { stateText = '适配未知'; stateCls = 'warn'; }
+		else if (sameVersion) { stateText = '已是最新（同版本）'; stateCls = 'ok'; }
+		else if (ver.relation === 'older') { stateText = '目标版本更低'; stateCls = 'warn'; }
+		else if (hasUpdate && ver.state && ver.state !== 'decidable') { stateText = '发现新版本（依据较弱）'; stateCls = 'warn'; }
+		setEvidenceState(stateText, stateCls);
+
+		setText('evidence-verdict', res.reason || '检测完成');
+
+		var chips = [];
 		if (ci) {
-			var lv = compatLevel(ci);
-			var chipCls = lv === 'compatible' ? 'ou-chip-ok'
+			var ccls = lv === 'compatible' ? 'ou-chip-ok'
 				: (lv === 'warning' || lv === 'unknown') ? 'ou-chip-warn' : 'ou-chip-err';
-			html += '<span class="ou-tag-chip ' + chipCls + '" title="' + esc(ci.reason || '') + '">' +
-				esc(ci.badge || '适配评估') + '</span>';
-			var checks = ci.checks || {};
-			html += '<span class="ou-tag-chip" title="资产架构 ' + esc(ci.asset_arch || '未声明') +
-				' / 本机架构 ' + esc(ci.device_arch || '未知') + '">架构: ' +
-				esc(ARCH_CHECK_TEXT[checks.arch] || checks.arch || '未比对') + '</span>';
-			html += '<span class="ou-tag-chip" title="' + esc(ci.reason || '') + '">机型: ' +
-				esc(MODEL_CHECK_TEXT[checks.model] || checks.model || '未比对') + '</span>';
-		html += '<span class="ou-tag-chip" title="本机标识 ' + esc(ci.detected_model || '') +
-				' / 架构 ' + esc(ci.detected_arch || '') + '">本机: ' +
-				esc(ci.detected_model || '未知') + ' / ' + esc(ci.detected_arch || '未知') + '</span>';
+			chips.push(tagChip(ci.badge || '适配评估', ccls, ci.reason || ''));
 		}
+		if (ver.relation) {
+			var rcls = ver.relation === 'newer' ? 'ou-chip-ok'
+				: ver.relation === 'older' ? 'ou-chip-err'
+				: ver.relation === 'same' ? '' : 'ou-chip-warn';
+			chips.push(tagChip(RELATION_TEXT[ver.relation] || ver.relation, rcls));
+		}
+		if (ver.state) {
+			chips.push(tagChip(STATE_TEXT[ver.state] || ver.state,
+				ver.state === 'decidable' ? 'ou-chip-ok' : 'ou-chip-warn', STATE_DESC[ver.state] || ''));
+		}
+		var chipsEl = $('evidence-chips');
+		if (chipsEl) chipsEl.innerHTML = chips.join('');
+
+		var facts = [];
+		var model = (ci && ci.detected_model) || dev.model || '未知';
+		var board = dev.board_name || dev.board_id || '—';
+		var arch = dev.arch || (ci && ci.detected_arch) || '未知';
+		var pkgArch = (dev.pkg_arch && dev.pkg_arch !== arch) ? '（' + dev.pkg_arch + '）' : '';
+		facts.push(factRow('本机身份',
+			'<span class="ou-fact-strong">' + esc(model) + '</span> · board ' + esc(board) +
+			' · ' + esc(arch) + esc(pkgArch), { wide: true }));
+
+		facts.push(factRow('机型通道',
+			'<span class="ou-fact-strong">' + esc(MODEL_CHECK_TEXT[checks.model] || '未比对') + '</span>' +
+			(ci && ci.detected_model ? ' · 识别为 ' + esc(ci.detected_model) : '')));
+
+		facts.push(factRow('架构通道',
+			'<span class="ou-fact-strong">' + esc(ARCH_CHECK_TEXT[checks.arch] || '未比对') + '</span>' +
+			' · 资产 ' + esc((ci && ci.asset_arch) || '未声明') +
+			' → 本机 ' + esc((ci && ci.device_arch) || '未知')));
+
+		var target = ver.target || latest.version || '未知';
+		var local = ver.local || '无法取到';
+		facts.push(factRow('版本通道',
+			'目标 <span class="ou-fact-strong">v' + esc(target) + '</span>' +
+			' · ' + esc(RELATION_TEXT[ver.relation] || '无法比较') +
+			' · 本地 ' + esc(local)));
+
+		var conf = CONFIDENCE_TEXT[ver.local_confidence] || ver.local_confidence || '未知';
+		facts.push(factRow('本地版本依据',
+			esc(ver.local_source_text || ver.local_source || '来源未知') +
+			' · 可信度 <span class="ou-fact-strong">' + esc(conf) + '</span>' +
+			(ver.state ? ' · ' + esc(STATE_TEXT[ver.state] || ver.state) : '')));
+
+		var hashVal;
+		if (latest.sha256) {
+			hashVal = esc((latest.sha256_source ? (HASH_SOURCE_TEXT[latest.sha256_source] || latest.sha256_source) : '来源未知')) +
+				' · <span class="ou-mono">' + esc(latest.sha256.substring(0, 16)) + '…</span>';
+		} else {
+			hashVal = '<span class="ou-fact-muted">无上游校验依据，下载后仅记录本地 SHA256</span>';
+		}
+		facts.push(factRow('校验依据', hashVal));
+
+		facts.push(factRow('发布信息',
+			'标签 ' + esc(res.resolved_tag || latest.version || '—') +
+			' · ' + esc(latest.updated_local || '—') +
+			' · ' + esc(latest.size_human || '—')));
+
 		if (ci && ci.matched_rule) {
-			html += '<span class="ou-tag-chip ou-chip-ok" title="' + esc(ci.matched_rule) + '">规则: ' +
-				esc(ci.matched_rule) + '</span>';
+			facts.push(factRow('命中配置规则', esc(ci.matched_rule), { wide: true, mono: true }));
 		}
-		var ver = res.version || null;
-		if (ver && ver.relation) {
-			html += '<span class="ou-tag-chip">' + esc(RELATION_TEXT[ver.relation] || ver.relation) + '</span>';
+		var factsEl = $('evidence-facts');
+		if (factsEl) factsEl.innerHTML = facts.join('');
+
+		var basis = (ci && ci.basis) || [];
+		var detail = $('evidence-detail');
+		var list = $('evidence-basis');
+		if (list) {
+			list.innerHTML = basis.map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('');
 		}
-		if (ver && (ver.local || ver.local_source_text)) {
-			// 本地版本与来源必须一起给出：用户才知道「当前版本」这个结论是怎么来的。
-			var srcTitle = (ver.local_source_text || ver.local_source || '来源未知') +
-				(ver.local_confidence ? '（可信度：' + (CONFIDENCE_TEXT[ver.local_confidence] || ver.local_confidence) + '）' : '');
-			var localCls = ver.local_confidence === 'strong' ? 'ou-chip-ok'
-				: (ver.local_confidence === 'weak' ? 'ou-chip-warn' : '');
-			html += '<span class="ou-tag-chip ' + localCls + '" title="' + esc(srcTitle) + '">本地版本: ' +
-				esc(ver.local || '无法取到') + '</span>';
-			if (ver.local_source_text) {
-				html += '<span class="ou-tag-chip" title="' + esc(srcTitle) + '">依据: ' +
-					esc(ver.local_source_text) + '</span>';
+		if ($('evidence-basis-count')) {
+			$('evidence-basis-count').textContent = basis.length + ' 条';
+		}
+		if (detail) detail.classList.toggle('is-hidden', basis.length === 0);
+
+		var link = $('evidence-release-link');
+		if (link) {
+			if (res.release_url) {
+				link.href = res.release_url;
+				link.classList.remove('is-hidden');
+			} else {
+				link.classList.add('is-hidden');
 			}
 		}
-		if (ver && ver.state) {
-			html += '<span class="ou-tag-chip ' + (ver.state === 'decidable' ? 'ou-chip-ok' : 'ou-chip-warn') +
-				'" title="' + esc(STATE_DESC[ver.state] || '') + '">' +
-				esc(STATE_TEXT[ver.state] || ver.state) + '</span>';
-		}
-		if (res.latest && res.latest.sha256) {
-			html += '<span class="ou-tag-chip" title="完整 SHA256: ' + esc(res.latest.sha256) + '">SHA256: ' +
-				esc(res.latest.sha256.substring(0, 10)) + '...</span>';
-		}
-		if (res.release_url) {
-			html += '<a href="' + esc(res.release_url) + '" target="_blank" rel="noopener" class="ou-ext-link">' +
-				'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-ext-svg"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
-				'<span>查看 Release 发布页</span></a>';
-		}
-		if (ci && ci.basis && ci.basis.length) {
-			html += '<div class="ou-basis-list">';
-			ci.basis.forEach(function (b) {
-				html += '<div class="ou-basis-item">' + esc(b) + '</div>';
-			});
-			html += '</div>';
-		}
-		return html;
 	}
 
 	function renderCheckResult(res) {
@@ -280,7 +374,7 @@
 				badge.className = 'ou-status-pill err';
 				badge.innerHTML = '<span class="ou-dot err"></span> 检测异常';
 			}
-			setText('check-reason', errText);
+			renderEvidenceError(errText);
 			showBtn('btn-force', true);
 			showBtn('btn-upgrade', false);
 			return;
@@ -323,12 +417,11 @@
 			}
 		}
 
-		var reasonEl = $('check-reason');
-		if (reasonEl) reasonEl.innerHTML = renderCompatDetail(ci, res);
-
 		var hasUpdate = res.has_update === true;
 		var ver = res.version || null;
 		var sameVersion = !!(ver && ver.relation === 'same');
+		renderEvidence(ci, res, lv, hasUpdate, sameVersion);
+
 		var msg;
 		var lvl;
 
@@ -365,9 +458,10 @@
 			}
 		} else if (sameVersion) {
 			// 同版本：不出现「有新版本 / 发现更新」引导，也不把普通升级按钮当成主操作，
-			// 只保留显式点击的强制升级（同版本重装）。后端 reason 已说明重装走强制升级。
-			msg = res.reason || '已是最新版本（与当前固件同版本）';
-			if (ver.state === 'suspect') msg += '。本地版本依据较弱，仅供参考';
+			// 只保留显式点击的强制升级（同版本重装）。详细依据放在证据面板，
+			// 这里只给下一步动作，避免同一句话重复两遍。
+			msg = '无需升级：当前固件与 Release 同版本。如需同版本重装，请点击「强制升级」。';
+			if (ver.state === 'suspect') msg += ' 本地版本依据较弱，仅供参考。';
 			lvl = 'ok';
 			if (badge) {
 				badge.className = 'ou-status-pill ok';
@@ -394,7 +488,7 @@
 					badge.innerHTML = '<span class="ou-dot update"></span> 有新版本（依据较弱）';
 				}
 			} else {
-				msg = '固件兼容，发现新版本可用，可点击「立即升级」开始更新。';
+				msg = '发现新版本 v' + (v.target || latest.version || '') + '，可点击「立即升级」开始更新。';
 				lvl = 'ok';
 				if (badge) {
 					badge.className = 'ou-status-pill update';
@@ -402,11 +496,22 @@
 				}
 			}
 		} else {
-			msg = res.reason || '已是最新版本';
-			lvl = 'ok';
-			if (badge) {
-				badge.className = 'ou-status-pill ok';
-				badge.innerHTML = '<span class="ou-dot ok"></span> 已是最新';
+			// 目标版本低于当前时 has_update=false，但这不是「已是最新」：
+			// 必须明确告诉用户「不执行降级」，并保留强制升级入口的解释。
+			if (ver && ver.relation === 'older') {
+				msg = res.reason || '目标版本低于当前版本，不执行降级；如确需降级请使用「强制升级」。';
+				lvl = 'warn';
+				if (badge) {
+					badge.className = 'ou-status-pill update';
+					badge.innerHTML = '<span class="ou-dot update"></span> 不执行降级';
+				}
+			} else {
+				msg = res.reason || '已是最新版本';
+				lvl = 'ok';
+				if (badge) {
+					badge.className = 'ou-status-pill ok';
+					badge.innerHTML = '<span class="ou-dot ok"></span> 已是最新';
+				}
 			}
 		}
 
@@ -417,9 +522,11 @@
 			showBtn('btn-force', true);
 			$('btn-force').title = sameVersion
 				? '当前固件与 Release 同版本：这是同版本重装，不是升级，仅在你需要重刷固件时手动使用'
-				: (lv === 'compatible'
-					? '即使已是最新版本也重新下载刷写'
-					: '跳过适配判定与版本方向检查，强制下载并刷写');
+				: (ver && ver.relation === 'older'
+					? '目标版本低于当前固件，强制模式将执行降级刷写'
+					: (lv === 'compatible'
+						? '即使已是最新版本也重新下载刷写'
+						: '跳过适配判定与版本方向检查，强制下载并刷写'));
 			setBusy('btn-force', false, forceLabel());
 		}
 	}
@@ -429,6 +536,7 @@
 		setBusy('btn-upgrade', true);
 		setBusy('btn-force', true);
 		hint('check-result', '正在连接云端检查固件更新...');
+		renderEvidenceLoading();
 		var box = $('check-result-box');
 		if (box) box.className = 'ou-notice-box';
 		var badge = $('status-badge');
@@ -456,6 +564,7 @@
 			// 白等 20 秒后只给一句泛化提示。
 			if (r && r.ok === false) {
 				hint('check-result', r.error || '检测未能启动', 'err');
+				renderEvidenceError(r.error || '检测未能启动');
 				if (box) box.className = 'ou-notice-box err';
 				finishCheck();
 				return;
@@ -484,6 +593,7 @@
 			pollTimer = setInterval(checkTick, 1000);
 		}).catch(function (e) {
 			hint('check-result', '检测请求失败: ' + e.message, 'err');
+			renderEvidenceError('检测请求失败: ' + e.message);
 			if (box) box.className = 'ou-notice-box err';
 			finishCheck();
 		});
@@ -1200,6 +1310,306 @@
 		});
 	}
 
+	/* ---------------- 插件自身版本与更新 ---------------- */
+
+	var pluginStatusTimer = null;
+	var pluginBaseline = { pid: null, ts: 0 };
+	var pluginFresh = false;
+	var pluginTicks = 0;
+	var lastPluginCheck = null;
+
+	function pluginBadge(text, cls) {
+		var b = $('plugin-badge');
+		if (!b) return;
+		b.className = 'ou-status-pill ' + cls;
+		b.innerHTML = '<span class="ou-dot ' + cls + '"></span> ' + esc(text);
+	}
+
+	function pluginHint(text, cls) {
+		var el = $('plugin-hint');
+		if (!el) return;
+		el.textContent = text || '';
+		el.className = 'ou-plugin-hint' + (cls ? ' ' + cls : '');
+	}
+
+	function setPluginProgress(pct, show) {
+		var wrap = $('plugin-progress');
+		if (wrap) wrap.style.display = show ? '' : 'none';
+		var bar = $('plugin-progress-bar');
+		if (bar) bar.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + '%';
+		var txt = $('plugin-progress-pct');
+		if (txt) txt.textContent = Math.max(0, Math.min(100, Number(pct) || 0)) + '%';
+	}
+
+	function pluginVersionText(v) {
+		if (!v) return '未知';
+		v = String(v);
+		return v.charAt(0) === 'v' ? v : 'v' + v;
+	}
+
+	function stopPluginPoll() {
+		if (pluginStatusTimer) {
+			clearInterval(pluginStatusTimer);
+			pluginStatusTimer = null;
+		}
+	}
+
+	function snapshotPluginStatus() {
+		return ubus('get_plugin_status').then(function (st) {
+			pluginBaseline = {
+				pid: (st && st.pid != null) ? st.pid : null,
+				ts: Number((st && st.ts) || 0)
+			};
+		}).catch(function () {
+			pluginBaseline = { pid: null, ts: 0 };
+		});
+	}
+
+	function pluginIsFresh(st) {
+		if (!st) return false;
+		if (st.pid != null && pluginBaseline.pid != null)
+			return st.pid !== pluginBaseline.pid;
+		return Number(st.ts || 0) > pluginBaseline.ts;
+	}
+
+	function renderPluginInfo(info) {
+		if (!info || info.ok === false) {
+			pluginBadge('读取失败', 'err');
+			pluginHint('插件信息读取失败，请刷新页面重试', 'err');
+			return;
+		}
+		var local = info.local || {};
+		var cur = $('plugin-current');
+		if (cur) {
+			cur.textContent = pluginVersionText(local.display || '未知');
+			cur.title = (local.source_text || local.source || '') +
+				(local.pkg_release ? '（发布号 r' + local.pkg_release + '）' : '');
+		}
+		setText('plugin-env', (info.manager || '未检测到包管理器') + ' · ' +
+			(info.pkg_arch || info.arch || '未知架构'));
+		var asset = $('plugin-asset');
+		if (asset && !lastPluginCheck) {
+			asset.innerHTML = '更新源：<span class="ou-fact-strong">' + esc(info.repo || '') + '</span><br>' +
+				'<span class="ou-plugin-asset-sub">固定读取稳定 Release，按 ' + esc(info.manager || '包管理器') +
+				' 与本机 ' + esc(info.pkg_arch || '架构') + ' 选择安装包。</span>';
+		}
+		if (!info.supported) {
+			pluginBadge('环境不支持', 'err');
+			pluginHint(info.reason || '当前环境无法自动更新插件', 'err');
+			return;
+		}
+	}
+
+	function loadPluginInfo() {
+		return ubus('plugin_info').then(renderPluginInfo).catch(function (e) {
+			pluginBadge('读取失败', 'err');
+			pluginHint('插件信息读取失败: ' + e.message, 'err');
+		});
+	}
+
+	function renderPluginCheckResult(res) {
+		lastPluginCheck = res;
+		if (!res) return;
+		var latest = res.latest || {};
+		if (res.local && res.local.display) {
+			setText('plugin-current', pluginVersionText(res.local.display));
+		}
+		setText('plugin-latest', latest.version ? 'v' + latest.version : '—');
+		setText('plugin-checked', fmtTime(res.checked_ts));
+
+		var assetEl = $('plugin-asset');
+		if (assetEl) {
+			if (res.update_available && res.asset) {
+				var a = res.asset;
+				assetEl.innerHTML =
+					'<span class="ou-fact-strong">' + esc(a.name || '安装包') + '</span><br>' +
+					'<span class="ou-plugin-asset-sub">' + esc(a.size_human || '') +
+					' · ' + esc(a.arch || '') + ' · SHA256 ' + esc((a.sha256 || '').substring(0, 16)) +
+					'…</span>';
+			} else if (res.latest) {
+				assetEl.innerHTML = '<span class="ou-fact-strong">' + esc(latest.tag || '') + '</span><br>' +
+					'<span class="ou-plugin-asset-sub">' + esc(latest.published_at || '—') +
+					' · 无可用更新安装包</span>';
+			}
+		}
+
+		if (res.ok !== true) {
+			pluginBadge('检查失败', 'err');
+			pluginHint(res.reason || '插件检查失败', 'err');
+			showBtn('btn-plugin-update', false);
+			return;
+		}
+
+		if (res.update_available) {
+			pluginBadge('发现新版本', 'update');
+			pluginHint(res.reason || ('可更新到 v' + latest.version), 'warn');
+			showBtn('btn-plugin-update', true);
+			setBusy('btn-plugin-update', false, '更新插件');
+		} else {
+			pluginBadge('已是最新', 'ok');
+			pluginHint(res.reason || '当前已是最新稳定版', 'ok');
+			showBtn('btn-plugin-update', false);
+		}
+		setBusy('btn-plugin-check', false, '检查插件更新');
+	}
+
+	function renderPluginStatus(st) {
+		if (!st || st.state === 'idle') return false;
+		var state = st.state;
+		var active = state === 'checking' || state === 'updating' ||
+			state === 'downloading' || state === 'verifying' || state === 'installing';
+
+		if (active) {
+			setPluginProgress(st.pct || 0, true);
+			var label = state === 'checking' ? '检查中' :
+				state === 'downloading' ? '下载中' :
+				state === 'verifying' ? '校验中' :
+				state === 'installing' ? '安装中' : '更新中';
+			pluginBadge(label, 'update');
+			pluginHint(st.msg || label, '');
+			setBusy('btn-plugin-check', true, '检查插件更新');
+			setBusy('btn-plugin-update', true, '更新插件');
+			showBtn('btn-plugin-update', false);
+			showBtn('btn-plugin-reload', false);
+			return true;
+		}
+
+		setBusy('btn-plugin-check', false, '检查插件更新');
+		setBusy('btn-plugin-update', false, '更新插件');
+
+		if (state === 'checked') {
+			setPluginProgress(100, false);
+			renderPluginCheckResult(st.result);
+			return false;
+		}
+		if (state === 'check_failed') {
+			setPluginProgress(100, false);
+			pluginBadge('检查失败', 'err');
+			pluginHint(st.error || st.msg || '插件检查失败', 'err');
+			showBtn('btn-plugin-update', false);
+			return false;
+		}
+		if (state === 'done') {
+			setPluginProgress(100, true);
+			pluginBadge('已更新', 'ok');
+			var r = st.result || {};
+			pluginHint(r.message || '插件已更新，刷新页面即可加载新界面', 'ok');
+			setText('plugin-current', pluginVersionText(r.installed_version || r.to || ''));
+			setText('plugin-latest', r.to ? 'v' + r.to : '—');
+			setText('plugin-checked', fmtTime(st.ts));
+			showBtn('btn-plugin-update', false);
+			showBtn('btn-plugin-reload', true);
+			lastPluginCheck = null;
+			return false;
+		}
+		if (state === 'failed') {
+			setPluginProgress(st.pct || 0, true);
+			pluginBadge('更新失败', 'err');
+			pluginHint(st.error || st.msg || '插件更新失败', 'err');
+			if (lastPluginCheck && lastPluginCheck.update_available) {
+				showBtn('btn-plugin-update', true);
+			} else {
+				showBtn('btn-plugin-update', false);
+			}
+			return false;
+		}
+		return false;
+	}
+
+	function startPluginPoll() {
+		stopPluginPoll();
+		pluginTicks = 0;
+		pluginStatusTimer = setInterval(function () {
+			pluginTicks++;
+			if (pluginTicks > 90) {
+				stopPluginPoll();
+				pluginBadge('状态未知', 'err');
+				pluginHint('未读取到本次插件任务的状态，请查看运行日志后重试', 'err');
+				setBusy('btn-plugin-check', false, '检查插件更新');
+				return;
+			}
+			ubus('get_plugin_status').then(function (st) {
+				if (pluginFresh) {
+					if (!pluginIsFresh(st)) return;
+					pluginFresh = false;
+				}
+				if (!renderPluginStatus(st)) stopPluginPoll();
+			}).catch(function () { /* 路由重启或瞬时 RPC 错误：继续轮询 */ });
+		}, 1000);
+	}
+
+	function runPluginCheck() {
+		setBusy('btn-plugin-check', true, '检查中...');
+		setBusy('btn-plugin-update', true, '更新插件');
+		showBtn('btn-plugin-update', false);
+		showBtn('btn-plugin-reload', false);
+		setPluginProgress(0, false);
+		pluginBadge('检查中', 'update');
+		pluginHint('正在获取插件 Release 信息...', '');
+		stopPluginPoll();
+		snapshotPluginStatus().then(function () {
+			pluginFresh = true;
+			return ubus('start_plugin_check');
+		}).then(function (r) {
+			if (r && r.ok === false) {
+				pluginFresh = false;
+				pluginBadge('检查失败', 'err');
+				pluginHint(r.error || '插件检查未能启动', 'err');
+				setBusy('btn-plugin-check', false, '检查插件更新');
+				return;
+			}
+			startPluginPoll();
+		}).catch(function (e) {
+			pluginFresh = false;
+			pluginBadge('检查失败', 'err');
+			pluginHint('插件检查请求失败: ' + e.message, 'err');
+			setBusy('btn-plugin-check', false, '检查插件更新');
+		});
+	}
+
+	function runPluginUpdate() {
+		var r = lastPluginCheck;
+		if (!r || !r.update_available || !r.asset) return;
+		var from = r.local ? r.local.display : '未知';
+		var to = r.latest ? r.latest.version : '未知';
+		var msg = '确定更新插件？\n\n当前版本: ' + from + '\n目标版本: v' + to +
+			'\n安装包: ' + r.asset.name +
+			'\nSHA256: ' + (r.asset.sha256 || '').substring(0, 16) + '...' +
+			'\n\n更新只替换插件本身，不会重启路由器；完成后刷新页面即可。';
+		if (!confirm(msg)) return;
+
+		setBusy('btn-plugin-check', true, '检查插件更新');
+		setBusy('btn-plugin-update', true, '启动中...');
+		showBtn('btn-plugin-update', false);
+		showBtn('btn-plugin-reload', false);
+		setPluginProgress(0, true);
+		pluginBadge('更新中', 'update');
+		pluginHint('正在校验最新版本并准备下载...', '');
+		stopPluginPoll();
+		snapshotPluginStatus().then(function () {
+			pluginFresh = true;
+			return ubus('start_plugin_update');
+		}).then(function (res) {
+			if (res && res.ok === false) {
+				pluginFresh = false;
+				pluginBadge('更新失败', 'err');
+				pluginHint(res.error || '插件更新未能启动', 'err');
+				setBusy('btn-plugin-check', false, '检查插件更新');
+				setBusy('btn-plugin-update', false, '更新插件');
+				showBtn('btn-plugin-update', true);
+				return;
+			}
+			startPluginPoll();
+		}).catch(function (e) {
+			pluginFresh = false;
+			pluginBadge('更新失败', 'err');
+			pluginHint('插件更新请求失败: ' + e.message, 'err');
+			setBusy('btn-plugin-check', false, '检查插件更新');
+			setBusy('btn-plugin-update', false, '更新插件');
+			showBtn('btn-plugin-update', true);
+		});
+	}
+
 	/* ---------------- 初始化 ---------------- */
 
 	function boot() {
@@ -1223,6 +1633,9 @@
 		$('btn-resume-download').addEventListener('click', function () { taskCommand('resume_download', '继续'); });
 		$('btn-cancel-download').addEventListener('click', function () { taskCommand('cancel_download', '取消'); });
 		$('btn-reload').addEventListener('click', function () { location.reload(); });
+		$('btn-plugin-check').addEventListener('click', runPluginCheck);
+		$('btn-plugin-update').addEventListener('click', runPluginUpdate);
+		$('btn-plugin-reload').addEventListener('click', function () { location.reload(); });
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {
 			pill.addEventListener('click', function () {
@@ -1233,6 +1646,10 @@
 		});
 
 		refreshLog();
+		loadPluginInfo();
+		ubus('get_plugin_status').then(function (st) {
+			if (renderPluginStatus(st)) startPluginPoll();
+		}).catch(function () {});
 		ubus('get_sysinfo').then(renderSysinfo).catch(function () { setText('cur-ver', '读取失败'); });
 		ubus('get_config').then(function (r) { fillConfig(r.settings || {}); }).catch(function (e) {
 			hint('config-hint', ' 读取配置失败: ' + e.message, 'err');

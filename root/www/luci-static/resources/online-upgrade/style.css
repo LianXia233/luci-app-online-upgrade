@@ -1736,3 +1736,558 @@
 		padding: 3px 7px;
 	}
 }
+
+/* ==========================================================================
+   v2.5 排版统一与「检测依据」结构化面板
+   目标：把原先挤在单行里的标签流拆成「结论 → 关键事实 → 可展开证据链」，
+   并统一字号、行高、间距与长文本换行规则。
+   ========================================================================== */
+
+.ou-icon-badge.indigo {
+	background: #eef2ff !important;
+	color: #4f46e5 !important;
+	border: 1px solid #e0e7ff !important;
+}
+
+/* 统一卡片标题区：标题与说明之间留出稳定呼吸，长说明限制可读宽度 */
+.ou-card-head {
+	gap: 16px !important;
+	margin-bottom: 18px !important;
+}
+
+.ou-head-title-row {
+	display: flex !important;
+	align-items: center !important;
+	flex-wrap: wrap !important;
+	gap: 8px !important;
+}
+
+.ou-head-sub {
+	max-width: 82ch;
+	line-height: 1.65 !important;
+}
+
+/* 三列统计卡在中等宽度下保持整齐，不再让第四张全宽卡破坏节奏 */
+.ou-stat-grid {
+	grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+	margin-bottom: 16px !important;
+}
+
+.ou-stat-card {
+	padding: 15px 16px !important;
+}
+
+.ou-stat-val {
+	font-size: 13.5px !important;
+	/* 固件名用连字符/点号分段，不应在字母中间硬断；长哈希仍可任意换行 */
+	word-break: normal !important;
+	overflow-wrap: anywhere;
+}
+
+/* ---------- 检测依据面板 ---------- */
+.ou-evidence {
+	margin: 0 0 18px !important;
+	padding: 18px 20px 16px !important;
+	border: 1px solid #dbeafe !important;
+	border-radius: 16px !important;
+	background: linear-gradient(180deg, #fbfdff 0%, #ffffff 100%) !important;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.ou-evidence-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+
+.ou-evidence-heading {
+	min-width: 0;
+}
+
+.ou-evidence-kicker {
+	display: inline-flex;
+	align-items: center;
+	font-size: 10.5px !important;
+	font-weight: 700 !important;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: #64748b !important;
+}
+
+.ou-evidence-title {
+	margin: 4px 0 0 !important;
+	font-size: 15px !important;
+	font-weight: 700 !important;
+	line-height: 1.4 !important;
+	color: #0f172a !important;
+}
+
+.ou-evidence-status {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.ou-evidence-state {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 3px 9px;
+	border-radius: 999px;
+	border: 1px solid #e2e8f0;
+	background: #f8fafc;
+	color: #475569;
+	font-size: 11px !important;
+	font-weight: 600 !important;
+	white-space: nowrap;
+}
+
+.ou-evidence-state.ok   { background: #ecfdf5 !important; color: #059669 !important; border-color: #a7f3d0 !important; }
+.ou-evidence-state.warn { background: #fffbeb !important; color: #b45309 !important; border-color: #fde68a !important; }
+.ou-evidence-state.err  { background: #fef2f2 !important; color: #dc2626 !important; border-color: #fecaca !important; }
+.ou-evidence-state.busy { background: #eff6ff !important; color: #2563eb !important; border-color: #bfdbfe !important; }
+
+.ou-evidence-link {
+	display: inline-flex !important;
+	align-items: center !important;
+	gap: 5px !important;
+	padding: 3px 8px !important;
+	border: 1px solid #e2e8f0 !important;
+	border-radius: 7px !important;
+	background: #ffffff !important;
+	color: #475569 !important;
+	font-size: 11px !important;
+	font-weight: 600 !important;
+	text-decoration: none !important;
+	white-space: nowrap;
+}
+
+.ou-evidence-link:hover {
+	border-color: #93c5fd !important;
+	color: #2563eb !important;
+	background: #eff6ff !important;
+}
+
+.ou-evidence-link.is-hidden {
+	display: none !important;
+}
+
+.ou-evidence-link-svg {
+	width: 12px;
+	height: 12px;
+}
+
+.ou-evidence-verdict {
+	margin: 14px 0 12px !important;
+	font-size: 14px !important;
+	font-weight: 600 !important;
+	line-height: 1.7 !important;
+	color: #0f172a !important;
+	overflow-wrap: anywhere;
+}
+
+.ou-evidence-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0 0 14px;
+}
+
+.ou-evidence-chips:empty {
+	display: none;
+}
+
+.ou-evidence-facts {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.ou-fact {
+	min-width: 0;
+	padding: 10px 12px;
+	border: 1px solid #eef2f7;
+	border-radius: 10px;
+	background: #ffffff;
+}
+
+.ou-fact-wide {
+	grid-column: 1 / -1;
+}
+
+.ou-fact-label {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 10.5px !important;
+	font-weight: 600 !important;
+	letter-spacing: 0.04em;
+	color: #64748b !important;
+}
+
+.ou-fact-value {
+	display: block;
+	font-size: 12.5px !important;
+	line-height: 1.65 !important;
+	font-weight: 500;
+	color: #1e293b !important;
+	white-space: normal !important;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.ou-fact-value.ou-mono {
+	font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+	font-size: 11.5px !important;
+	letter-spacing: -0.01em;
+}
+
+.ou-fact-value .ou-fact-strong {
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.ou-fact-value .ou-fact-muted {
+	color: #64748b;
+}
+
+.ou-evidence-detail {
+	margin-top: 14px;
+	padding-top: 10px;
+	border-top: 1px dashed #e2e8f0;
+}
+
+.ou-evidence-detail.is-hidden {
+	display: none !important;
+}
+
+.ou-evidence-summary {
+	display: flex !important;
+	align-items: center !important;
+	justify-content: space-between !important;
+	gap: 10px;
+	cursor: pointer;
+	list-style: none;
+	color: #2563eb !important;
+	font-size: 12px !important;
+	font-weight: 600 !important;
+}
+
+.ou-evidence-summary::-webkit-details-marker {
+	display: none;
+}
+
+.ou-evidence-summary-left {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.ou-evidence-chevron {
+	width: 13px;
+	height: 13px;
+	transition: transform 0.18s ease;
+}
+
+details[open] > .ou-evidence-summary .ou-evidence-chevron,
+details[open] > .ou-plugin-convention-summary .ou-evidence-chevron {
+	transform: rotate(90deg);
+}
+
+.ou-detail-count {
+	padding: 1px 7px;
+	border-radius: 999px;
+	background: #eff6ff;
+	color: #2563eb;
+	font-size: 10.5px;
+	font-weight: 600;
+}
+
+.ou-basis-list {
+	counter-reset: basis;
+	list-style: none !important;
+	margin: 10px 0 0 !important;
+	padding: 0 !important;
+	display: grid;
+	gap: 6px;
+}
+
+.ou-basis-list li {
+	position: relative;
+	counter-increment: basis;
+	margin: 0 !important;
+	padding: 8px 10px 8px 32px !important;
+	border: 1px solid #f1f5f9;
+	border-radius: 9px;
+	background: #f8fafc;
+	color: #475569 !important;
+	font-size: 12px !important;
+	line-height: 1.65 !important;
+	overflow-wrap: anywhere;
+}
+
+.ou-basis-list li::before {
+	content: counter(basis);
+	position: absolute;
+	left: 9px;
+	top: 8px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: #dbeafe;
+	color: #2563eb;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 16px;
+	text-align: center;
+}
+
+.ou-evidence-note {
+	margin: 10px 0 0 !important;
+	color: #64748b !important;
+	font-size: 11.5px !important;
+	line-height: 1.7 !important;
+}
+
+/* 旧标签芯片统一：长值不再把行撑破，统一圆角与行高 */
+.ou-tag-chip {
+	max-width: 100%;
+	padding: 3px 8px !important;
+	border-radius: 7px !important;
+	font-size: 11.5px !important;
+	line-height: 1.5 !important;
+	white-space: normal !important;
+	overflow-wrap: anywhere;
+}
+
+/* ---------- 插件自我更新 ---------- */
+.ou-card-plugin .ou-card-head {
+	align-items: flex-start !important;
+}
+
+.ou-plugin-body {
+	display: grid;
+	grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+	gap: 16px;
+	align-items: stretch;
+}
+
+.ou-plugin-meta {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.ou-plugin-row {
+	min-width: 0;
+	padding: 10px 12px;
+	border: 1px solid #eef2f7;
+	border-radius: 10px;
+	background: #f8fafc;
+}
+
+.ou-plugin-key {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 10.5px !important;
+	font-weight: 600 !important;
+	letter-spacing: 0.04em;
+	color: #64748b !important;
+}
+
+.ou-plugin-val {
+	display: block;
+	font-size: 12.5px !important;
+	font-weight: 600 !important;
+	line-height: 1.55 !important;
+	color: #0f172a !important;
+	overflow-wrap: anywhere;
+}
+
+.ou-plugin-detail {
+	min-width: 0;
+	padding: 12px 14px;
+	border: 1px solid #e0e7ff;
+	border-radius: 12px;
+	background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.ou-plugin-asset {
+	font-size: 12px !important;
+	line-height: 1.65 !important;
+	color: #334155 !important;
+	overflow-wrap: anywhere;
+}
+
+.ou-plugin-asset-sub {
+	color: #64748b !important;
+	font-size: 11.5px !important;
+}
+
+.ou-plugin-progress {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.ou-plugin-progress-track {
+	flex: 1;
+	height: 6px;
+	border-radius: 999px;
+	background: #e2e8f0;
+	overflow: hidden;
+}
+
+.ou-plugin-progress-bar {
+	height: 100%;
+	width: 0;
+	border-radius: 999px;
+	background: linear-gradient(90deg, #3b82f6 0%, #06b6d4 100%);
+	transition: width 0.3s ease;
+}
+
+.ou-plugin-progress-pct {
+	font-size: 11px !important;
+	font-weight: 700 !important;
+	color: #2563eb !important;
+	min-width: 34px;
+	text-align: right;
+}
+
+.ou-plugin-hint {
+	margin: auto 0 0 !important;
+	font-size: 12px !important;
+	line-height: 1.65 !important;
+	color: #475569 !important;
+	overflow-wrap: anywhere;
+}
+
+.ou-plugin-hint.ok   { color: #059669 !important; }
+.ou-plugin-hint.warn { color: #b45309 !important; }
+.ou-plugin-hint.err  { color: #dc2626 !important; }
+
+.ou-plugin-convention {
+	margin-top: 14px;
+	padding-top: 10px;
+	border-top: 1px dashed #e2e8f0;
+}
+
+.ou-plugin-convention-summary {
+	display: flex !important;
+	align-items: center !important;
+	gap: 6px;
+	cursor: pointer;
+	list-style: none;
+	color: #64748b !important;
+	font-size: 11.5px !important;
+	font-weight: 600 !important;
+}
+
+.ou-plugin-convention-summary::-webkit-details-marker {
+	display: none;
+}
+
+.ou-convention-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.ou-convention-item {
+	padding: 10px 12px;
+	border: 1px solid #eef2f7;
+	border-radius: 10px;
+	background: #f8fafc;
+}
+
+.ou-convention-key {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 10.5px !important;
+	font-weight: 700 !important;
+	color: #64748b !important;
+	letter-spacing: 0.04em;
+}
+
+.ou-convention-item code {
+	display: block;
+	font-size: 11px !important;
+	line-height: 1.6 !important;
+	color: #1e40af !important;
+	background: #eff6ff;
+	border: 1px solid #dbeafe;
+	border-radius: 6px;
+	padding: 4px 6px;
+	overflow-wrap: anywhere;
+}
+
+.ou-convention-note {
+	display: block;
+	margin-top: 5px;
+	font-size: 11px !important;
+	line-height: 1.6 !important;
+	color: #64748b !important;
+}
+
+/* 表格与按钮的字号层级统一 */
+.ou-table th {
+	font-size: 11px !important;
+	letter-spacing: 0.04em;
+}
+
+.ou-table td {
+	font-size: 12.5px !important;
+}
+
+.ou-container .ou-btn {
+	font-size: 12.5px !important;
+	padding: 8px 14px !important;
+}
+
+@media (max-width: 992px) {
+	.ou-stat-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+	}
+
+	.ou-plugin-body {
+		grid-template-columns: 1fr;
+	}
+}
+
+@media (max-width: 760px) {
+	.ou-evidence {
+		padding: 16px 14px !important;
+	}
+
+	.ou-evidence-facts,
+	.ou-convention-grid,
+	.ou-plugin-meta {
+		grid-template-columns: 1fr !important;
+	}
+
+	.ou-evidence-status {
+		width: 100%;
+	}
+
+	.ou-evidence-verdict {
+		font-size: 13.5px !important;
+	}
+
+	.ou-stat-grid {
+		grid-template-columns: 1fr !important;
+	}
+
+	.ou-card-plugin .ou-btn-row {
+		width: 100%;
+	}
+
+	.ou-card-plugin .ou-btn-row .ou-btn {
+		flex: 1 1 auto;
+	}
+}

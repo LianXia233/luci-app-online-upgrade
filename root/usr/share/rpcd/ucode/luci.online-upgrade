@@ -12,6 +12,7 @@ import { cursor } from 'uci';
 
 const BIN = '/usr/bin/online-upgrade';
 const STATUS_FILE = '/tmp/online-upgrade-status.json';
+const PLUGIN_STATUS_FILE = '/tmp/online-upgrade-plugin-status.json';
 const LOG_FILE = '/tmp/online-upgrade.log';
 const BACKUP_DIR = '/root';
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -84,6 +85,16 @@ function read_status() {
 		return { stage: 'idle' };
 	let obj = json(content);
 	return type(obj) == 'object' ? obj : { stage: 'idle' };
+}
+
+// 插件自身状态独立存放：固件检查/升级与插件更新可以各自保留进度，
+// 不会互相覆盖对方的状态文件。
+function read_plugin_status() {
+	let content = readfile(PLUGIN_STATUS_FILE);
+	if (!content)
+		return { state: 'idle' };
+	let obj = json(content);
+	return type(obj) == 'object' ? obj : { state: 'idle' };
 }
 
 function read_log() {
@@ -350,6 +361,39 @@ const methods = {
 	get_sysinfo: {
 		call: function() {
 			return sysinfo();
+		}
+	},
+
+	// ---- 插件自身版本与更新 ------------------------------------------------
+	plugin_info: {
+		call: function() {
+			return control_call('plugin-info');
+		}
+	},
+
+	start_plugin_check: {
+		call: function() {
+			let pid = busy_pid();
+			if (length(pid) > 0)
+				return { ok: false, error: '已有任务正在执行(pid ' + pid + ')，请等待完成后再试' };
+			run_detached(BIN, ['plugin-check']);
+			return { ok: true };
+		}
+	},
+
+	start_plugin_update: {
+		call: function() {
+			let pid = busy_pid();
+			if (length(pid) > 0)
+				return { ok: false, error: '已有任务正在执行(pid ' + pid + ')，请先暂停或等待完成' };
+			run_detached(BIN, ['plugin-update']);
+			return { ok: true };
+		}
+	},
+
+	get_plugin_status: {
+		call: function() {
+			return read_plugin_status();
 		}
 	},
 

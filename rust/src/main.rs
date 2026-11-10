@@ -9,6 +9,7 @@ mod http;
 mod json;
 mod localver;
 mod lock;
+mod selfupdate;
 mod status;
 mod taskctl;
 mod uci;
@@ -40,7 +41,7 @@ async fn cmd_check() -> i32 {
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: online-upgrade <check|upgrade [--force]|download|pause|resume|cancel|tasks|task-delete <id> [--force]|backup|restore <file>|status|clear-log|probe>"
+        "usage: online-upgrade <check|upgrade [--force]|download|pause|resume|cancel|tasks|task-delete <id> [--force]|backup|restore <file>|status|clear-log|probe|plugin-info|plugin-check|plugin-update>"
     );
     2
 }
@@ -60,7 +61,7 @@ fn main() {
     // （check / upgrade / download / backup / restore）
     let needs_lock = matches!(
         mode,
-        "check" | "upgrade" | "download" | "backup" | "restore"
+        "check" | "upgrade" | "download" | "backup" | "restore" | "plugin-check" | "plugin-update"
     );
     let guard = if needs_lock {
         match lock::acquire(mode) {
@@ -213,6 +214,25 @@ fn main() {
             );
             0
         }
+        // 插件自身版本检测与原地更新。两者都写独立的插件状态文件，
+        // 不会覆盖固件任务的进度；plugin-update 仍然复用同一把操作锁，
+        // 避免与固件升级同时改动 /usr/bin/online-upgrade。
+        "plugin-info" => {
+            println!("{}", selfupdate::info().dump());
+            0
+        }
+        "plugin-check" => tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(selfupdate::run_check()),
+        "plugin-update" => tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(selfupdate::run_update()),
         _ => usage(),
     };
     // process::exit 不会执行析构函数，因此必须显式释放锁：

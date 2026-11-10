@@ -106,6 +106,11 @@ fn host_of(url: &str) -> &str {
         .unwrap_or("")
 }
 
+/// 判断 URL 是否为 GitHub API 主机；只有该主机允许携带用户令牌。
+pub fn is_github_api(url: &str) -> bool {
+    host_of(url).eq_ignore_ascii_case("api.github.com")
+}
+
 /// 只有 api.github.com 可以收到用户令牌：前缀镜像属于第三方域名，
 /// 绝不能看到 Authorization 请求头。
 async fn api_get(
@@ -127,7 +132,7 @@ async fn api_get(
 
 /// 按完整容错链路拉取 GitHub API URL：
 /// 直连 → 连接失败时回退代理前缀 → 403 限流重试。
-async fn api_fetch(
+pub(crate) async fn api_fetch(
     client: &reqwest::Client,
     url: &str,
     cfg: &Cfg,
@@ -169,7 +174,7 @@ async fn api_fetch(
 
 /// 按与 API 相同的线路策略拉取小型文本资源（校验清单）：
 /// 优先直连，失败回退代理，且只接受 2xx 响应体。
-async fn fetch_text(client: &reqwest::Client, url: &str, cfg: &Cfg) -> Option<String> {
+pub(crate) async fn fetch_text(client: &reqwest::Client, url: &str, cfg: &Cfg) -> Option<String> {
     let mut urls = vec![url.to_string()];
     if !cfg.proxy.is_empty() {
         urls.push(prefixed(&cfg.proxy, url));

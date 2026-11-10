@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=2.4.1
+PKG_VERSION:=2.5.0
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
@@ -59,6 +59,11 @@ endef
 define Package/luci-app-online-upgrade/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./root/usr/bin/online-upgrade $(1)/usr/bin/online-upgrade
+
+	# 安装包版本是插件自我更新的本地事实来源：不能依赖运行中的二进制
+	# 或用户手工填写的值，否则升级后可能误判为“已是最新”。
+	$(INSTALL_DIR) $(1)/usr/share/online-upgrade
+	echo "$(PKG_VERSION)-r$(PKG_RELEASE)" > $(1)/usr/share/online-upgrade/version
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/online-upgrade $(1)/etc/config/online-upgrade

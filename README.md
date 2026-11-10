@@ -46,7 +46,7 @@
 ### 2. 全端全场景响应式适配
 - **手机触屏深度优化**：针对移动端屏幕尺寸，自动重构为单列大触摸卡片，操作按钮智能扩宽为易触控的弹性网格，彻底解决移动端横向溢出或操作别扭问题。
 - **Hero 头部按视口自适应瘦身**：桌面端保持「文字 + SVG 插画」横向双栏并收紧留白；平板仅收窄插画、不再上下堆叠（避免横幅被撑到近 400px）；手机端隐藏纯装饰插画、把三个特性徽章由纵向堆叠改为横向紧凑排列，横幅高度压缩一半以上，首屏无需滚动即可看到「检查更新」与固件状态。说明文案完整保留，不做省略。
-- **无截断文本排版**：采用专属全宽卡片展示「检测依据与规则」，固件正则规则、架构匹配、云端 Release 直达链接等关键信息多行自适应折行完整呈现，绝不模糊省略。
+- **无截断文本排版**：采用专属全宽卡片展示「检测依据与规则」，并将结论、短标签、关键事实（本机身份 / 机型 / 架构 / 版本 / 校验依据 / 发布信息）与可展开证据链分层呈现；固件正则规则、架构匹配、云端 Release 直达链接等关键信息多行自适应折行完整呈现，绝不模糊省略。
 
 ### 3. 智能架构与机型识别（防变砖安全决策引擎）
 - **自动探查设备硬件特征**：全自动识别路由器当前硬件架构（如 `aarch64`、`x86_64`、`mips` 等）、芯片平台（如 `mediatek/filogic`、`rockchip` 等）以及设备具体板型（如 `Hiveton H5000M`、`H3C Magic NX30 Pro` 等）。
@@ -87,6 +87,12 @@
 ### 7. 真实进度条与实时控制台终端
 - **真实字节级进度**：精准展示下载百分比、实时下载速度、已下体积与总大小，非虚假动画估算。
 - **内嵌实时日志控制台**：支持折叠/展开的黑客风格暗色终端，实时捕获输出升级日志；支持一键「清空日志」；**内置内存保护机制，严格限制 tmpfs 内存上限 ≤ 2MB**（超额自动截断保留最新），绝不膨胀占用路由器宝贵的物理内存。
+
+### 8. 插件自我更新（独立于固件升级）
+- **独立更新按钮**：界面新增「插件版本与自我更新」卡片，提供「检查插件更新」与「更新插件」两个按钮；只替换 `luci-app-online-upgrade` 自身，不触碰系统固件、不重启路由器。
+- **固定发布契约**：始终读取本仓库的稳定 Release，按固定名称的 `online-upgrade-manifest.json` 选择与本机包架构匹配的 `.apk`，并用清单内 SHA256 校验；清单缺失时退回 `SHA256SUMS`，两者都没有就**拒绝安装**，绝不“下载了就装”。
+- **安装后复核**：调用本机 `apk` / `opkg` 原地安装，安装完成后重新读取版本文件与包管理器版本，确认已到目标版本才上报成功；随后清理 LuCI 索引缓存，刷新页面即可加载新界面。
+- **状态隔离**：插件检查/更新写入独立的 `/tmp/online-upgrade-plugin-status.json`，不会覆盖固件检查或升级进度；但仍与固件任务共用操作锁，避免同时改写 `/usr/bin/online-upgrade`。
 
 ---
 
@@ -253,7 +259,7 @@
 apk add --allow-untrusted luci-app-online-upgrade_*.apk
 ```
 
-> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.4.1`），安装包文件名为 `luci-app-online-upgrade-<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`。三者由 `Makefile` 统一派生，`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定；发布前 CI 会校验安装包名与版本相符，Release 正文自动取自 `CHANGELOG.md` 对应版本段落，因此标签、产物版本与更新日志始终同步。
+> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.5.0`），安装包文件名为 `luci-app-online-upgrade_<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`，并附带固定名称的 `online-upgrade-manifest.json` 与 `SHA256SUMS`。标签、产物版本、清单内容与更新日志均由 `Makefile` 的 `PKG_VERSION` / `PKG_RELEASE` 统一派生；`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定，发布前 CI 会校验安装包名与版本相符。
 
 ### 方式 B：从源码编译打包
 
@@ -291,6 +297,47 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 
 ---
 
+## 插件自我更新与版本发布契约
+
+插件自身更新与固件升级是两条完全独立的链路：固件升级读取 UCI 中的固件仓库，插件更新则固定读取本仓库的稳定 Release。两者共用操作锁，但状态文件分开存放。
+
+### 1. 界面操作
+
+1. 打开 LuCI 页面，在「插件版本与自我更新」卡片点击「检查插件更新」。
+2. 检查完成后会显示当前版本、云端最新版本、可用的安装包、架构与 SHA256 摘要。
+3. 只有确认存在更新且安装包可验证时，「更新插件」按钮才会出现；点击并确认后开始下载与安装。
+4. 更新完成会提示「刷新页面」，刷新后即可加载新的前端资源；无需重启路由器。
+
+### 2. 自更新判定链路
+
+| 步骤 | 行为 |
+| :--- | :--- |
+| 本地版本 | 依次读取 `/usr/share/online-upgrade/version` → `apk info -v` / `opkg info` → 运行二进制的编译版本；前两者缺失时才使用弱依据 |
+| 选择 Release | 只接受非 draft、非 prerelease 且标签严格匹配 `vMAJOR.MINOR.PATCH` 的稳定版本；日期型标签（如 `v26.11.10`）不会被当成插件版本 |
+| 选择安装包 | 优先读取固定名称的 `online-upgrade-manifest.json`，按本机包架构精确匹配；无精确项时才接受唯一的架构家族或 `all` 候选，多候选直接报错而不是猜 |
+| 完整性 | 安装包必须通过清单中的 SHA256 与大小校验；manifest 缺失时退回 `SHA256SUMS`，仍无校验值则拒绝安装 |
+| 安装与复核 | 使用本机 `apk add --allow-untrusted` / `opkg install` 原地安装，安装后重新读取版本并确认达到目标版本 |
+
+### 3. 标签与产物命名（CI 强制）
+
+| 对象 | 固定格式 | 示例 |
+| :--- | :--- | :--- |
+| Release 标签 | `v<MAJOR>.<MINOR>.<PATCH>` | `v2.5.0` |
+| Release 标题 | `v<MAJOR>.<MINOR>.<PATCH>` | `v2.5.0` |
+| 安装包 | `luci-app-online-upgrade_<版本>-r<发布号>_<架构>.apk` | `luci-app-online-upgrade_2.5.0-r1_aarch64_cortex-a53.apk` |
+| 机器清单 | `online-upgrade-manifest.json`（固定名称） | 含 `schema`、`version`、`pkg_release`、`tag` 与每个架构的 `file` / `sha256` / `size` |
+| 校验单 | `SHA256SUMS`（固定名称） | 每行 `<sha256>  <文件名>`，含 manifest 自身 |
+
+约定要点：
+
+- 包名与版本之间使用**下划线**，版本与架构之间也使用下划线，架构内部的 `-`（如 `cortex-a53`）保持不变；不要再用 `包名-版本` 的混用形式。
+- 稳定版不要发布 prerelease；测试版本请使用 `-rc.N` 并标记为 prerelease，自更新会忽略它们。
+- 每次发布必须同时上传 `online-upgrade-manifest.json` 与 `SHA256SUMS`；CI 会在发布前自动生成并校验。
+- **自更新只比较 `PKG_VERSION`**：任何对外发布的功能或修复都必须提升 `PKG_VERSION`。仅提升 `PKG_RELEASE` 的同版本重打包不会被识别为更新，需要手动安装；这是为了避免同版本重装被误当成升级。
+- 清单中的 `version` 必须与标签一致，`assets[].file` 必须真实存在于同一 Release，大小必须与 Release 资产一致；任一不一致后端都会拒绝更新。
+
+---
+
 ## UCI 配置详解与参数说明
 
 插件的核心配置文件存储于路由器的 `/etc/config/online-upgrade`。支持通过 Web 界面图形化配置，亦可直接通过 SSH 命令行或 UCI 指令修改。
@@ -315,6 +362,7 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | `dl_slow_window_sec` | integer | `15` | 慢速判定窗口（秒，范围 3~300）：速度连续低于阈值达到该时长才判为异常 |
 | `dl_slow_grace_sec` | integer | `10` | 启动宽限期（秒，范围 0~300）：TLS 握手与 TCP 慢启动期间不做慢速判定 |
 | `github_token` | string | 空 | 可选。GitHub Personal Access Token（只读权限即可），用于防止局域网内公网 IP 触发 GitHub API 403 限流。令牌只会发给 `api.github.com`，经镜像前缀转发或回退到镜像下载时一律不带 Authorization 头 |
+| `plugin_repo` | string | `LianXia233/luci-app-online-upgrade` | 插件自身更新源，格式为 `owner/repo`。默认指向本仓库；自更新会读取该仓库中符合 `vX.Y.Z` 的稳定 Release，并按 `online-upgrade-manifest.json` 选择本机架构安装包 |
 
 ### 2. 标准 UCI 配置文件示例 (`/etc/config/online-upgrade`)
 
@@ -334,6 +382,7 @@ config online-upgrade 'settings'
 	option dl_min_speed_kb '32'
 	option dl_slow_window_sec '15'
 	option dl_slow_grace_sec '10'
+	option plugin_repo 'LianXia233/luci-app-online-upgrade'
 ```
 
 ---
@@ -506,6 +555,11 @@ online-upgrade upgrade
 
 # 查看当前下载与执行状态 JSON
 online-upgrade status
+
+# 插件自身版本与更新（写入独立的 /tmp/online-upgrade-plugin-status.json）
+online-upgrade plugin-info
+online-upgrade plugin-check
+online-upgrade plugin-update
 ```
 
 ### Ubus JSON-RPC 接口 (`luci.online-upgrade`)
@@ -524,6 +578,12 @@ ubus call luci.online-upgrade list_backups
 
 # 探查仓库资产文件
 ubus call luci.online-upgrade probe_assets '{"repo":"owner/repo","tag":"latest"}'
+
+# 插件自身版本与更新状态
+ubus call luci.online-upgrade plugin_info
+ubus call luci.online-upgrade get_plugin_status
+ubus call luci.online-upgrade start_plugin_check
+ubus call luci.online-upgrade start_plugin_update
 ```
 
 ---

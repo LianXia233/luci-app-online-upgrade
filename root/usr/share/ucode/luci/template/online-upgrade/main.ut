@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.4.1">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.0">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -169,7 +169,7 @@
 			</div>
 		</div>
 
-		<!-- 四项统计指标卡片 -->
+		<!-- 三项统计指标卡片 -->
 		<div class="ou-stat-grid">
 			<div class="ou-stat-card">
 				<div class="ou-stat-icon-wrap">
@@ -205,19 +205,40 @@
 						<span class="ou-sep">/</span>
 						<span id="latest-time">—</span>
 					</span>
-					<span class="ou-stat-sub">SHA256 &amp; 文件大小校验</span>
+					<span class="ou-stat-sub" id="latest-hash-status">SHA256 &amp; 文件大小校验</span>
 				</div>
 			</div>
-			<div class="ou-stat-card ou-stat-card-full">
-				<div class="ou-stat-icon-wrap">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-stat-icon"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 12 14 22 4"/></svg>
+		</div>
+
+		<!-- 检测依据：结论 + 关键事实 + 可展开证据链，替代原先挤在一行的标签流 -->
+		<div class="ou-evidence" id="check-evidence">
+			<div class="ou-evidence-head">
+				<div class="ou-evidence-heading">
+					<span class="ou-evidence-kicker">检测依据与判定规则</span>
+					<h4 class="ou-evidence-title">本机适配与版本判定</h4>
 				</div>
-				<div class="ou-stat-meta">
-					<span class="ou-stat-label">检测依据与判定规则</span>
-					<div class="ou-stat-val ou-reason-val" id="check-reason">—</div>
-					<span class="ou-stat-sub">三通道判定：机型（本机 board 标识与资产机型逐段比对）、架构（资产声明架构与本机架构比对）、版本（tag 与资产名解析后比较）；命中配置规则时标注规则原文</span>
+				<div class="ou-evidence-status">
+					<span class="ou-evidence-state" id="evidence-state">待检测</span>
+					<a href="#" id="evidence-release-link" class="ou-evidence-link is-hidden" target="_blank" rel="noopener">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-evidence-link-svg"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+						<span>Release 发布页</span>
+					</a>
 				</div>
 			</div>
+			<p class="ou-evidence-verdict" id="evidence-verdict">尚未执行检测。点击右上角「检查更新」后，这里会给出结论与完整证据链。</p>
+			<div class="ou-evidence-chips" id="evidence-chips"></div>
+			<div class="ou-evidence-facts" id="evidence-facts"></div>
+			<details class="ou-evidence-detail is-hidden" id="evidence-detail">
+				<summary class="ou-evidence-summary">
+					<span class="ou-evidence-summary-left">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-evidence-chevron"><polyline points="9 18 15 12 9 6"/></svg>
+						<span>展开完整判定依据</span>
+					</span>
+					<span class="ou-detail-count" id="evidence-basis-count">0 条</span>
+				</summary>
+				<ol class="ou-basis-list" id="evidence-basis"></ol>
+				<p class="ou-evidence-note">三通道判定：机型（本机 board 标识与资产机型逐段比对）、架构（资产声明架构与本机架构比对）、版本（tag 与资产名解析后比较）。任一通道未通过都会在结论中说明，不会用“通用固件”兜底。</p>
+			</details>
 		</div>
 
 		<!-- 检查结果提示框 -->
@@ -227,6 +248,81 @@
 			</div>
 			<p class="ou-hint" id="check-result">点击「检查更新」检测 GitHub 是否有新固件</p>
 		</div>
+	</div>
+
+	<!-- 1.5 插件自身版本与更新 -->
+	<div class="cbi-section ou-card ou-card-plugin" id="card-plugin">
+		<div class="ou-card-head">
+			<div class="ou-head-title-wrap">
+				<div class="ou-icon-badge indigo">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-head-icon"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+				</div>
+				<div>
+					<div class="ou-head-title-row">
+						<h3>插件版本与自我更新</h3>
+						<span class="ou-status-pill ok" id="plugin-badge"><span class="ou-dot ok"></span> 就绪</span>
+					</div>
+					<p class="ou-head-sub">独立于固件升级：按统一发布清单校验架构与 SHA256 后，原地更新 luci-app-online-upgrade，不触碰系统固件</p>
+				</div>
+			</div>
+			<div class="ou-btn-row">
+				<button id="btn-plugin-check" class="btn ou-btn ou-btn-default" type="button">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+					<span class="btn-label">检查插件更新</span>
+				</button>
+				<button id="btn-plugin-update" class="btn ou-btn ou-btn-success is-hidden" type="button" disabled>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+					<span class="btn-label">更新插件</span>
+				</button>
+				<button id="btn-plugin-reload" class="btn ou-btn ou-btn-primary is-hidden" type="button">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+					<span class="btn-label">刷新页面</span>
+				</button>
+			</div>
+		</div>
+
+		<div class="ou-plugin-body">
+			<div class="ou-plugin-meta">
+				<div class="ou-plugin-row">
+					<span class="ou-plugin-key">当前插件版本</span>
+					<span class="ou-plugin-val" id="plugin-current">读取中...</span>
+				</div>
+				<div class="ou-plugin-row">
+					<span class="ou-plugin-key">云端最新版本</span>
+					<span class="ou-plugin-val" id="plugin-latest">—</span>
+				</div>
+				<div class="ou-plugin-row">
+					<span class="ou-plugin-key">运行环境</span>
+					<span class="ou-plugin-val" id="plugin-env">—</span>
+				</div>
+				<div class="ou-plugin-row">
+					<span class="ou-plugin-key">最近检查</span>
+					<span class="ou-plugin-val" id="plugin-checked">—</span>
+				</div>
+			</div>
+
+			<div class="ou-plugin-detail">
+				<div class="ou-plugin-asset" id="plugin-asset">尚未检查。<br><span class="ou-plugin-asset-sub">会读取固定仓库的稳定 Release，并按 manifest 选择与本机架构匹配的安装包。</span></div>
+				<div class="ou-plugin-progress" id="plugin-progress" style="display:none">
+					<div class="ou-plugin-progress-track"><div class="ou-plugin-progress-bar" id="plugin-progress-bar" style="width:0%"></div></div>
+					<span class="ou-plugin-progress-pct" id="plugin-progress-pct">0%</span>
+				</div>
+				<p class="ou-plugin-hint" id="plugin-hint">点击「检查插件更新」比对当前安装版本与最新稳定 Release。</p>
+			</div>
+		</div>
+
+		<details class="ou-plugin-convention">
+			<summary class="ou-plugin-convention-summary">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-evidence-chevron"><polyline points="9 18 15 12 9 6"/></svg>
+				<span>发布标签与产物命名规范（自更新依赖）</span>
+			</summary>
+			<div class="ou-convention-grid">
+				<div class="ou-convention-item"><span class="ou-convention-key">Release 标签</span><code>v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;</code><span class="ou-convention-note">例：v2.5.0；预发布与日期标签不会被自更新采用</span></div>
+				<div class="ou-convention-item"><span class="ou-convention-key">安装包</span><code>luci-app-online-upgrade_&lt;版本&gt;-r&lt;发布号&gt;_&lt;架构&gt;.apk</code><span class="ou-convention-note">例：luci-app-online-upgrade_2.5.0-r1_aarch64_cortex-a53.apk</span></div>
+				<div class="ou-convention-item"><span class="ou-convention-key">机器清单</span><code>online-upgrade-manifest.json</code><span class="ou-convention-note">固定文件名，声明版本、架构、文件大小与 SHA256</span></div>
+				<div class="ou-convention-item"><span class="ou-convention-key">校验清单</span><code>SHA256SUMS</code><span class="ou-convention-note">manifest 缺失时的兜底校验来源，仍然拒绝无校验安装</span></div>
+			</div>
+		</details>
 	</div>
 
 	<!-- 2. 升级进度 -->
@@ -653,6 +749,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.4.1"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.5.0"></script>
 
 {% include('footer') %}
