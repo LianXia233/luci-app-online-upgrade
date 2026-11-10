@@ -107,6 +107,7 @@
 
 	var dialogResolve = null;
 	var dialogPrevFocus = null;
+	var dialogOnClose = null;
 	var OU_DIALOG_ICONS = {
 		primary: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 12 14 17 9"/></svg>',
 		danger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
@@ -126,15 +127,19 @@
 			if (dialogResolve) {
 				var previous = dialogResolve;
 				dialogResolve = null;
+				if (dialogOnClose) {
+					try { dialogOnClose(); } catch (e) { /* ignore */ }
+				}
 				previous(false);
 			}
 			dialogResolve = resolve;
+			dialogOnClose = opts.onClose || null;
 			dialogPrevFocus = document.activeElement;
 			var tone = opts.tone || 'primary';
 			if (!OU_DIALOG_ICONS[tone]) tone = 'primary';
 			var alertOnly = !!opts.alertOnly;
 
-			root.className = 'ou-dialog tone-' + tone;
+			root.className = 'ou-dialog tone-' + tone + (opts.wide ? ' is-wide' : '');
 			root.style.display = 'flex';
 			root.setAttribute('aria-hidden', 'false');
 			setText('ou-dialog-title', opts.title || '请确认');
@@ -142,8 +147,9 @@
 			$('ou-dialog-icon').innerHTML = OU_DIALOG_ICONS[tone];
 
 			var body = $('ou-dialog-body');
-			var html = '<p class="ou-dialog-message">' + esc(opts.message || '') + '</p>';
-			if (opts.detail) {
+			var html = opts.html ? opts.html :
+				('<p class="ou-dialog-message">' + esc(opts.message || '') + '</p>');
+			if (!opts.html && opts.detail) {
 				html += '<div class="ou-dialog-detail">' + esc(opts.detail) + '</div>';
 			}
 			body.innerHTML = html;
@@ -151,7 +157,7 @@
 
 			var cancel = $('ou-dialog-cancel');
 			var confirm = $('ou-dialog-confirm');
-			cancel.style.display = alertOnly ? 'none' : '';
+			cancel.classList.toggle('is-hidden', alertOnly);
 			cancel.textContent = opts.cancelText || '取消';
 			confirm.textContent = opts.confirmText || (alertOnly ? '知道了' : '确定');
 			confirm.className = 'btn ou-btn ' + (tone === 'danger' ? 'ou-btn-danger' :
@@ -174,6 +180,8 @@
 		var resolve = dialogResolve;
 		if (!root || !resolve) return;
 		dialogResolve = null;
+		var onClose = dialogOnClose;
+		dialogOnClose = null;
 		root.classList.remove('is-open');
 		root.setAttribute('aria-hidden', 'true');
 		document.body.classList.remove('ou-modal-open');
@@ -185,6 +193,9 @@
 			if (!dialogResolve) root.style.display = 'none';
 		}, 240);
 		resolve(ok === true);
+		if (onClose) {
+			try { onClose(); } catch (e) { /* ignore */ }
+		}
 	}
 
 	function ouConfirm(opts) { return ouDialog(opts); }
@@ -936,6 +947,81 @@
 
 	var taskTimer = null;
 	var taskActive = null;
+	var taskDetailTimer = null;
+
+	function stopTaskDetail() {
+		if (taskDetailTimer) {
+			clearInterval(taskDetailTimer);
+			taskDetailTimer = null;
+		}
+	}
+
+	function taskDetailHtml(t) {
+		var total = Number(t.chunks_total) || 0;
+		var states = t.chunk_states || '';
+		var pct = t.total > 0 ? Math.min(100, Math.round(t.done / t.total * 100)) : 0;
+		var cells = '';
+		var limit = Math.min(total, 600);
+		for (var i = 0; i < limit; i++) {
+			var s = states.charAt(i);
+			var cls = s === 'D' ? 'done' : s === 'R' ? 'running' : 'pending';
+			cells += '<span class="ou-chunk-cell ' + cls + '" title="分块 ' + (i + 1) + ' · ' +
+				(cls === 'done' ? '完成' : cls === 'running' ? '传输中' : '等待') + '"></span>';
+		}
+		var chunkBlock = total > 0
+			? '<div class="ou-chunk-panel">' +
+				'<div class="ou-chunk-head"><span>分块状态（已显示 ' + limit + ' / ' + total + '）</span>' +
+				'<span class="ou-chunk-legend"><i class="done"></i>完成 <i class="running"></i>传输中 <i class="pending"></i>等待</span></div>' +
+				'<div class="ou-chunk-grid">' + cells + '</div></div>'
+			: '<div class="ou-dialog-detail">该任务没有分块明细（旧任务或单流下载）。</div>';
+		return '<div class="ou-task-detail" id="ou-task-detail-body">' +
+			'<div class="ou-task-detail-grid">' +
+				'<div class="ou-task-detail-item"><span>类型</span><strong>' + esc(t.kind === 'plugin' ? '插件更新' : '固件下载') + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>状态</span><strong>' + esc(taskDisplayState(t)) + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>进度</span><strong>' + pct + '% · ' + esc(fmtSize(t.done)) + ' / ' + esc(fmtSize(t.total)) + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>实时速度</span><strong>' + esc(fmtSpeed(t.speed_bps)) + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>线程</span><strong>' + (t.segments || 0) + ' / ' + (t.workers || 0) + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>分块</span><strong>' + (t.chunks_done || 0) + ' / ' + (t.chunks_total || 0) + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>分块大小</span><strong>' + esc(t.chunk_size ? fmtSize(t.chunk_size) : '—') + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>传输中分块</span><strong>' + (t.chunks_running || 0) + '</strong></div>' +
+				'<div class="ou-task-detail-item"><span>原因 / 阶段</span><strong>' + esc(t.reason || '—') + '</strong></div>' +
+			'</div>' + chunkBlock + '</div>';
+	}
+
+	function showTaskDetail(id) {
+		stopTaskDetail();
+		var render = function (t) {
+			var body = $('ou-task-detail-body');
+			if (!body) return;
+			if (!t) {
+				body.innerHTML = '<div class="ou-dialog-detail">任务已被清理或删除。</div>';
+				return;
+			}
+			body.outerHTML = taskDetailHtml(t);
+		};
+		ouDialog({
+			tone: 'primary',
+			eyebrow: '下载任务',
+			title: '任务详情',
+			html: '<div class="ou-task-detail" id="ou-task-detail-body"><div class="ou-dialog-detail">正在读取任务...</div></div>',
+			alertOnly: true,
+			confirmText: '关闭',
+			wide: true,
+			onClose: stopTaskDetail
+		});
+		var refresh = function () {
+			ubus('list_tasks').then(function (r) {
+				var list = (r && r.tasks) || [];
+				var task = null;
+				for (var i = 0; i < list.length; i++) {
+					if (list[i].id === id) { task = list[i]; break; }
+				}
+				render(task);
+			}).catch(function () { /* keep last snapshot */ });
+		};
+		refresh();
+		taskDetailTimer = setInterval(refresh, 2000);
+	}
 
 	function taskStateLabel(s) {
 		var m = {
@@ -996,17 +1082,26 @@
 			var kindChip = isPlugin
 				? '<span class="ou-task-kind plugin">插件更新</span>'
 				: '';
-			var action = (isPlugin && running)
+			var meta = (t.chunks_total > 0)
+				? ('线程 ' + (t.segments || 0) + '/' + (t.workers || 0) +
+					' · 分块 ' + (t.chunks_done || 0) + '/' + t.chunks_total)
+				: '';
+			var infoBtn = '<button type="button" class="btn ou-btn ou-btn-default ou-task-info" data-id="' +
+				esc(t.id) + '"><span>详情</span></button>';
+			var action = infoBtn + (isPlugin && running
 				? '<span class="ou-time-text">自动更新中</span>'
-				: '<button type="button" class="btn ou-btn ou-btn-danger ou-task-del" data-id="' + esc(t.id) + '"><span>删除</span></button>';
+				: '<button type="button" class="btn ou-btn ou-btn-danger ou-task-del" data-id="' + esc(t.id) + '"><span>删除</span></button>');
 			var tr = document.createElement('tr');
 				tr.innerHTML = '<td><div class="ou-file-cell"><span class="ou-file-text">' + esc(t.name) + '</span>' + kindChip + '</div></td>' +
-				'<td data-label="状态"><span class="ou-badge-size">' + esc(taskDisplayState(t)) + ' · ' + esc(progress) + '</span></td>' +
+				'<td data-label="状态"><span class="ou-badge-size">' + esc(taskDisplayState(t)) + ' · ' + esc(progress) + '</span>' +
+				(meta ? '<span class="ou-task-meta">' + esc(meta) + '</span>' : '') + '</td>' +
 				'<td data-label="速度"><span class="ou-time-text">' + esc(fmtSpeed(t.speed_bps)) + '</span></td>' +
 				'<td data-label="原因"><span class="ou-time-text">' + esc(t.reason || '—') + '</span></td>' +
 				'<td data-label="操作" style="text-align:right">' + action + '</td>';
 			var del = tr.querySelector('.ou-task-del');
 			if (del) del.addEventListener('click', function () { deleteTask(t.id, t.state); });
+			var info = tr.querySelector('.ou-task-info');
+			if (info) info.addEventListener('click', function () { showTaskDetail(t.id); });
 			tbody.appendChild(tr);
 		});
 		if (!list || !list.length) {

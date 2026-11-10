@@ -182,6 +182,20 @@ pub struct Task {
     pub done: u64,
     /// 最近一次测得的吞吐量（字节/秒）。
     pub speed_bps: u64,
+    /// 配置的并发 worker 数（0 表示未知）。
+    pub workers: u64,
+    /// 本次实际启用的传输段数。
+    pub segments: u64,
+    /// 分块大小（字节，0 表示单流或未知）。
+    pub chunk_size: u64,
+    /// 分块总数。
+    pub chunks_total: u64,
+    /// 已完成分块数。
+    pub chunks_done: u64,
+    /// 正在传输的分块数。
+    pub chunks_running: u64,
+    /// 分块状态紧凑串：D=完成，R=传输中，P=等待。
+    pub chunk_states: String,
     /// 失败或停止原因，成功时为空。
     pub reason: String,
     /// 创建时间（Unix 时间戳）。
@@ -219,6 +233,13 @@ impl Task {
             total,
             done: 0,
             speed_bps: 0,
+            workers: 0,
+            segments: 0,
+            chunk_size: 0,
+            chunks_total: 0,
+            chunks_done: 0,
+            chunks_running: 0,
+            chunk_states: String::new(),
             reason: String::new(),
             created: now_secs(),
             finished: 0,
@@ -248,6 +269,13 @@ impl Task {
             ("total".into(), Value::num(self.total)),
             ("done".into(), Value::num(self.done)),
             ("speed_bps".into(), Value::num(self.speed_bps)),
+            ("workers".into(), Value::num(self.workers)),
+            ("segments".into(), Value::num(self.segments)),
+            ("chunk_size".into(), Value::num(self.chunk_size)),
+            ("chunks_total".into(), Value::num(self.chunks_total)),
+            ("chunks_done".into(), Value::num(self.chunks_done)),
+            ("chunks_running".into(), Value::num(self.chunks_running)),
+            ("chunk_states".into(), Value::str(&self.chunk_states)),
             ("reason".into(), Value::str(&self.reason)),
             ("created".into(), Value::num(self.created)),
             ("finished".into(), Value::num(self.finished)),
@@ -277,6 +305,13 @@ impl Task {
             total: n("total"),
             done: n("done"),
             speed_bps: n("speed_bps"),
+            workers: n("workers"),
+            segments: n("segments"),
+            chunk_size: n("chunk_size"),
+            chunks_total: n("chunks_total"),
+            chunks_done: n("chunks_done"),
+            chunks_running: n("chunks_running"),
+            chunk_states: s("chunk_states"),
             reason: s("reason"),
             created: n("created"),
             finished: n("finished"),
@@ -341,6 +376,33 @@ impl TaskStore {
         }
         self.tasks.sort_by(|a, b| b.created.cmp(&a.created));
         self.tasks.truncate(MAX_TASKS);
+    }
+
+    /// 按类型保留最近 `keep_per_kind` 条终态任务，删除更早的完成/失败/中止记录。
+    /// 运行中或暂停中的任务永远保留。返回删除条数。
+    pub fn prune_terminal(&mut self, keep_per_kind: usize) -> usize {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        let mut remove: Vec<String> = Vec::new();
+        for t in &self.tasks {
+            if !matches!(t.state.as_str(), ST_DONE | ST_FAILED | ST_ABORTED) {
+                continue;
+            }
+            let seen = if let Some(pos) = counts.iter().position(|(k, _)| *k == t.kind) {
+                counts[pos].1 += 1;
+                counts[pos].1
+            } else {
+                counts.push((t.kind.clone(), 1));
+                1
+            };
+            if seen > keep_per_kind {
+                remove.push(t.id.clone());
+            }
+        }
+        let removed = remove.len();
+        if removed > 0 {
+            self.tasks.retain(|t| !remove.contains(&t.id));
+        }
+        removed
     }
 
     /// 按 ID 获取任务的可变引用。
@@ -618,6 +680,33 @@ mod tests {
         let task = Task::from_value(&legacy).unwrap();
         assert_eq!(task.kind, KIND_FIRMWARE);
         let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn prune_terminal_keeps_latest_per_kind() {
+        let mut s = TaskStore::with_path(tmp("prune-terminal"));
+        let mut old_fw = Task::new("fw-old.bin", "https://example.test/fw", 10);
+        old_fw.created = 100;
+        old_fw.finish(ST_DONE, "");
+        s.upsert(old_fw);
+        let mut old_plugin = Task::new("plugin-old.apk", "https://example.test/p", 10)
+            .with_kind(KIND_PLUGIN);
+        old_plugin.created = 200;
+        old_plugin.finish(ST_FAILED, "old");
+        s.upsert(old_plugin);
+        let mut new_fw = Task::new("fw-new.bin", "https://example.test/fw2", 10);
+        new_fw.created = 300;
+        new_fw.finish(ST_DONE, "");
+        s.upsert(new_fw);
+        let mut running = Task::new("running.bin", "https://example.test/r", 10);
+        running.created = 400;
+        s.upsert(running);
+
+        assert_eq!(s.prune_terminal(1), 1);
+        assert_eq!(s.tasks().len(), 3);
+        assert!(s.tasks().iter().any(|t| t.state == ST_RUNNING));
+        assert!(s.tasks().iter().any(|t| t.name == "fw-new.bin"));
+        assert!(s.tasks().iter().any(|t| t.name == "plugin-old.apk"));
     }
 
     #[test]

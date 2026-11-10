@@ -105,6 +105,35 @@ pub struct Downloaded {
     pub resumed_chunks: usize,
     /// 实际使用的并发分段数。
     pub segments: usize,
+    /// 实际分块大小。
+    pub chunk_size: u64,
+    /// 分块总数。
+    pub chunks_total: usize,
+    /// 配置的 worker 数。
+    pub workers: usize,
+}
+
+/// 传给界面的实时下载进度快照。
+#[derive(Clone, Debug)]
+pub struct Progress {
+    pub done: u64,
+    pub total: u64,
+    pub workers: usize,
+    pub segments: usize,
+    pub chunk_size: u64,
+    pub chunks_total: usize,
+    pub chunks_done: usize,
+    pub chunks_running: usize,
+    /// 每个分块的状态：0=等待，1=传输中，2=完成。
+    pub states: Vec<u8>,
+}
+
+pub type ProgressFn = Arc<dyn Fn(Progress) + Send + Sync>;
+
+/// 下载选项；插件包小于单流阈值时可强制分段，以便展示线程与分块。
+#[derive(Clone, Copy, Default)]
+pub struct DownloadOptions {
+    pub force_split: bool,
 }
 
 struct Probe {
@@ -418,8 +447,19 @@ pub async fn download(
     client: &Client,
     url: &str,
     out: &str,
-    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
+    report: ProgressFn,
     control: &DownloadControl,
+) -> Result<Downloaded, DownloadError> {
+    download_with(client, url, out, report, control, DownloadOptions::default()).await
+}
+
+pub async fn download_with(
+    client: &Client,
+    url: &str,
+    out: &str,
+    report: ProgressFn,
+    control: &DownloadControl,
+    options: DownloadOptions,
 ) -> Result<Downloaded, DownloadError> {
     // 在收到第一个字节之前就已到达的取消请求，
     // 绝不能再去建立新连接。
@@ -439,17 +479,29 @@ pub async fn download(
         dl.slow.window_secs,
         dl.slow.grace_secs
     );
-    if dl.workers <= 1 || !p.ranges || p.total.map(|t| t <= SINGLE_STREAM_MAX).unwrap_or(true) {
+    if dl.workers <= 1 || !p.ranges || (!options.force_split
+        && p.total.map(|t| t <= SINGLE_STREAM_MAX).unwrap_or(true))
+    {
         return single_stream(client, url, out, p.total, p.etag, report, control, &dl).await;
     }
     let total = p
         .total
         .ok_or_else(|| DownloadError::Other("服务器未返回文件大小,无法分段下载".to_string()))?;
-    let segments = ((total / dl.chunk_size).min(dl.workers as u64)).max(2) as usize;
-    let all_chunks = build_chunks(total, dl.chunk_size);
+    // 插件包通常小于单流阈值；强制分段时按 worker 数切出可观察的分块，
+    // 但不小于 64KB，避免生成过多微小分片。
+    let mut chunk_size = dl.chunk_size;
+    if options.force_split && total <= SINGLE_STREAM_MAX {
+        let target = ((total + dl.workers.max(2) as u64 - 1) / dl.workers.max(2) as u64)
+            .max(64 * 1024);
+        chunk_size = chunk_size.min(target).max(64 * 1024);
+    }
+    let all_chunks = build_chunks(total, chunk_size);
+    let segments = ((total / chunk_size).min(dl.workers as u64))
+        .max(2)
+        .min(all_chunks.len() as u64) as usize;
 
     // 续传状态
-    let prev = load_parts(out, url, &p.etag, total, dl.chunk_size, all_chunks.len());
+    let prev = load_parts(out, url, &p.etag, total, chunk_size, all_chunks.len());
     if prev.is_none() {
         // 不可信的 sidecar（文件不存在、分块网格变化等）
         // 不能留在新开始的下载旁边
@@ -459,10 +511,14 @@ pub async fn download(
     let mut already_done: u64 = 0;
     let mut resumed_chunks = 0usize;
     let mut done_flags = vec![false; all_chunks.len()];
+    let chunk_states = Arc::new(Mutex::new(vec![0u8; all_chunks.len()]));
     if let Some(prev) = &prev {
         for c in &all_chunks {
             if prev.done.contains(&c.idx) {
                 done_flags[c.idx] = true;
+                if let Ok(mut states) = chunk_states.lock() {
+                    states[c.idx] = 2;
+                }
                 already_done += c.len();
                 resumed_chunks += 1;
             } else {
@@ -494,7 +550,7 @@ pub async fn download(
         url: url.to_string(),
         etag: p.etag.clone().unwrap_or_default(),
         total,
-        chunk: dl.chunk_size,
+        chunk: chunk_size,
         done: prev.map(|x| x.done).unwrap_or_default(),
     }));
 
@@ -508,6 +564,7 @@ pub async fn download(
         let out = out.to_string();
         let queue = Arc::clone(&queue);
         let done_flags = Arc::clone(&done_flags);
+        let chunk_states = Arc::clone(&chunk_states);
         let downloaded = Arc::clone(&downloaded);
         let parts_state = Arc::clone(&parts_state);
         let mut state = control.rx();
@@ -523,6 +580,10 @@ pub async fn download(
                     q.pop_front()
                 };
                 let Some(chunk) = chunk else { break };
+                // 让详情视图看到当前 worker 正在处理哪个分块。
+                if let Ok(mut states) = chunk_states.lock() {
+                    states[chunk.idx] = 1;
+                }
                 let mut ok = false;
                 for attempt in 1..=retries {
                     match fetch_range(
@@ -557,6 +618,9 @@ pub async fn download(
                 {
                     let mut flags = done_flags.lock().unwrap_or_else(|e| e.into_inner());
                     flags[chunk.idx] = true;
+                    if let Ok(mut states) = chunk_states.lock() {
+                        states[chunk.idx] = 2;
+                    }
                     let mut ps = parts_state.lock().unwrap_or_else(|e| e.into_inner());
                     ps.done.push(chunk.idx);
                     save_parts(&out, &ps);
@@ -566,19 +630,34 @@ pub async fn download(
         }));
     }
 
-    // 进度上报任务
+    // 进度上报任务：每 500ms 提供分块状态快照，供任务详情展示。
     let rep_handle = {
         let downloaded = Arc::clone(&downloaded);
+        let states_ref = Arc::clone(&chunk_states);
         let report = Arc::clone(&report);
+        let chunks_total = all_chunks.len();
+        let workers = dl.workers;
         tokio::spawn(async move {
-            let mut last = 0u64;
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 let d = downloaded.load(Ordering::Relaxed);
-                if d != last {
-                    report(d, total);
-                    last = d;
-                }
+                let states = states_ref
+                    .lock()
+                    .map(|s| s.clone())
+                    .unwrap_or_default();
+                let chunks_done = states.iter().filter(|&&s| s == 2).count();
+                let chunks_running = states.iter().filter(|&&s| s == 1).count();
+                report(Progress {
+                    done: d,
+                    total,
+                    workers,
+                    segments,
+                    chunk_size,
+                    chunks_total,
+                    chunks_done,
+                    chunks_running,
+                    states,
+                });
                 if d >= total {
                     break;
                 }
@@ -637,13 +716,26 @@ pub async fn download(
             "文件大小不匹配: 期望 {total}, 实际 {final_size}"
         )));
     }
-    report(total, total);
+    report(Progress {
+        done: total,
+        total,
+        workers: dl.workers,
+        segments,
+        chunk_size,
+        chunks_total: all_chunks.len(),
+        chunks_done: all_chunks.len(),
+        chunks_running: 0,
+        states: vec![2u8; all_chunks.len()],
+    });
     drop_parts(out);
     Ok(Downloaded {
         total,
         etag: p.etag,
         resumed_chunks,
         segments,
+        chunk_size,
+        chunks_total: all_chunks.len(),
+        workers: dl.workers,
     })
 }
 
@@ -749,7 +841,7 @@ async fn single_stream(
     out: &str,
     total: Option<u64>,
     etag: Option<String>,
-    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
+    report: ProgressFn,
     control: &DownloadControl,
     dl: &DlCfg,
 ) -> Result<Downloaded, DownloadError> {
@@ -776,7 +868,7 @@ async fn single_stream_inner(
     out: &str,
     total: Option<u64>,
     etag: Option<String>,
-    report: Arc<dyn Fn(u64, u64) + Send + Sync>,
+    report: ProgressFn,
     control: &DownloadControl,
     dl: &DlCfg,
 ) -> Result<Downloaded, DownloadError> {
@@ -832,7 +924,18 @@ async fn single_stream_inner(
         done += b.len() as u64;
         counter.fetch_add(b.len() as u64, Ordering::Relaxed);
         if last_report.elapsed() >= Duration::from_millis(500) {
-            report(done, total);
+            let total_eff = total.max(done);
+            report(Progress {
+                done,
+                total: total_eff,
+                workers: 1,
+                segments: 1,
+                chunk_size: total_eff.max(1),
+                chunks_total: 1,
+                chunks_done: if done >= total_eff { 1 } else { 0 },
+                chunks_running: if done < total_eff { 1 } else { 0 },
+                states: vec![if done >= total_eff { 2 } else { 1 }],
+            });
             last_report = Instant::now();
         }
     };
@@ -848,12 +951,26 @@ async fn single_stream_inner(
             "下载不完整: 期望 {total}, 实际 {done}"
         )));
     }
-    report(done, total.max(done));
+    let total_eff = total.max(done);
+    report(Progress {
+        done,
+        total: total_eff,
+        workers: 1,
+        segments: 1,
+        chunk_size: total_eff.max(1),
+        chunks_total: 1,
+        chunks_done: 1,
+        chunks_running: 0,
+        states: vec![2],
+    });
     Ok(Downloaded {
         total: done,
         etag,
         resumed_chunks: 0,
         segments: 1,
+        chunk_size: total_eff.max(1),
+        chunks_total: 1,
+        workers: 1,
     })
 }
 

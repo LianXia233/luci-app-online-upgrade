@@ -8,6 +8,19 @@
 
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 升级到 Node 24 版本（`checkout@v5`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v5`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.5.5] - 2026-11-10
+
+### Added
+
+- **插件包分块下载**：插件自更新不再使用独立单流下载，改为复用固件下载器的 worker/分块/重试/停滞/慢速保护；小包会按 worker 数强制拆分（分块不小于 64KB），因此任务详情中可看到真实分块与线程。
+- **分块/线程任务详情**：任务记录新增 `workers`、`segments`、`chunk_size`、`chunks_total`、`chunks_done`、`chunks_running`、`chunk_states`；任务列表显示线程数与分块进度，详情弹窗展示统计卡片与分块状态网格（完成/传输中/等待）。
+- **下载历史自动清理**：插件更新成功后按任务类型自动保留最近一条终态记录，清理更早的完成/失败任务；运行中任务不受影响。
+- **代理优先回退**：配置加速代理后，插件包、校验单/清单与固件下载均优先走代理；代理失败或内容大小/SHA 校验不通过时再回退直连。
+
+### Fixed
+
+- 修复仅提示弹窗仍显示“取消”按钮的问题：改用 `is-hidden` 类，避免被按钮 `display:inline-flex !important` 覆盖。
+
 ## [2.5.4] - 2026-11-10
 
 ### Changed

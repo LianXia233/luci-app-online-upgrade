@@ -95,7 +95,8 @@
 - **固定发布契约**：始终读取本仓库的稳定 Release，按固定名称的 `online-upgrade-manifest.json` 选择与本机包架构匹配的 `.apk`，并用清单内 SHA256 校验；清单缺失时退回 `SHA256SUMS`，两者都没有就**拒绝安装**，绝不“下载了就装”。
 - **安装后复核**：调用本机 `apk` / `opkg` 原地安装，安装完成后重新读取版本文件与包管理器版本，确认已到目标版本才上报成功；随后清理 LuCI 索引缓存，刷新页面即可加载新界面。
 - **状态隔离**：插件检查/更新写入独立的 `/tmp/online-upgrade-plugin-status.json`，不会覆盖固件检查或升级进度；但仍与固件任务共用操作锁，避免同时改写 `/usr/bin/online-upgrade`。
-- **任务列表联动**：插件更新会创建 `kind=plugin` 的下载任务，在「下载任务管理」中显示下载/校验/安装阶段与完成、失败终态；完成后自动刷新插件版本、状态标识与任务列表。
+- **任务列表联动**：插件更新会创建 `kind=plugin` 的下载任务，在「下载任务管理」中显示下载/校验/安装阶段与完成、失败终态；完成后自动刷新插件版本、状态标识与任务列表，并自动清理更早的终态历史（每种任务保留最近一条）。
+- **分块与线程可见**：插件包与固件共用分块下载器，任务详情可查看 worker 数、实际分段数、分块大小、完成/传输中/等待的分块网格，并每 2 秒刷新。
 
 ---
 
@@ -349,12 +350,16 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | `get_plugin_status` | 返回 `/tmp/online-upgrade-plugin-status.json`，包含 `state`、`pct`、`msg`、`error`、`ts`、`pid`、`result` |
 | `plugin_info` | 返回本地版本、`cache_version`、包管理器、包架构、更新源与命名约定 |
 | `list_tasks` | 返回 `/root/.online-upgrade-tasks.json` 中的任务；插件任务带 `kind=plugin` |
-| 任务字段 | `id`、`kind`、`name`、`url`、`state`、`total`、`done`、`speed_bps`、`reason`、`created`、`finished` |
+| 任务字段 | `id`、`kind`、`name`、`url`、`state`、`total`、`done`、`speed_bps`、`workers`、`segments`、`chunk_size`、`chunks_total`、`chunks_done`、`chunks_running`、`chunk_states`、`reason`、`created`、`finished` |
 | 插件状态字段 | `state` 取值 `checking/checked/check_failed/updating/downloading/verifying/installing/done/failed`；`result.task_id` 关联任务，`result.installed_version` / `result.cache_version` 为安装后的版本 |
 
 任务状态：固件任务使用 `running/paused/done/failed/aborted`；插件任务使用 `running/done/failed`，下载、校验、安装阶段通过 `reason` 与插件状态 `pct/msg` 区分。插件任务运行期间，固件下载的暂停/继续/取消按钮不会作用到它；任务列表中的「自动更新中」表示由自更新流程管理。
 
-> **当前边界**：插件安装包通常小于 2MB，自更新下载走轻量单流路径；图片中的 `dl_workers` / `dl_chunk_mb` / `dl_retries` 等分片参数主要用于固件下载，不对插件包做并发分片。若要统一，需要将插件下载切换到 `downloader` 模块。
+插件包现在与固件共用 `downloader`：优先使用配置的 worker/分块/重试/慢速保护；小于 2MB 的插件包会按 worker 数强制拆分（分块不小于 64KB），从而能在任务详情看到真实线程与分块状态。
+
+**下载线路顺序**：配置了加速代理时，插件包、manifest/SHA256SUMS 与固件下载均先走代理；代理请求失败、文件大小不符或 SHA256 不匹配时再回退直连。
+
+**历史清理**：插件更新成功后自动按 `kind` 保留最近一条终态任务（固件、插件各一条），清理更早的完成/失败记录；运行中/暂停中的任务不会被清理。
 
 ### 5. 缓存版本戳与失效时机
 

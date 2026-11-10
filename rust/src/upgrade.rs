@@ -46,7 +46,7 @@ fn full_url(cfg: &Cfg, url: &str) -> String {
 }
 
 /// 传给下载器的共享进度回调。
-type ProgressFn = Arc<dyn Fn(u64, u64) + Send + Sync>;
+type ProgressFn = downloader::ProgressFn;
 
 fn unix_now() -> u64 {
     SystemTime::now()
@@ -69,6 +69,13 @@ fn task_finish(id: &str, state: &str, reason: &str, done: u64, speed: u64) {
     task_update(id, |t| {
         t.done = done;
         t.speed_bps = speed;
+        if state == ST_DONE {
+            t.chunks_done = t.chunks_total;
+            t.chunks_running = 0;
+            if t.chunks_total > 0 {
+                t.chunk_states = "D".repeat(t.chunks_total as usize);
+            }
+        }
         t.finish(state, reason);
     });
 }
@@ -165,8 +172,9 @@ fn progress_reporter(
     let hist_ts = Arc::clone(&last_hist);
     let done_ref = Arc::clone(&last_done);
     let bps_ref = Arc::clone(&speed);
-    let report: ProgressFn = Arc::new(move |done: u64, total: u64| {
-        let total_eff = if total > 0 { total } else { total_hint };
+    let report: ProgressFn = Arc::new(move |p: downloader::Progress| {
+        let done = p.done;
+        let total_eff = if p.total > 0 { p.total } else { total_hint };
         let pct = if total_eff > 0 {
             5 + ((done as f64 / total_eff as f64) * 85.0).min(85.0) as u32
         } else {
@@ -178,19 +186,35 @@ fn progress_reporter(
             "downloading",
             pct,
             &format!(
-                "正在下载固件... {:.1}/{:.1} MB · {:.1} KB/s",
+                "正在下载固件... {:.1}/{:.1} MB · {:.1} KB/s · 线程 {}/{} · 分块 {}/{}",
                 done as f64 / 1048576.0,
                 total_eff as f64 / 1048576.0,
-                bps as f64 / 1024.0
+                bps as f64 / 1024.0,
+                p.chunks_running.max(p.segments.min(p.workers)),
+                p.workers,
+                p.chunks_done,
+                p.chunks_total
             ),
         );
         let now = unix_now();
         if now.saturating_sub(hist_ts.load(Ordering::Relaxed)) >= 5 {
             hist_ts.store(now, Ordering::Relaxed);
+            let states: String = p
+                .states
+                .iter()
+                .map(|&s| if s == 2 { 'D' } else if s == 1 { 'R' } else { 'P' })
+                .collect();
             task_update(&hist_id, |t| {
                 t.done = done;
                 t.total = total_eff;
                 t.speed_bps = bps;
+                t.workers = p.workers as u64;
+                t.segments = p.segments as u64;
+                t.chunk_size = p.chunk_size;
+                t.chunks_total = p.chunks_total as u64;
+                t.chunks_done = p.chunks_done as u64;
+                t.chunks_running = p.chunks_running as u64;
+                t.chunk_states = states;
             });
         }
     });

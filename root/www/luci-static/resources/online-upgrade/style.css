@@ -3061,6 +3061,10 @@ body.ou-modal-open {
 	box-shadow: none !important;
 }
 
+.ou-dialog .ou-btn.is-hidden {
+	display: none !important;
+}
+
 /* 重启遮罩同样位于 .ou-container 之外 */
 .ou-overlay .ou-btn {
 	display: inline-flex !important;
@@ -3217,5 +3221,155 @@ body.ou-modal-open {
 	.ou-dialog-backdrop,
 	.ou-dialog-panel {
 		transition: none !important;
+	}
+}
+/* ==========================================================================
+   任务详情：分块 / 线程视图
+   ========================================================================== */
+
+.ou-dialog.is-wide .ou-dialog-panel {
+	width: min(760px, 100%);
+}
+
+.ou-task-meta {
+	display: block;
+	margin-top: 4px;
+	font-size: 10.5px !important;
+	font-weight: 500;
+	line-height: 1.5;
+	color: #64748b !important;
+}
+
+.ou-task-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.ou-task-detail-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.ou-task-detail-item {
+	min-width: 0;
+	padding: 8px 10px;
+	border: 1px solid #eef2f7;
+	border-radius: 9px;
+	background: #f8fafc;
+}
+
+.ou-task-detail-item span {
+	display: block;
+	margin-bottom: 3px;
+	font-size: 10px;
+	font-weight: 600;
+	color: #64748b;
+}
+
+.ou-task-detail-item strong {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.5;
+	color: #0f172a;
+	overflow-wrap: anywhere;
+}
+
+.ou-chunk-panel {
+	padding: 10px;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	background: #ffffff;
+}
+
+.ou-chunk-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 8px;
+	font-size: 10.5px;
+	font-weight: 600;
+	color: #64748b;
+}
+
+.ou-chunk-legend {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 9.5px;
+	font-weight: 500;
+	color: #64748b;
+	white-space: nowrap;
+}
+
+.ou-chunk-legend i {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	margin-left: 4px;
+}
+
+.ou-chunk-legend i.done { background: #10b981; }
+.ou-chunk-legend i.running { background: #3b82f6; }
+.ou-chunk-legend i.pending { background: #e2e8f0; }
+
+.ou-chunk-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(12px, 1fr));
+	gap: 3px;
+	max-height: 220px;
+	overflow-y: auto;
+}
+
+.ou-chunk-cell {
+	aspect-ratio: 1 / 1;
+	min-height: 9px;
+	border-radius: 3px;
+	background: #e2e8f0;
+}
+
+.ou-chunk-cell.done { background: #10b981; }
+.ou-chunk-cell.running { background: #3b82f6; animation: ou-pulse 1.2s infinite; }
+
+#task-table td[data-label="操作"] {
+	white-space: nowrap;
+}
+
+#task-table td[data-label="操作"] .ou-btn {
+	margin-left: 5px;
+}
+
+@media (max-width: 760px) {
+	.ou-task-detail-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.ou-chunk-head {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 5px;
+	}
+
+	.ou-chunk-grid {
+		max-height: 180px;
+	}
+
+	#task-table td[data-label="操作"] {
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	#task-table td[data-label="操作"] .ou-btn {
+		margin-left: 0;
+	}
+}
+
+@media (max-width: 360px) {
+	.ou-task-detail-grid {
+		grid-template-columns: 1fr;
 	}
 }

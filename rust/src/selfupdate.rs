@@ -15,17 +15,17 @@
 // 拒绝安装，而不是退回“下载了就装”的不安全路径。
 
 use crate::compat::DeviceProfile;
+use crate::downloader::{self, DownloadOptions, Progress};
 use crate::github::{self, Cfg};
 use crate::json::{parse, Value};
-use crate::taskctl::{Task, TaskStore, KIND_PLUGIN, ST_DONE, ST_FAILED};
+use crate::taskctl::{DownloadControl, Task, TaskStore, KIND_PLUGIN, ST_DONE, ST_FAILED};
 use crate::{logline, uci};
-use futures_util::StreamExt;
 use regex::Regex;
 use std::fs;
-use std::io::Write;
 use std::process::Command;
-use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const PACKAGE: &str = "luci-app-online-upgrade";
 pub const DEFAULT_REPO: &str = "LianXia233/luci-app-online-upgrade";
@@ -949,115 +949,99 @@ async fn check(client: &reqwest::Client) -> Outcome {
     }
 }
 
+fn states_string(states: &[u8]) -> String {
+    states
+        .iter()
+        .map(|&s| if s == 2 { 'D' } else if s == 1 { 'R' } else { 'P' })
+        .collect()
+}
+
+/// 插件包下载：复用固件下载器的分块/worker/慢速保护，
+/// 并把分块状态实时写入任务记录。
 async fn download_one(
     client: &reqwest::Client,
-    cfg: &Cfg,
     url: &str,
-    api_mode: bool,
     out: &str,
-    task_id: Option<&str>,
-) -> Result<u64, String> {
-    let mut req = client
-        .get(url)
-        .timeout(Duration::from_secs(180))
-        .header("Accept", "application/octet-stream");
-    if api_mode {
-        if let Some(t) = cfg.token.as_deref() {
-            if github::is_github_api(url) {
-                req = req.header("Authorization", format!("Bearer {t}"));
-            }
-        }
-    }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
-    }
-    if let Some(len) = resp.content_length() {
-        if len > MAX_PKG_BYTES {
-            return Err(format!("安装包过大（{len} 字节），已拒绝下载"));
-        }
-    }
-
-    let mut file = fs::File::create(out).map_err(|e| format!("创建临时文件失败: {e}"))?;
-    let total = resp.content_length().unwrap_or(0);
-    let mut got: u64 = 0;
-    let mut last_pct = 0u32;
+    task_id: &str,
+) -> Result<downloader::Downloaded, String> {
+    let control = DownloadControl::start().map_err(|e| format!("初始化下载控制失败: {e}"))?;
     let started = now_ts();
-    let mut last_task_pct: i64 = -1;
-    let mut last_task_ts = started;
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        got += chunk.len() as u64;
-        if got > MAX_PKG_BYTES {
-            drop(file);
-            let _ = fs::remove_file(out);
-            return Err("安装包超过大小上限，已中止下载".into());
-        }
-        file.write_all(&chunk)
-            .map_err(|e| format!("写入安装包失败: {e}"))?;
+    let last_persist = Arc::new(AtomicU64::new(0));
+    let tid = task_id.to_string();
+    let report: downloader::ProgressFn = Arc::new(move |p: Progress| {
+        let total = p.total.max(p.done);
         let pct = if total > 0 {
-            20 + ((got.min(total) * 55) / total) as u32
+            20 + ((p.done.min(total) * 55) / total) as u32
         } else {
             40
         };
-        if pct >= last_pct + 5 {
-            last_pct = pct;
-            write_status(
-                "downloading",
-                pct,
-                &format!(
-                    "正在下载插件安装包 {} / {}",
-                    github::human_size(got),
-                    if total > 0 {
-                        github::human_size(total)
-                    } else {
-                        "未知".into()
-                    }
-                ),
-                None,
-                None,
-            );
-        }
-
-        if let Some(id) = task_id {
-            let pct100 = if total > 0 {
-                ((got.min(total) * 100) / total) as i64
+        write_status(
+            "downloading",
+            pct,
+            &format!(
+                "正在下载插件安装包 {} / {} · 线程 {}/{} · 分块 {}/{}",
+                github::human_size(p.done),
+                if total > 0 {
+                    github::human_size(total)
+                } else {
+                    "未知".into()
+                },
+                p.chunks_running.max(p.segments.min(p.workers)),
+                p.workers,
+                p.chunks_done,
+                p.chunks_total
+            ),
+            None,
+            None,
+        );
+        let now = now_ts();
+        if now.saturating_sub(last_persist.load(Ordering::Relaxed)) >= 1 {
+            last_persist.store(now, Ordering::Relaxed);
+            let speed = if now > started {
+                p.done / (now - started).max(1)
             } else {
                 0
             };
-            let ts = now_ts();
-            if pct100 >= last_task_pct + 5 || ts > last_task_ts {
-                last_task_pct = pct100;
-                last_task_ts = ts;
-                let speed = if ts > started {
-                    got / (ts - started).max(1)
-                } else {
-                    0
-                };
-                plugin_task_update(id, |t| {
-                    t.done = got;
-                    t.total = total.max(got);
-                    t.speed_bps = speed;
-                    t.reason = "正在下载插件安装包".into();
-                });
-            }
+            let states = states_string(&p.states);
+            plugin_task_update(&tid, |t| {
+                t.done = p.done;
+                t.total = total;
+                t.speed_bps = speed;
+                t.workers = p.workers as u64;
+                t.segments = p.segments as u64;
+                t.chunk_size = p.chunk_size;
+                t.chunks_total = p.chunks_total as u64;
+                t.chunks_done = p.chunks_done as u64;
+                t.chunks_running = p.chunks_running as u64;
+                t.chunk_states = states;
+                t.reason = "正在下载插件安装包".into();
+            });
         }
-    }
-    file.flush().map_err(|e| format!("刷新安装包失败: {e}"))?;
-    if got == 0 {
-        let _ = fs::remove_file(out);
-        return Err("下载得到空文件".into());
-    }
-    if let Some(id) = task_id {
-        plugin_task_update(id, |t| {
-            t.done = got;
-            t.total = total.max(got);
-            t.speed_bps = 0;
-            t.reason = "下载完成，正在校验 SHA256".into();
-        });
-    }
-    Ok(got)
+    });
+    let downloaded = downloader::download_with(
+        client,
+        url,
+        out,
+        report,
+        &control,
+        DownloadOptions { force_split: true },
+    )
+    .await
+    .map_err(|e| e.message().to_string())?;
+    plugin_task_update(task_id, |t| {
+        t.done = downloaded.total;
+        t.total = downloaded.total;
+        t.speed_bps = 0;
+        t.workers = downloaded.workers as u64;
+        t.segments = downloaded.segments as u64;
+        t.chunk_size = downloaded.chunk_size;
+        t.chunks_total = downloaded.chunks_total as u64;
+        t.chunks_done = downloaded.chunks_total as u64;
+        t.chunks_running = 0;
+        t.chunk_states = "D".repeat(downloaded.chunks_total);
+        t.reason = "下载完成，正在校验 SHA256".into();
+    });
+    Ok(downloaded)
 }
 
 fn looks_like_package(path: &str, _file: &str) -> bool {
@@ -1207,6 +1191,12 @@ pub async fn run_update() -> i32 {
         return 1;
     };
 
+    if plan.asset.size > MAX_PKG_BYTES {
+        let msg = format!("插件安装包过大（{} 字节），已拒绝下载", plan.asset.size);
+        write_status("failed", 100, "安装包过大", Some(&msg), Some(outcome.json));
+        return 1;
+    }
+
     let task_id = create_plugin_task(&plan);
 
     write_status(
@@ -1218,31 +1208,56 @@ pub async fn run_update() -> i32 {
     );
 
     let tmp_pkg = tmp_pkg_path(&plan.asset.file);
-    let mut urls: Vec<(String, bool)> = vec![(plan.asset_url.clone(), false)];
+    let _ = fs::remove_file(format!("{tmp_pkg}.parts.json"));
+    let mut urls: Vec<String> = vec![plan.asset_url.clone()];
     if !plan.asset_api_url.is_empty() {
-        urls.push((plan.asset_api_url.clone(), true));
+        urls.push(plan.asset_api_url.clone());
     }
     let cfg = cfg_for_download();
     let mut last_err = String::from("没有可用的下载线路");
     let mut downloaded = false;
     let mut downloaded_bytes = 0u64;
-    for (url, api_mode) in &urls {
-        let mut candidates = vec![url.clone()];
-        let proxied = github::prefixed(&cfg.proxy, url);
-        if proxied != *url {
-            candidates.push(proxied);
+    let mut downloaded_sha = String::new();
+    for url in &urls {
+        // 有加速代理时优先代理，代理失败或内容校验不通过再回退直连。
+        let mut candidates: Vec<(String, &str)> = Vec::new();
+        if !cfg.proxy.is_empty() {
+            let proxied = github::prefixed(&cfg.proxy, url);
+            if proxied != *url {
+                candidates.push((proxied, "加速代理"));
+            }
         }
-        for candidate in candidates {
-            logline!("[plugin] 下载线路: {candidate}");
-            match download_one(&client, &cfg, &candidate, *api_mode, &tmp_pkg, Some(&task_id)).await {
-                Ok(bytes) => {
-                    downloaded_bytes = bytes;
-                    downloaded = true;
-                    break;
+        if !candidates.iter().any(|(u, _)| u == url) {
+            candidates.push((url.clone(), "直连"));
+        }
+        for (candidate, route) in candidates {
+            logline!("[plugin] 下载线路: {route} {candidate}");
+            match download_one(&client, &candidate, &tmp_pkg, &task_id).await {
+                Ok(d) => {
+                    let size_ok = d.total <= MAX_PKG_BYTES
+                        && (plan.asset.size == 0 || d.total == plan.asset.size);
+                    let hash = if size_ok {
+                        crate::hash::sha256_file(&tmp_pkg).ok()
+                    } else {
+                        None
+                    };
+                    if size_ok && hash.as_deref() == Some(plan.asset.sha256.as_str()) {
+                        downloaded_bytes = d.total;
+                        downloaded_sha = hash.unwrap_or_default();
+                        downloaded = true;
+                        break;
+                    }
+                    last_err = format!(
+                        "{route} 内容校验不通过（大小 {} / 期望 {}）",
+                        d.total, plan.asset.size
+                    );
+                    let _ = fs::remove_file(&tmp_pkg);
+                    let _ = fs::remove_file(format!("{tmp_pkg}.parts.json"));
                 }
                 Err(e) => {
-                    last_err = e;
+                    last_err = format!("{route}: {e}");
                     let _ = fs::remove_file(&tmp_pkg);
+                    let _ = fs::remove_file(format!("{tmp_pkg}.parts.json"));
                 }
             }
         }
@@ -1258,14 +1273,18 @@ pub async fn run_update() -> i32 {
     }
 
     write_status("verifying", 80, "正在校验安装包 SHA256...", None, None);
-    let actual = match crate::hash::sha256_file(&tmp_pkg) {
-        Ok(h) => h,
-        Err(e) => {
-            let msg = format!("SHA256 计算失败: {e}");
-            let _ = fs::remove_file(&tmp_pkg);
-            plugin_task_finish(&task_id, ST_FAILED, &msg, downloaded_bytes, 0);
-            write_status("failed", 100, "校验失败", Some(&msg), None);
-            return 1;
+    let actual = if !downloaded_sha.is_empty() {
+        downloaded_sha
+    } else {
+        match crate::hash::sha256_file(&tmp_pkg) {
+            Ok(h) => h,
+            Err(e) => {
+                let msg = format!("SHA256 计算失败: {e}");
+                let _ = fs::remove_file(&tmp_pkg);
+                plugin_task_finish(&task_id, ST_FAILED, &msg, downloaded_bytes, 0);
+                write_status("failed", 100, "校验失败", Some(&msg), None);
+                return 1;
+            }
         }
     };
     if actual != plan.asset.sha256 {
@@ -1370,6 +1389,16 @@ pub async fn run_update() -> i32 {
         downloaded_bytes,
         0,
     );
+    // 更新成功后自动清理历史：每种任务只保留最近一条终态记录，
+    // 避免插件/固件下载历史无限堆积。运行中的任务不受影响。
+    {
+        let mut store = TaskStore::open();
+        let pruned = store.prune_terminal(1);
+        if pruned > 0 {
+            let _ = store.save();
+            logline!("[plugin] 已自动清理 {pruned} 条历史下载任务");
+        }
+    }
     logline!(
         "[plugin] 更新完成: {} -> {}（{}）",
         plan.local.display,
