@@ -65,7 +65,16 @@ impl DeviceProfile {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| std::env::consts::ARCH.to_string());
 
-        let pkg_arch = package_manager_arch();
+        let pkg_mgr_arch = package_manager_arch();
+        // apk-tools 3 的 `--print-arch` 只返回架构家族（如 aarch64），
+        // 而 OpenWrt 的包架构是 DISTRIB_ARCH（如 aarch64_cortex-a53）。
+        // 插件自更新按包架构精确选择安装包，必须优先使用后者；
+        // 否则同一家族存在多个 CPU 变体时只能退化到家族匹配。
+        let pkg_arch = if arch.is_empty() {
+            pkg_mgr_arch
+        } else {
+            arch.clone()
+        };
 
         Self {
             model: if model.is_empty() {
