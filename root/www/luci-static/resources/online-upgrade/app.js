@@ -103,6 +103,136 @@
 		}
 	}
 
+	/* ---------------- 通用弹窗 ---------------- */
+
+	var dialogResolve = null;
+	var dialogPrevFocus = null;
+	var OU_DIALOG_ICONS = {
+		primary: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 12 14 17 9"/></svg>',
+		danger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+		warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+		success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+	};
+
+	function ouDialog(opts) {
+		opts = opts || {};
+		return new Promise(function (resolve) {
+			var root = $('ou-dialog');
+			if (!root) {
+				// 极端降级：模板缺失时仍然保证操作可继续。
+				resolve(window.confirm(opts.message || ''));
+				return;
+			}
+			if (dialogResolve) {
+				var previous = dialogResolve;
+				dialogResolve = null;
+				previous(false);
+			}
+			dialogResolve = resolve;
+			dialogPrevFocus = document.activeElement;
+			var tone = opts.tone || 'primary';
+			if (!OU_DIALOG_ICONS[tone]) tone = 'primary';
+			var alertOnly = !!opts.alertOnly;
+
+			root.className = 'ou-dialog tone-' + tone;
+			root.style.display = 'flex';
+			root.setAttribute('aria-hidden', 'false');
+			setText('ou-dialog-title', opts.title || '请确认');
+			setText('ou-dialog-eyebrow', opts.eyebrow || (alertOnly ? '提示' : '确认操作'));
+			$('ou-dialog-icon').innerHTML = OU_DIALOG_ICONS[tone];
+
+			var body = $('ou-dialog-body');
+			var html = '<p class="ou-dialog-message">' + esc(opts.message || '') + '</p>';
+			if (opts.detail) {
+				html += '<div class="ou-dialog-detail">' + esc(opts.detail) + '</div>';
+			}
+			body.innerHTML = html;
+			body.scrollTop = 0;
+
+			var cancel = $('ou-dialog-cancel');
+			var confirm = $('ou-dialog-confirm');
+			cancel.style.display = alertOnly ? 'none' : '';
+			cancel.textContent = opts.cancelText || '取消';
+			confirm.textContent = opts.confirmText || (alertOnly ? '知道了' : '确定');
+			confirm.className = 'btn ou-btn ' + (tone === 'danger' ? 'ou-btn-danger' :
+				tone === 'warning' ? 'ou-btn-warning' : 'ou-btn-primary');
+
+			document.body.classList.add('ou-modal-open');
+			// 先强制提交初始 transform，再同步添加 is-open；
+			// 不依赖 requestAnimationFrame（部分 WebView/无头环境不会触发）。
+			void root.offsetWidth;
+			root.classList.add('is-open');
+			setTimeout(function () {
+				if (!dialogResolve) return;
+				(alertOnly ? confirm : cancel).focus();
+			}, 60);
+		});
+	}
+
+	function finishDialog(ok) {
+		var root = $('ou-dialog');
+		var resolve = dialogResolve;
+		if (!root || !resolve) return;
+		dialogResolve = null;
+		root.classList.remove('is-open');
+		root.setAttribute('aria-hidden', 'true');
+		document.body.classList.remove('ou-modal-open');
+		if (dialogPrevFocus && dialogPrevFocus.focus) {
+			try { dialogPrevFocus.focus(); } catch (e) { /* ignore */ }
+		}
+		dialogPrevFocus = null;
+		setTimeout(function () {
+			if (!dialogResolve) root.style.display = 'none';
+		}, 240);
+		resolve(ok === true);
+	}
+
+	function ouConfirm(opts) { return ouDialog(opts); }
+
+	function ouAlert(opts) {
+		opts = opts || {};
+		var copy = {};
+		for (var k in opts) {
+			if (Object.prototype.hasOwnProperty.call(opts, k)) copy[k] = opts[k];
+		}
+		copy.alertOnly = true;
+		return ouDialog(copy);
+	}
+
+	function bindDialog() {
+		var root = $('ou-dialog');
+		if (!root) return;
+		$('ou-dialog-cancel').addEventListener('click', function () { finishDialog(false); });
+		$('ou-dialog-confirm').addEventListener('click', function () { finishDialog(true); });
+		$('ou-dialog-close').addEventListener('click', function () { finishDialog(false); });
+		var backdrop = root.querySelector('[data-ou-dialog-dismiss]');
+		if (backdrop) backdrop.addEventListener('click', function () { finishDialog(false); });
+		document.addEventListener('keydown', function (e) {
+			if (!dialogResolve) return;
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				finishDialog(false);
+				return;
+			}
+			if (e.key !== 'Tab') return;
+			var buttons = root.querySelectorAll('.ou-dialog-panel button:not([disabled])');
+			var visible = [];
+			for (var i = 0; i < buttons.length; i++) {
+				if (buttons[i].offsetParent !== null) visible.push(buttons[i]);
+			}
+			if (!visible.length) return;
+			var first = visible[0];
+			var last = visible[visible.length - 1];
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		});
+	}
+
 	/* ---------------- detached 运行状态的新旧判定 ---------------- */
 
 	// rpcd 以 detached 方式启动 check/upgrade，点击后第一次轮询读到的往往还是
@@ -749,13 +879,27 @@
 			hint('check-result', '当前固件与 Release 同版本，普通升级不适用；如需重装请使用「强制升级」', 'warn');
 			return;
 		}
-		var msg = isForce
+		var title = isForce
+			? (same ? '同版本重装固件' : '强制更新固件')
+			: '开始在线固件升级';
+		var message = isForce
 			? (same
-				? '确定同版本重装固件?\n\n当前固件与 Release 为同一版本，这是重装而不是升级。\n强制模式会跳过适配判定与版本方向检查。\n系统仍会备份配置、下载并校验固件后再刷写。\n请勿断电!'
-				: '确定强制更新固件?\n\n强制模式会跳过适配判定与版本方向检查(目标固件可能无法确认是否适配本机,或版本低于当前)。\n系统仍会备份配置、下载并校验固件后再刷写。\n请勿断电!')
-			: '确定执行在线固件升级?\n\n系统将自动:备份配置 → 多线程下载固件 → 校验 → 刷写(自动恢复配置) → 重启。\n请勿断电!';
-		if (!confirm(msg)) return;
+				? '当前固件与 Release 为同一版本，这是重装而不是升级。\n强制模式会跳过适配判定与版本方向检查。\n系统仍会备份配置、下载并校验固件后再刷写。\n请勿断电！'
+				: '强制模式会跳过适配判定与版本方向检查（目标固件可能无法确认是否适配本机，或版本低于当前）。\n系统仍会备份配置、下载并校验固件后再刷写。\n请勿断电！')
+			: '系统将自动：备份配置 → 多线程下载固件 → 校验 → 刷写（自动恢复配置） → 重启。\n请勿断电！';
+		ouConfirm({
+			tone: isForce ? 'danger' : 'primary',
+			eyebrow: isForce ? '强制刷写' : '在线升级',
+			title: title,
+			message: message,
+			confirmText: isForce ? (same ? '确认重装' : '继续强制升级') : '开始升级'
+		}).then(function (ok) {
+			if (ok) doStartUpgrade(isForce);
+		});
+	}
 
+	function doStartUpgrade(isForce) {
+		var same = sameVersionChecked();
 		setBusy('btn-upgrade', true, '启动中...');
 		setBusy('btn-force', true, '启动中...');
 		stopPoll();
@@ -920,19 +1064,36 @@
 
 	function deleteTask(id, state) {
 		var busy = (state === 'running' || state === 'paused');
-		var extra = busy ? '\n\n该任务仍在进行中，请先点击「取消」停止后再删除。' : '';
-		if (!confirm('确定删除该下载历史任务?\n\n' + id + extra +
-			'\n\n删除后不可恢复；若已无「已完成」记录，会一并清理临时固件文件。')) return;
-		ubus('delete_task', { id: id }).then(function (r) {
-			if (r && r.ok) {
-				hint('task-hint', ' 已删除任务 ' + id +
-					(r.files_removed ? '（清理 ' + r.files_removed + ' 个临时文件）' : ''), 'ok');
-			} else {
-				hint('task-hint', ' ' + (r && r.error ? r.error : '删除失败'), 'err');
-			}
-			return refreshTasks();
-		}).catch(function (e) {
-			hint('task-hint', ' 删除失败: ' + e.message, 'err');
+		if (busy) {
+			ouAlert({
+				tone: 'warning',
+				eyebrow: '任务管理',
+				title: '任务仍在进行中',
+				message: '请先点击「取消」停止任务，再删除历史记录。',
+				detail: id
+			});
+			return;
+		}
+		ouConfirm({
+			tone: 'danger',
+			eyebrow: '任务管理',
+			title: '删除下载任务',
+			message: '删除后不可恢复；若已无「已完成」记录，会一并清理临时固件文件。',
+			detail: id,
+			confirmText: '删除任务'
+		}).then(function (ok) {
+			if (!ok) return;
+			ubus('delete_task', { id: id }).then(function (r) {
+				if (r && r.ok) {
+					hint('task-hint', ' 已删除任务 ' + id +
+						(r.files_removed ? '（清理 ' + r.files_removed + ' 个临时文件）' : ''), 'ok');
+				} else {
+					hint('task-hint', ' ' + (r && r.error ? r.error : '删除失败'), 'err');
+				}
+				return refreshTasks();
+			}).catch(function (e) {
+				hint('task-hint', ' 删除失败: ' + e.message, 'err');
+			});
 		});
 	}
 
@@ -985,13 +1146,22 @@
 	}
 
 	function deleteBackup(path) {
-		if (!confirm('确定删除备份?\n\n' + path + '\n\n删除后不可恢复!')) return;
-		ubus('delete_backup', { path: path }).then(function (r) {
-			if (r && r.ok) hint('backup-hint', ' 已删除 ' + path, 'ok');
-			else hint('backup-hint', ' ' + (r && r.error ? r.error : '删除失败'), 'err');
-			refreshBackups();
-		}).catch(function (e) {
-			hint('backup-hint', ' ' + e.message, 'err');
+		ouConfirm({
+			tone: 'danger',
+			eyebrow: '配置备份',
+			title: '删除备份文件',
+			message: '删除后不可恢复。',
+			detail: path,
+			confirmText: '删除备份'
+		}).then(function (ok) {
+			if (!ok) return;
+			ubus('delete_backup', { path: path }).then(function (r) {
+				if (r && r.ok) hint('backup-hint', ' 已删除 ' + path, 'ok');
+				else hint('backup-hint', ' ' + (r && r.error ? r.error : '删除失败'), 'err');
+				refreshBackups();
+			}).catch(function (e) {
+				hint('backup-hint', ' ' + e.message, 'err');
+			});
 		});
 	}
 
@@ -1025,15 +1195,24 @@
 				return;
 			}
 			var b = r.backups[0];
-			if (!confirm('确定从备份恢复配置?\n\n' + b.path + '\n\n将使用 tar 解压覆盖 / 下所有配置文件,建议恢复后重启。')) return;
-			setBusy('btn-auto-restore', true, '恢复中...');
-			ubus('restore', { path: b.path }).then(function (res) {
-				if (res && res.ok) hint('backup-hint', ' 配置已恢复,建议重启路由器', 'ok');
-				else hint('backup-hint', ' ' + (res && res.error ? res.error : '恢复失败'), 'err');
-			}).catch(function (e) {
-				hint('backup-hint', ' ' + e.message, 'err');
-			}).finally(function () {
-				setBusy('btn-auto-restore', false, '自动恢复');
+			ouConfirm({
+				tone: 'warning',
+				eyebrow: '配置恢复',
+				title: '从备份恢复配置',
+				message: '将使用 tar 解压覆盖 / 下所有配置文件，建议恢复后重启路由器。',
+				detail: b.path,
+				confirmText: '开始恢复'
+			}).then(function (ok) {
+				if (!ok) return;
+				setBusy('btn-auto-restore', true, '恢复中...');
+				ubus('restore', { path: b.path }).then(function (res) {
+					if (res && res.ok) hint('backup-hint', ' 配置已恢复,建议重启路由器', 'ok');
+					else hint('backup-hint', ' ' + (res && res.error ? res.error : '恢复失败'), 'err');
+				}).catch(function (e) {
+					hint('backup-hint', ' ' + e.message, 'err');
+				}).finally(function () {
+					setBusy('btn-auto-restore', false, '自动恢复');
+				});
 			});
 		}).catch(function (e) {
 			hint('backup-hint', ' ' + e.message, 'err');
@@ -1050,32 +1229,40 @@
 			hint('backup-hint', ' 请选择 .tar.gz 格式的备份文件', 'err');
 			return;
 		}
-		if (!confirm('确定上传并恢复配置?\n\n文件: ' + file.name + ' (' + fmtSize(file.size) + ')')) return;
-
-		var fd = new FormData();
-		fd.append('sessionid', SID);
-		fd.append('filename', '/tmp/restore-upload.tar.gz');
-		fd.append('filemode', '0600');
-		fd.append('filedata', file, file.name);
-		setBusy('btn-manual-restore', true, '上传中...');
-		hint('backup-hint', '正在上传备份文件...');
-		fetch('/cgi-bin/cgi-upload', { method: 'POST', credentials: 'same-origin', body: fd })
-			.then(function (r) { return r.json(); })
-			.then(function (reply) {
-				if (reply && reply.failure) throw new Error(reply.failure || '上传失败');
-				hint('backup-hint', '上传完成,正在恢复...');
-				return ubus('restore', { path: '/tmp/restore-upload.tar.gz' });
-			})
-			.then(function (res) {
-				if (res && res.ok) hint('backup-hint', ' 配置已从上传的备份恢复,建议重启路由器', 'ok');
-				else hint('backup-hint', ' ' + (res && res.error ? res.error : '恢复失败'), 'err');
-			})
-			.catch(function (e) {
-				hint('backup-hint', ' ' + e.message, 'err');
-			})
-			.finally(function () {
-				setBusy('btn-manual-restore', false, '手动恢复');
-			});
+		ouConfirm({
+			tone: 'warning',
+			eyebrow: '手动恢复',
+			title: '上传并恢复配置',
+			message: '上传后会立即使用该备份覆盖当前配置，建议恢复后重启路由器。',
+			detail: file.name + ' · ' + fmtSize(file.size),
+			confirmText: '上传并恢复'
+		}).then(function (ok) {
+			if (!ok) return;
+			var fd = new FormData();
+			fd.append('sessionid', SID);
+			fd.append('filename', '/tmp/restore-upload.tar.gz');
+			fd.append('filemode', '0600');
+			fd.append('filedata', file, file.name);
+			setBusy('btn-manual-restore', true, '上传中...');
+			hint('backup-hint', '正在上传备份文件...');
+			fetch('/cgi-bin/cgi-upload', { method: 'POST', credentials: 'same-origin', body: fd })
+				.then(function (r) { return r.json(); })
+				.then(function (reply) {
+					if (reply && reply.failure) throw new Error(reply.failure || '上传失败');
+					hint('backup-hint', '上传完成,正在恢复...');
+					return ubus('restore', { path: '/tmp/restore-upload.tar.gz' });
+				})
+				.then(function (res) {
+					if (res && res.ok) hint('backup-hint', ' 配置已从上传的备份恢复,建议重启路由器', 'ok');
+					else hint('backup-hint', ' ' + (res && res.error ? res.error : '恢复失败'), 'err');
+				})
+				.catch(function (e) {
+					hint('backup-hint', ' ' + e.message, 'err');
+				})
+				.finally(function () {
+					setBusy('btn-manual-restore', false, '手动恢复');
+				});
+		});
 	}
 
 	/* ---------------- 配置 ---------------- */
@@ -1342,17 +1529,30 @@
 	}
 
 	function clearLog() {
-		if (!confirm('确定清空当前运行日志吗？')) return;
-		setBusy('btn-clear-log', true, '清空中...');
-		ubus('clear_log').then(function (r) {
-			if (r && r.ok) {
-				var lv = $('log-view');
-				if (lv) lv.textContent = '日志已清空';
-			}
-		}).catch(function (e) {
-			alert('清空日志失败: ' + e.message);
-		}).finally(function () {
-			setBusy('btn-clear-log', false, '清空日志');
+		ouConfirm({
+			tone: 'warning',
+			eyebrow: '运行日志',
+			title: '清空当前日志',
+			message: '日志文件内容会被立即清空，且无法恢复。',
+			confirmText: '清空日志'
+		}).then(function (ok) {
+			if (!ok) return;
+			setBusy('btn-clear-log', true, '清空中...');
+			ubus('clear_log').then(function (r) {
+				if (r && r.ok) {
+					var lv = $('log-view');
+					if (lv) lv.textContent = '日志已清空';
+				}
+			}).catch(function (e) {
+				ouAlert({
+					tone: 'danger',
+					eyebrow: '运行日志',
+					title: '清空日志失败',
+					message: e.message
+				});
+			}).finally(function () {
+				setBusy('btn-clear-log', false, '清空日志');
+			});
 		});
 	}
 
@@ -1654,42 +1854,46 @@
 		if (!r || !r.update_available || !r.asset) return;
 		var from = r.local ? r.local.display : '未知';
 		var to = r.latest ? r.latest.version : '未知';
-		var msg = '确定更新插件？\n\n当前版本: ' + from + '\n目标版本: v' + to +
-			'\n安装包: ' + r.asset.name +
-			'\nSHA256: ' + (r.asset.sha256 || '').substring(0, 16) + '...' +
-			'\n\n更新只替换插件本身，不会重启路由器；完成后刷新页面即可。';
-		if (!confirm(msg)) return;
-
-		setBusy('btn-plugin-check', true, '检查插件更新');
-		setBusy('btn-plugin-update', true, '启动中...');
-		showBtn('btn-plugin-update', false);
-		showBtn('btn-plugin-reload', false);
-		setPluginProgress(0, true);
-		pluginBadge('更新中', 'update');
-		pluginHint('正在校验最新版本并准备下载...', '');
-		stopPluginPoll();
-		refreshTasks();
-		snapshotPluginStatus().then(function () {
-			pluginFresh = true;
-			return ubus('start_plugin_update');
-		}).then(function (res) {
-			if (res && res.ok === false) {
+		ouConfirm({
+			tone: 'primary',
+			eyebrow: '插件更新',
+			title: '更新插件到 v' + to,
+			message: '当前版本：' + from + '\n更新只替换插件本身，不会重启路由器；完成后刷新页面即可。',
+			detail: r.asset.name + '\nSHA256: ' + (r.asset.sha256 || '').substring(0, 16) + '...',
+			confirmText: '开始更新'
+		}).then(function (ok) {
+			if (!ok) return;
+			setBusy('btn-plugin-check', true, '检查插件更新');
+			setBusy('btn-plugin-update', true, '启动中...');
+			showBtn('btn-plugin-update', false);
+			showBtn('btn-plugin-reload', false);
+			setPluginProgress(0, true);
+			pluginBadge('更新中', 'update');
+			pluginHint('正在校验最新版本并准备下载...', '');
+			stopPluginPoll();
+			refreshTasks();
+			snapshotPluginStatus().then(function () {
+				pluginFresh = true;
+				return ubus('start_plugin_update');
+			}).then(function (res) {
+				if (res && res.ok === false) {
+					pluginFresh = false;
+					pluginBadge('更新失败', 'err');
+					pluginHint(res.error || '插件更新未能启动', 'err');
+					setBusy('btn-plugin-check', false, '检查插件更新');
+					setBusy('btn-plugin-update', false, '更新插件');
+					showBtn('btn-plugin-update', true);
+					return;
+				}
+				startPluginPoll();
+			}).catch(function (e) {
 				pluginFresh = false;
 				pluginBadge('更新失败', 'err');
-				pluginHint(res.error || '插件更新未能启动', 'err');
+				pluginHint('插件更新请求失败: ' + e.message, 'err');
 				setBusy('btn-plugin-check', false, '检查插件更新');
 				setBusy('btn-plugin-update', false, '更新插件');
 				showBtn('btn-plugin-update', true);
-				return;
-			}
-			startPluginPoll();
-		}).catch(function (e) {
-			pluginFresh = false;
-			pluginBadge('更新失败', 'err');
-			pluginHint('插件更新请求失败: ' + e.message, 'err');
-			setBusy('btn-plugin-check', false, '检查插件更新');
-			setBusy('btn-plugin-update', false, '更新插件');
-			showBtn('btn-plugin-update', true);
+			});
 		});
 	}
 
@@ -1770,6 +1974,7 @@
 		$('evidence-toggle').addEventListener('click', function () {
 			setEvidenceExpanded(!$('check-evidence').classList.contains('is-open'));
 		});
+		bindDialog();
 		applyMobileSections();
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {

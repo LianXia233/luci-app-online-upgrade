@@ -8,6 +8,20 @@
 
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 升级到 Node 24 版本（`checkout@v5`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v5`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.5.4] - 2026-11-10
+
+### Changed
+
+- **统一弹窗系统**：新增 `ouDialog` 组件，替代全部浏览器原生 `confirm/alert`。手机端（≤760px）使用从屏幕底部滑出的 Bottom Sheet，桌面端使用居中 Modal Dialog；支持遮罩点击、ESC、焦点循环与按钮焦点恢复。
+- **弹窗视觉规范**：白底、18px 桌面圆角、20px 手机顶部圆角、柔和阴影与毛玻璃遮罩；标题/说明/详情/操作区分层，详情使用等宽字体；主操作、危险操作与警告操作分别使用蓝、红、琥珀色按钮。
+- **重启状态弹窗**：手机端改为底部抽屉形态，桌面端保持居中卡片；刷新按钮补齐蓝底主按钮样式。
+- **弹窗调用迁移**：固件升级/强制升级、删除任务、删除备份、自动恢复、手动恢复、清空日志、插件更新等确认与失败提示全部切换到新弹窗。
+
+### Fixed
+
+- 弹窗按钮位于 `.ou-container` 之外，原先无法继承主按钮样式，已补齐独立的按钮基类与主/危险/警告配色。
+- 桌面弹窗打开动画不再依赖 `requestAnimationFrame` 添加 `is-open`，改为同步提交初始状态后触发过渡，兼容部分 WebView/无头环境。
+
 ## [2.5.3] - 2026-11-10
 
 ### Added

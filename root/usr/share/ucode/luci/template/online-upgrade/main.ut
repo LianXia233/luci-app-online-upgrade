@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.3">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.4">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -752,7 +752,30 @@
 	</div>
 </div>
 
+<!-- 通用确认/提示弹窗：手机端底部抽屉，桌面端居中对话框 -->
+<div id="ou-dialog" class="ou-dialog" style="display:none" aria-hidden="true">
+	<div class="ou-dialog-backdrop" data-ou-dialog-dismiss="1"></div>
+	<div class="ou-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="ou-dialog-title" aria-describedby="ou-dialog-body">
+		<div class="ou-dialog-grabber" aria-hidden="true"></div>
+		<div class="ou-dialog-head">
+			<div class="ou-dialog-icon" id="ou-dialog-icon" aria-hidden="true"></div>
+			<div class="ou-dialog-heading">
+				<span class="ou-dialog-eyebrow" id="ou-dialog-eyebrow">确认操作</span>
+				<h3 class="ou-dialog-title" id="ou-dialog-title">请确认</h3>
+			</div>
+			<button type="button" class="ou-dialog-close" id="ou-dialog-close" aria-label="关闭弹窗">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+			</button>
+		</div>
+		<div class="ou-dialog-body" id="ou-dialog-body"></div>
+		<div class="ou-dialog-actions">
+			<button type="button" class="btn ou-btn ou-btn-default" id="ou-dialog-cancel">取消</button>
+			<button type="button" class="btn ou-btn ou-btn-primary" id="ou-dialog-confirm">确定</button>
+		</div>
+	</div>
+</div>
+
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.5.3"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.5.4"></script>
 
 {% include('footer') %}
