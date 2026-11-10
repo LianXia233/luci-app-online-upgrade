@@ -253,7 +253,7 @@
 apk add --allow-untrusted luci-app-online-upgrade_*.apk
 ```
 
-> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.4.0`），安装包文件名为 `luci-app-online-upgrade-<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`。三者由 `Makefile` 统一派生，`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定；发布前 CI 会校验安装包名与版本相符，Release 正文自动取自 `CHANGELOG.md` 对应版本段落，因此标签、产物版本与更新日志始终同步。
+> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.4.1`），安装包文件名为 `luci-app-online-upgrade-<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`。三者由 `Makefile` 统一派生，`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定；发布前 CI 会校验安装包名与版本相符，Release 正文自动取自 `CHANGELOG.md` 对应版本段落，因此标签、产物版本与更新日志始终同步。
 
 ### 方式 B：从源码编译打包
 
