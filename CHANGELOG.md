@@ -47,6 +47,7 @@
 
 ### Fixed
 
+- **插件页面不显示 LuCI 菜单栏**：`main.ut` 直接包含 `themes/<theme>/header`，绕过了 LuCI 基础 `header.ut` 中加载 `luci.js` 并初始化全局 `L` 的步骤；主题 footer 里的菜单脚本（如 Proton2025 的 `L.require('menu-proton2025')`）因此无法执行，`#mainmenu` 始终为空，页面只剩主题顶栏。现改为标准写法 `{% include('header') %}`，由基础模板负责包含主题 header、加载 `luci.js` 与初始化 `L`，主题侧边栏/顶部菜单恢复正常，`L.env.sessionid` 也能作为真实设备 ubus 会话的兜底。
 - **点击「立即升级」报 `ubus error 2`，下载从未开始**：rpcd 依据 `args` 中每个提示值的**类型**（而非类型名）推导 blobmsg 策略，`args: { force: 'boolean' }` 中的字符串会落到 `BLOBMSG_TYPE_STRING`，前端传入的 JSON 布尔值因而被 `rpc_ucode_validate_call_args()` 判为类型不符并返回 `UBUS_STATUS_INVALID_ARGUMENT`（2）。改用字面量 `false` 后策略注册为 `Boolean`，`--force` 参数恢复正常。
 - **「清空日志」被 ACL 拒绝**：`clear_log` 未写入 `luci-app-online-upgrade` 的 write 授权，LuCI 会话实测 `access:false`，前端调用会得到 `ubus error 6`（Permission denied）。已补齐授权。
 - **复用旧固件只比对长度与时间戳**：`/tmp/firmware.img.gz` 残留时，旧实现只要「文件长度不为 0 且 `.ts` 里的 `updated` 与本次资产相同」就直接跳过下载并宣告成功——这与续传空洞是同源问题，长度正确并不等于内容正确。现在续传标记写入「`updated` 时间戳 + 完成文件的本地 SHA256」两行，复用前要求长度等于资产大小、标记两行齐备、且标记哈希与磁盘当前哈希一致；任何一项不满足就丢弃重下。标记只在文件通过校验后才写，因此「有标记」即代表「曾通过哈希闸门」。`download` 的复用分支同样执行完整校验并输出 `verified` / `hash_source` / `dry_run`，不再用一条精简状态绕过。

@@ -1,4 +1,4 @@
-{% include(`themes/${theme}/header`) %}
+{% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
 <link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.4.0">
@@ -655,4 +655,4 @@
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
 <script src="{{ resource }}/online-upgrade/app.js?v=2.4.0"></script>
 
-{% include(`footer`) %}
+{% include('footer') %}
