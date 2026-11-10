@@ -296,6 +296,7 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 
 1. **`rust` 作业**：使用 rustup + cargo，按 `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl` 直接交叉编译；`Swatinem/rust-cache` 缓存 Cargo registry 与 `target`，依赖未变化时无需重新编译。
 2. **`package` 作业**：只把预编译二进制与 LuCI 文件放入 ImmortalWrt SDK，生成最终 `.apk`；`actions/cache` 复用 SDK 压缩包，避免每次重新下载数百 MB 的 SDK。
+3. **`release` 作业**：上传当前版本产物后，自动删除除当前 tag 外的所有 Release 对象，并校验清理后只剩 1 个 Release；Git tag 默认保留，作为历史源码引用。
 
 `Makefile` 的 `Build/Compile` 刻意为空，并在 `Build/Prepare` 中校验预编译二进制是否存在；若缺少会直接给出交叉编译提示，而不是到安装阶段才报错。
 

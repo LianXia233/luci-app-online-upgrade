@@ -378,3 +378,34 @@ jobs:
           files: /tmp/pkgs/*
           token: ${{ github.token }}
           make_latest: true
+
+      # 每次发布成功后只保留当前 Release，删除更早的 Release 对象。
+      # 只删 Release，不删除 Git tag：tag 仍可作为历史源码引用；
+      # 如需连 tag 一起清理，可给 gh release delete 增加 --cleanup-tag。
+      - name: Prune older releases (keep latest only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # 给 Release API 一点可见性时间，避免刚上传的 Release 尚未出现在列表中。
+          sleep 3
+          echo "保留当前 Release: $TAG"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | .tag_name' > /tmp/all-releases.txt
+          while IFS= read -r old; do
+            [ -n "$old" ] || continue
+            [ "$old" = "$TAG" ] && continue
+            echo "删除旧 Release: $old"
+            gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done < /tmp/all-releases.txt
+
+          remaining=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | .tag_name' | wc -l)
+          if [ "$remaining" -ne 1 ]; then
+            echo "清理后 Release 数量为 $remaining，期望 1" >&2
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | .tag_name' >&2
+            exit 1
+          fi
+          echo "Release 清理完成，当前仅保留: $TAG"
