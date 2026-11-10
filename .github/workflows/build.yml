@@ -8,6 +8,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 同一分支的新提交会取消仍在运行的旧构建，避免重复占用 runner。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ---------- 0. 前置校验：版本号全局一致 ----------
   # app.js/style.css 通过 ?v=<版本号> 实现缓存失效；若该版本号与
@@ -24,7 +29,7 @@ jobs:
       tag: ${{ steps.ver.outputs.tag }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Version consistency (Makefile / Cargo.toml / templates)
         id: ver
@@ -63,7 +68,7 @@ jobs:
             cc_env: CC_x86_64_unknown_linux_musl=musl-gcc
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install cross C toolchain (required by ring/rustls)
         run: |
@@ -75,6 +80,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # 只缓存 Cargo registry 与 target，不缓存工具链本身；
+      # Cargo.lock 变化时 key 自动失效，首次会回退到完整编译。
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust -> target
+          key: ${{ matrix.target }}
+          cache-on-failure: true
+
       - name: Build (static musl, rust-lld self-contained)
         working-directory: rust
         env:
@@ -85,10 +99,11 @@ jobs:
           file target/${{ matrix.target }}/release/online-upgrade
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: online-upgrade-${{ matrix.target }}
           path: rust/target/${{ matrix.target }}/release/online-upgrade
+          if-no-files-found: error
 
   # ---------- 2. 使用 ImmortalWrt SDK 打包 ----------
   package:
@@ -107,17 +122,36 @@ jobs:
             ext: apk
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: package-dir
 
+      # SDK 压缩包体积大且官方源偶尔很慢；缓存后重复构建只需解压。
+      # SDK URL 中的版本变化时，同步修改 key 里的版本号/后缀。
+      - name: Cache OpenWrt SDK
+        uses: actions/cache@v5
+        with:
+          path: sdk.tar
+          key: immortalwrt-sdk-25.12.0-${{ matrix.pkg_arch }}-v1
+
       - name: Download SDK
         run: |
-          curl -sL --retry 5 --retry-delay 10 "${{ matrix.sdk_url }}" -o sdk.tar
-          mkdir sdk && tar --zstd -xf sdk.tar -C sdk --strip-components=1
+          set -eu
+          if [ -s sdk.tar ] && ! tar --zstd -tf sdk.tar >/dev/null 2>&1; then
+            echo "缓存的 SDK 压缩包损坏，重新下载"
+            rm -f sdk.tar
+          fi
+          if [ ! -s sdk.tar ]; then
+            echo "下载 OpenWrt SDK..."
+            curl -fL --retry 5 --retry-delay 10 "${{ matrix.sdk_url }}" -o sdk.tar
+          else
+            echo "使用缓存的 OpenWrt SDK"
+          fi
+          mkdir -p sdk
+          tar --zstd -xf sdk.tar -C sdk --strip-components=1
 
       - name: Fetch Rust binary artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.bin_artifact }}
           path: bin
@@ -154,10 +188,11 @@ jobs:
           ls -lh /tmp/pkgs/
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.bin_artifact }}
           path: /tmp/pkgs/*
+          if-no-files-found: error
 
   # ---------- 3. 发布 ----------
   release:
@@ -167,12 +202,12 @@ jobs:
     needs: [verify, package]
     steps:
       - name: Checkout source (CHANGELOG drives the release notes)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: src
 
       - name: Download all package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
           merge-multiple: true
@@ -251,7 +286,7 @@ jobs:
           fi
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.verify.outputs.tag }}
           name: v${{ needs.verify.outputs.version }}

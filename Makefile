@@ -38,12 +38,21 @@ define Package/luci-app-online-upgrade/description
 	ucode rpcd backend, native JS/CSS frontend.
 endef
 
+# Rust 后端由 CI 的 rust 作业使用 rustup/cargo 交叉编译后放到
+# ./root/usr/bin/online-upgrade；OpenWrt SDK 只负责 LuCI 文件、
+# 包结构与 .apk 生成，因此这里只校验预编译产物，不在 SDK 内编译 Rust。
 define Build/Prepare
+	@if [ ! -x ./root/usr/bin/online-upgrade ]; then \
+		echo "ERROR: 缺少预编译的 Rust 二进制 ./root/usr/bin/online-upgrade"; \
+		echo "       请先按 README 的交叉编译步骤生成，或使用 CI 的 rust 作业产物。"; \
+		exit 1; \
+	fi
 endef
 
 define Build/Configure
 endef
 
+# 刻意为空：Rust 已在 CI/本地用 cargo 交叉编译，SDK 内不再重复编译。
 define Build/Compile
 endef
 
