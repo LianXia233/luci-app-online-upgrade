@@ -29,7 +29,7 @@ jobs:
       tag: ${{ steps.ver.outputs.tag }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Version consistency (Makefile / Cargo.toml / templates)
         id: ver
@@ -68,7 +68,7 @@ jobs:
             cc_env: CC_x86_64_unknown_linux_musl=musl-gcc
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install cross C toolchain (required by ring/rustls)
         run: |
@@ -122,14 +122,14 @@ jobs:
             ext: apk
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: package-dir
 
       # SDK 压缩包体积大且官方源偶尔很慢；缓存后重复构建只需解压。
       # SDK URL 中的版本变化时，同步修改 key 里的版本号/后缀。
       - name: Cache OpenWrt SDK
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: sdk.tar
           key: immortalwrt-sdk-25.12.0-${{ matrix.pkg_arch }}-v1
@@ -209,7 +209,7 @@ jobs:
     needs: [verify, package]
     steps:
       - name: Checkout source (CHANGELOG drives the release notes)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: src
 
