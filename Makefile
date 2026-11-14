@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=2.6.4
+PKG_VERSION:=2.6.5
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>

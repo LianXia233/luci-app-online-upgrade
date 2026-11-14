@@ -13,6 +13,16 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.5] - 2026-11-14
+
+### Changed
+
+- **运行日志排版与降噪**：日志改为结构化渲染（标签色块 + 正文列、长行自动换行），纯 JSON 行默认折叠为摘要并可展开原文，连续重复行合并为 `×N`，顶部固定统计总行数 / 错误 / 警告 / 折叠段数；`refresh_states` 等输出完整 JSON 的 detached 命令只保留 `stderr` 进日志，不再把整段 states JSON 刷进终端。
+
+### Fixed
+
+- **模板资源版本号与 `PKG_VERSION` 对齐**：`main.ut` 中 `app.js?v=` / `style.css?v=` 与 `Makefile` 版本保持一致，修复 CI 的版本一致性检查失败。
+
 ## [2.6.4] - 2026-11-14
 
 ### Fixed
@@ -28,8 +38,6 @@
 - **更新包只落内存盘**：更新包固定写入 `/tmp`（tmpfs），每次更新前回收历史安装包与续传记录，保证任意时刻至多一个镜像，不在闪存留存安装包副本。
 
 ### Changed
-
-- **运行日志排版与降噪**：日志改为结构化渲染（标签色块 + 正文列、长行自动换行），纯 JSON 行默认折叠为摘要并可展开原文，连续重复行合并为 `×N`，顶部固定统计总行数 / 错误 / 警告 / 折叠段数；`refresh_states` 等输出完整 JSON 的 detached 命令只保留 `stderr` 进日志，不再把整段 states JSON 刷进终端。
 
 - **SNAPSHOT 设备版本锚点**：新增「上次成功升级记录的版本」（UCI `last_upgrade_version`）作为本地版本来源，要求其年月日与 rootfs 构建日期一致才按可信依据（`decidable`）采信；不一致自动退回构建时间。解决自用构建永远显示「依据较弱」的问题。
 - **诊断卡片排版**：明细改双列卡片并带严重度色条，去掉与顶部重复的「无法升级的原因 / 建议下一步」；无阻断时显示绿色结论；设备信息在宽屏改双列，整卡高度明显下降。
