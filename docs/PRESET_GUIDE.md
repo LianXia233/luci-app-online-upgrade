@@ -1,6 +1,7 @@
 # 固件云编译预设配置向导（Firmware Builder Preset Guide）
 
 > 适用版本：**luci-app-online-upgrade 2.6.7**
+> PDF 版：[PRESET_GUIDE.pdf](PRESET_GUIDE.pdf)（排版版，便于直接分发）
 > 本文是编译期集成指南，不是 LuCI 界面里的独立向导。目标是把仓库地址、固件匹配规则等预设写进固件，刷入后打开页面即可直接「检查更新」。
 
 ---

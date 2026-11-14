@@ -1,3 +1,4 @@
 # OpenWrt 软件包：所有文本必须使用 LF（Makefile/shell/ucode 遇到 CRLF 会出错）
 * text eol=lf
 *.png binary
+*.pdf binary
