@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.6">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.7">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -627,6 +627,35 @@
 					<p class="ou-field-help">过滤 manifest/sha256 等小文件，0 为不限制，默认 15 MB</p>
 				</div>
 				<div class="ou-form-field">
+					<label for="cfg-keep-config">升级时保留配置</label>
+					<select id="cfg-keep-config" class="ou-input-text">
+						<option value="1">保留（默认）</option>
+						<option value="0">不保留</option>
+					</select>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-api-via-proxy">GitHub API 走加速源</label>
+					<select id="cfg-api-via-proxy" class="ou-input-text">
+						<option value="0">否（直连 api.github.com）</option>
+						<option value="1">是</option>
+					</select>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-api-timeout">API 超时（秒）</label>
+					<input type="number" id="cfg-api-timeout" class="ou-input-text" min="5" max="120" step="1">
+				</div>
+				<div class="ou-form-field">
+					<label>状态缓存 TTL（秒）</label>
+					<div class="ou-ttl-grid">
+						<input type="number" id="cfg-ttl-actions" class="ou-input-text" min="15" step="1" placeholder="Actions 120">
+						<input type="number" id="cfg-ttl-releases" class="ou-input-text" min="15" step="1" placeholder="Releases 300">
+						<input type="number" id="cfg-ttl-artifacts" class="ou-input-text" min="15" step="1" placeholder="Artifacts 180">
+						<input type="number" id="cfg-ttl-compat" class="ou-input-text" min="15" step="1" placeholder="Compat 600">
+						<input type="number" id="cfg-ttl-network" class="ou-input-text" min="15" step="1" placeholder="Network 60">
+					</div>
+					<p class="ou-field-help">四套状态模型与网络探测的独立缓存时长</p>
+				</div>
+				<div class="ou-form-field">
 					<label for="cfg-token">GitHub Personal Token</label>
 					<div class="ou-input-row">
 						<input type="password" id="cfg-token" class="ou-input-text" placeholder="可选，突破匿名 API 60次/小时限制" autocomplete="off">
@@ -871,6 +900,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.6"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.7"></script>
 
 {% include('footer') %}

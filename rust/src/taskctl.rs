@@ -26,6 +26,10 @@ pub const TASKS_FILE: &str = "/root/.online-upgrade-tasks.json";
 pub const LOCK_FILE: &str = "/tmp/online-upgrade.lock";
 /// 归属下载任务的固件产物。
 pub const FIRMWARE_FILE: &str = "/tmp/firmware.img.gz";
+/// 下载完成标记（校验后写入）。
+pub const FIRMWARE_TS: &str = "/tmp/firmware.img.gz.ts";
+/// 断点续传侧车文件。
+pub const FIRMWARE_PARTS: &str = "/tmp/firmware.img.gz.parts.json";
 /// 闪存中保留的历史记录条数上限。
 pub const MAX_TASKS: usize = 30;
 
@@ -378,21 +382,28 @@ impl TaskStore {
         if task_alive() {
             return 0;
         }
+        // 锁文件里的进程已经不在：清理残留锁，避免后续操作被误判为“有任务在跑”。
+        let _ = fs::remove_file(LOCK_FILE);
         let mut changed = 0;
         let mut keep: Vec<Task> = Vec::with_capacity(self.tasks.len());
         for mut t in self.tasks.drain(..) {
-            let orphan_plugin = t.kind == KIND_PLUGIN
-                && matches!(t.state.as_str(), ST_RUNNING | ST_PAUSED);
-            if !orphan_plugin {
+            if !matches!(t.state.as_str(), ST_RUNNING | ST_PAUSED) {
                 keep.push(t);
                 continue;
             }
             changed += 1;
-            if t.total > 0 && t.done >= t.total {
-                cleanup_plugin_artifacts();
-                continue; // 已完成下载与安装，删掉记录
+            if t.kind == KIND_PLUGIN {
+                if t.total > 0 && t.done >= t.total {
+                    cleanup_plugin_artifacts();
+                    continue; // 已完成下载与安装，删掉记录
+                }
+                t.finish(ST_FAILED, "任务进程已退出（可能被中断），请重新发起插件更新");
+                keep.push(t);
+                continue;
             }
-            t.finish(ST_FAILED, "任务进程已退出（可能被中断），请重新发起插件更新");
+            // 固件下载：半成品无法可靠续传（缺少完成标记），直接清理后标失败。
+            cleanup_firmware_artifacts();
+            t.finish(ST_FAILED, "下载进程已退出（可能被中断），临时文件已清理，请重新开始下载");
             keep.push(t);
         }
         self.tasks = keep;
@@ -534,6 +545,17 @@ fn task_alive() -> bool {
         return false;
     }
     std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+/// 清理固件下载的临时产物（镜像 / 完成标记 / 续传记录）。
+pub fn cleanup_firmware_artifacts() -> usize {
+    let mut n = 0;
+    for p in [FIRMWARE_FILE, FIRMWARE_TS, FIRMWARE_PARTS] {
+        if fs::remove_file(p).is_ok() {
+            n += 1;
+        }
+    }
+    n
 }
 
 pub fn should_purge(tasks: &[Task]) -> bool {

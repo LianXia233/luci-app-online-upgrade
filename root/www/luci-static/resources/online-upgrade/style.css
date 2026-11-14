@@ -1320,6 +1320,16 @@
 .ou-container .ou-input-row .ou-input-text { flex: 1 1 auto !important; min-width: 0 !important; }
 .ou-container .ou-input-row .ou-btn { flex: 0 0 auto !important; white-space: nowrap !important; }
 
+/* 高级配置：缓存 TTL 五列网格 */
+.ou-container .ou-ttl-grid {
+	display: grid !important;
+	grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+	gap: 8px !important;
+}
+@media (max-width: 760px) {
+	.ou-container .ou-ttl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+
 .ou-container .ou-terminal.ou-log {
 	white-space: normal !important;
 	word-break: normal !important;

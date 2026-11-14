@@ -84,6 +84,23 @@ pub fn set_result(stage: &'static str, pct: u32, msg: &str, result: Value) {
     });
 }
 
+/// 任务删除 / 孤儿收敛后，把残留的任务阶段复位为 idle。
+/// 否则页面会同时显示「暂无下载任务」和上一次的「正在下载」。
+pub fn clear_task_stage() {
+    let text = match fs::read_to_string(STATUS_FILE) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let v = match crate::json::parse(&text) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let stage = v.get("stage").and_then(|x| x.as_str()).unwrap_or("");
+    if matches!(stage, "downloading" | "verifying" | "downloaded" | "paused" | "failed" | "aborted") {
+        set("idle", 0, "空闲（任务已清理）");
+    }
+}
+
 /// 向日志文件追加一行可读日志。
 pub fn log(line: &str) {
     use std::io::Write;

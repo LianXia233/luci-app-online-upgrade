@@ -809,6 +809,7 @@
 		backup_done: '备份完成',
 		flashing: '正在刷写固件,配置将自动恢复!',
 		restore_done: '配置恢复完成',
+		aborted: '下载已取消',
 		failed: '操作失败'
 	};
 
@@ -1403,6 +1404,17 @@
 				$(f[0]).value = (f[1] == null || f[1] === '') ? f[2] : f[1];
 			}
 		});
+		// 高级项：保留配置 / API 策略 / 缓存 TTL
+		[['cfg-keep-config', settings.keep_config], ['cfg-api-via-proxy', settings.api_via_proxy]]
+			.forEach(function (f) {
+				if ($(f[0]) && f[1] !== undefined && f[1] !== '') $(f[0]).value = String(f[1]);
+			});
+		[['cfg-api-timeout', settings.api_timeout],
+			['cfg-ttl-actions', settings.ttl_actions], ['cfg-ttl-releases', settings.ttl_releases],
+			['cfg-ttl-artifacts', settings.ttl_artifacts], ['cfg-ttl-compat', settings.ttl_compat],
+			['cfg-ttl-network', settings.ttl_network]].forEach(function (f) {
+			if ($(f[0]) && f[1] !== undefined && f[1] !== '') $(f[0]).value = String(f[1]);
+		});
 		// Token 已存在 UCI 中（后端默认从这里读取），回填到输入框，
 		// 否则页面看起来“没配置”，保存时空值还会把已有 Token 清掉。
 		if ($('cfg-token')) $('cfg-token').value = settings.github_token || '';
@@ -1595,8 +1607,16 @@
 			expected_sha256: $('cfg-expected-sha256') ? $('cfg-expected-sha256').value.trim() : '',
 			repo_url: $('cfg-repo-url') ? $('cfg-repo-url').value.trim() : '',
 			build_branch: $('cfg-build-branch') ? $('cfg-build-branch').value.trim() : '',
-			workflow_filter: $('cfg-workflow-filter') ? $('cfg-workflow-filter').value.trim() : ''
+			workflow_filter: $('cfg-workflow-filter') ? $('cfg-workflow-filter').value.trim() : '',
+			keep_config: $('cfg-keep-config') ? $('cfg-keep-config').value : '',
+			api_via_proxy: $('cfg-api-via-proxy') ? $('cfg-api-via-proxy').value : ''
 		};
+		[['api_timeout', 'cfg-api-timeout'],
+			['ttl_actions', 'cfg-ttl-actions'], ['ttl_releases', 'cfg-ttl-releases'],
+			['ttl_artifacts', 'cfg-ttl-artifacts'], ['ttl_compat', 'cfg-ttl-compat'],
+			['ttl_network', 'cfg-ttl-network']].forEach(function (f) {
+			if ($(f[1]) && $(f[1]).value.trim() !== '') cfg[f[0]] = Number($(f[1]).value);
+		});
 		[['dl_workers', 'cfg-workers'], ['dl_chunk_mb', 'cfg-chunk'],
 		 ['dl_stall_sec', 'cfg-stall'], ['dl_retries', 'cfg-retries'],
 		 ['min_size_mb', 'cfg-minsize'], ['dl_min_speed_kb', 'cfg-minspeed'],

@@ -479,6 +479,7 @@ const methods = {
 			pattern: '',
 			proxy: '',
 			github_token: '',
+			keep_config: '',
 			dl_workers: 0,
 			dl_chunk_mb: 0,
 			dl_stall_sec: 0,
@@ -579,6 +580,12 @@ const methods = {
 				if (p == null)
 					return { ok: false, error: '代理地址不合法(需 http(s)://主机[:端口][/路径])' };
 				ctx.set('online-upgrade', 'settings', 'proxy', p);
+				touched++;
+			}
+			if (type(a.keep_config) == 'string' && length(a.keep_config) > 0) {
+				if (a.keep_config != '0' && a.keep_config != '1')
+					return { ok: false, error: '保留配置取值不合法' };
+				ctx.set('online-upgrade', 'settings', 'keep_config', a.keep_config);
 				touched++;
 			}
 			if (type(a.github_token) == 'string') {

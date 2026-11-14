@@ -437,7 +437,7 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | 任务字段 | `id`、`kind`、`name`、`url`、`state`、`total`、`done`、`speed_bps`、`workers`、`segments`、`chunk_size`、`chunks_total`、`chunks_done`、`chunks_running`、`chunk_states`、`reason`、`created`、`finished` |
 | 插件状态字段 | `state` 取值 `checking/checked/check_failed/updating/downloading/verifying/installing/done/failed`；`result.task_id` 关联任务，`result.installed_version` / `result.cache_version` 为安装后的版本 |
 
-任务状态：固件任务使用 `running/paused/done/failed/aborted`；插件任务使用 `running/done/failed`，下载、校验、安装阶段通过 `reason` 与插件状态 `pct/msg` 区分。插件任务运行期间，固件下载的暂停/继续/取消按钮不会作用到它；任务列表中的「自动更新中」表示由自更新流程管理。任务表为空时，「开始下载」可用，「暂停 / 继续 / 取消」均为禁用，按钮状态严格跟随真实任务。
+任务状态：固件任务使用 `running/paused/done/failed/aborted`；插件任务使用 `running/done/failed`，下载、校验、安装阶段通过 `reason` 与插件状态 `pct/msg` 区分。任务记录每 1 秒写入一次进度，与顶部进度条一致；点“取消”会清理半成品（镜像、`.parts.json`），点“删除”回收任务与残留文件；进程被强杀后下次读取任务表会自动收敛。插件任务运行期间，固件下载的暂停/继续/取消按钮不会作用到它；任务列表中的「自动更新中」表示由自更新流程管理。任务表为空时，「开始下载」可用，「暂停 / 继续 / 取消」均为禁用，按钮状态严格跟随真实任务。
 
 执行「检查更新」时，后端会先强制刷新 Actions / Releases / Artifacts / Compat / Network 四套状态，再执行固件检测；检测完成后前端自动重读缓存，因此「远程状态与统一诊断」与本次检测同源同刻，不需要再手动点「刷新状态」。
 
@@ -445,7 +445,7 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 
 **下载线路顺序**：配置了加速代理时，插件包、manifest/SHA256SUMS 与固件下载均先走代理；代理请求失败、文件大小不符或 SHA256 不匹配时再回退直连。
 
-**历史清理与内存缓存**：插件更新成功后自动删除本次任务记录与内存盘上的安装包，不在设备上留存可重复安装的副本；更新包只允许落在 `/tmp`（tmpfs），每次更新前先回收历史安装包与续传记录，保证任意时刻至多一个镜像。若更新进程在安装阶段被 `postinst`（重启 rpcd）或断电打断，读取任务表时会按锁文件 pid 收敛孤儿任务：下载已完成则删除记录并清理安装包，未完成则标记 `failed` 并提示重试，界面不会再长期停在「更新中」。
+**历史清理与内存缓存**：插件更新成功后自动删除本次任务记录与内存盘上的安装包，不在设备上留存可重复安装的副本；更新包只允许落在 `/tmp`（tmpfs），每次更新前先回收历史安装包与续传记录，保证任意时刻至多一个镜像。当任务进程被 `postinst`、断电或 `kill` 打断时，读取任务表会按锁文件 pid 收敛孤儿任务：**插件任务**下载已完成则删除记录并清理安装包，未完成则标记 `failed`；**固件任务**标 `failed` 并清理镜像与续传 sidecar，同时删除残留锁。删除最后一个任务后，状态文件会自动复位为 `idle`，不会出现“暂无任务 + 正在下载”同时存在。
 
 ### 5. 缓存版本戳与失效时机
 

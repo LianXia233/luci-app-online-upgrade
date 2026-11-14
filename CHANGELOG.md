@@ -13,6 +13,21 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.7] - 2026-11-14
+
+### Fixed
+
+- **固件任务被强杀后不收敛**：孤儿任务收敛逻辑原先只处理 `kind=plugin`，固件下载进程被 kill/断电后，任务会永久停在 `running`、锁文件残留。
+  - 收敛范围扩展到全部任务：下载类任务标 `failed` 并说明“临时文件已清理，请重新开始下载”，同时清理镜像、续传 sidecar 与残留锁。
+- **状态文件与任务表脱节**：删除任务或中断后，`/tmp/online-upgrade-status.json` 仍停留在“正在下载”，页面会同时显示“暂无下载任务”和“正在下载固件”。
+  - 新增 `status::clear_task_stage()`，在读取任务表与删除任务后调用；无活跃任务时复位为 `idle`。
+- **取消下载后残留半成品**：用户取消时不再保留镜像与 `.parts.json`，阶段改为 `aborted` 并按实际进度计算百分比，前端补充“下载已取消”文案。
+- **任务表进度不更新**：任务记录的写入节流由 5 秒改为 1 秒，任务表百分比与顶部进度条保持一致。
+
+### Added
+
+- **高级配置项界面化**：新增“升级时保留配置”“GitHub API 走加速源”“API 超时”与五套状态缓存 TTL 的控件，并支持通过 `set_config` 写入 `keep_config`；`app.js?v=` / `style.css?v=` 与版本同步。
+
 ## [2.6.6] - 2026-11-14
 
 ### Fixed

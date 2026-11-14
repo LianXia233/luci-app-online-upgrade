@@ -180,7 +180,16 @@ fn main() {
             }
         }
         "tasks" => {
-            println!("{}", taskctl::TaskStore::open().to_json().dump());
+            let store = taskctl::TaskStore::open();
+            // 没有 running/paused 任务时复位残留阶段（例如进程被强杀后）。
+            let active = store
+                .tasks()
+                .iter()
+                .any(|t| matches!(t.state.as_str(), taskctl::ST_RUNNING | taskctl::ST_PAUSED));
+            if !active {
+                status::clear_task_stage();
+            }
+            println!("{}", store.to_json().dump());
             0
         }
         "task-delete" => match args.get(2) {
@@ -201,6 +210,14 @@ fn main() {
                         } else {
                             0
                         };
+                        // 删掉最后一个任务后，把状态文件从「下载中/已下载」复位。
+                        let active = store
+                            .tasks()
+                            .iter()
+                            .any(|x| matches!(x.state.as_str(), taskctl::ST_RUNNING | taskctl::ST_PAUSED));
+                        if !active {
+                            status::clear_task_stage();
+                        }
                         println!(
                             "{}",
                             ok_json(vec![

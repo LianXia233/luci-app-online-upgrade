@@ -88,9 +88,15 @@ fn report_download_stop(
     task_id: Option<&str>,
     control: Option<&DownloadControl>,
     done: u64,
+    total: u64,
 ) {
     let msg = err.message();
-    let (headline, state) = match err {
+    let pct = if total > 0 {
+        ((done as f64 / total as f64) * 100.0).min(99.0) as u32
+    } else {
+        0
+    };
+    let (headline, state, stage) = match err {
         DownloadError::Stopped(StopReason::Slow {
             bps,
             min_bps,
@@ -107,12 +113,16 @@ fn report_download_stop(
                 "[download] 建议切换加速节点后重试: {}",
                 github::MIRRORS.join(" / ")
             );
-            ("下载速度异常缓慢，已自动停止", ST_ABORTED)
+            ("下载速度异常缓慢，已自动停止", ST_ABORTED, "aborted")
         }
-        DownloadError::Stopped(_) => ("下载已取消", ST_ABORTED),
-        DownloadError::Other(_) => ("固件下载失败", ST_FAILED),
+        DownloadError::Stopped(_) => {
+            // 用户主动取消：不再保留半成品，避免镜像与 sidecar 残留占用内存盘。
+            cleanup_download();
+            ("下载已取消", ST_ABORTED, "aborted")
+        }
+        DownloadError::Other(_) => ("固件下载失败", ST_FAILED, "failed"),
     };
-    status::set_error("failed", 100, headline, &msg);
+    status::set_error(stage, pct, headline, &msg);
     logline!("[download] {headline}: {msg}");
     if let Some(id) = task_id {
         let speed = control.map(DownloadControl::current_speed).unwrap_or(0);
@@ -197,7 +207,7 @@ fn progress_reporter(
             ),
         );
         let now = unix_now();
-        if now.saturating_sub(hist_ts.load(Ordering::Relaxed)) >= 5 {
+        if now.saturating_sub(hist_ts.load(Ordering::Relaxed)) >= 1 {
             hist_ts.store(now, Ordering::Relaxed);
             let states: String = p
                 .states
@@ -665,6 +675,7 @@ pub async fn download_only() -> i32 {
                     task_id.as_deref(),
                     Some(&ctl),
                     last_done.load(Ordering::Relaxed),
+                    asset.size,
                 );
                 // 保留下载器判定为可续传的内容
                 return 1;
@@ -848,6 +859,7 @@ pub async fn run(force: bool) -> i32 {
                     task_id.as_deref(),
                     Some(&ctl),
                     last_done.load(Ordering::Relaxed),
+                    size_hint,
                 );
                 // 保留下载器判定为可续传的内容
                 return 1;
