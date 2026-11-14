@@ -13,6 +13,13 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.2] - 2026-11-14
+
+### Fixed
+
+- **修复 v2.6.1 升级后 LuCI 无法登录（一直提示密码错误）**：`postinst` 里的 `rpcd restart` 在部分设备上 `stop` 成功但 `start` 失败，错误又被 `>/dev/null 2>&1` 吞掉，rpcd 停留在停止状态；LuCI 登录依赖的 `session.login` 随之全部失败（uhttpd 仍在响应，所以不是「连接失败」，SSH 走独立 sshd 所以正常）。现改为 `reload` + **运行状态兜底**：未运行则 `start`，仍失败则写入 `/tmp/online-upgrade-postinst.log`。任何情况下都不会把 rpcd 留在停止状态，也不会阻塞包安装。
+- 若升级到 v2.6.2 后仍无法登录，SSH 执行 `/etc/init.d/rpcd start` 即可恢复。
+
 ## [2.6.1] - 2026-11-14
 
 ### Fixed

@@ -18,8 +18,9 @@
 | Ucode 真实编译 | VM 内 `/usr/bin/ucode -c` | **rc=0** |
 | rpcd 真实加载 | VM 内 `ubus call luci.online-upgrade ...` | **5 个 RPC 均返回**（详见第 5 节） |
 | 模板 | `div` 190/190、`section` 6/6、`details` 3/3 | 通过 |
-| 版本一致性 | CI `verify` 四处版本戳 | 全部 `2.6.1` |
+| 版本一致性 | CI `verify` 四处版本戳 | 全部 `2.6.2` |
 | v2.6.1 补丁 | `postinst` 重载 rpcd + 前端 `-32002` 中文指引 | 见第 6 节 #17 |
+| v2.6.2 补丁 | `postinst` 改为不会留下 rpcd 停止状态 | 见第 6 节 #18 |
 | 换行 | 47 个文本文件 | 全部 LF，无 CRLF |
 | 脱敏 | 全仓扫描 `ghp_*` / `github_pat_*` | **0 命中** |
 | 静态与接线综合校验 | 24 项 | **24 PASS / 0 FAIL** |
@@ -29,8 +30,8 @@
 
 | 检查项 | 结果 | 说明 |
 | :--- | :--- | :--- |
-| CI verify 版本一致性 | PASS | Makefile / Cargo.toml / Cargo.lock / app.js?v / style.css?v 均 2.6.1 |
-| CHANGELOG 结构完整 | PASS | 含 2.6.1 / 2.6.0 段落；2.5.6 无重复；无占位文本 |
+| CI verify 版本一致性 | PASS | Makefile / Cargo.toml / Cargo.lock / app.js?v / style.css?v 均 2.6.2 |
+| CHANGELOG 结构完整 | PASS | 含 2.6.2 / 2.6.1 / 2.6.0 段落；2.5.6 无重复；无占位文本 |
 | `node --check app.js` | PASS | |
 | `sh -n uci-defaults` | PASS | |
 | JSON 语法（2 个） | PASS | |

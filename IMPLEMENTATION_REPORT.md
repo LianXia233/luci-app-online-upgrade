@@ -2,7 +2,7 @@
 
 > 目标：把现有插件改造为**不依赖特定设备、不依赖特定 CI 仓库、不依赖固定固件命名规则**的通用 OpenWrt / ImmortalWrt 在线固件检测与升级插件。
 > 技术栈保持：Rust + Tokio 后端、rpcd Ucode 桥接、原生 JavaScript / CSS / HTML5 前端。
-> 版本：`2.5.6` → `2.6.0` → `2.6.1`（第十四节为 -32002 修复补丁）。
+> 版本：`2.5.6` → `2.6.0` → `2.6.1` → `2.6.2`（第十四节为补丁记录）。
 > 验证：构建 / 单测 / 静态校验 + **官方 OpenWrt 25.12.0 QEMU 真实虚拟机 5 轮**（见第十节）。
 
 ---
@@ -302,7 +302,7 @@ qemu-system-x86_64 -m 512 -smp 1 -no-reboot -display none -monitor none \
   -serial file:serial.log
 ```
 
-> 所有提交源文件强制 **LF 换行**；版本 `2.6.1`；全程未写入任何明文 GitHub Token。
+> 所有提交源文件强制 **LF 换行**；版本 `2.6.2`；全程未写入任何明文 GitHub Token。
 
 ---
 
@@ -317,5 +317,6 @@ qemu-system-x86_64 -m 512 -smp 1 -no-reboot -display none -monitor none \
 | 修复 3 | 顺手修 `states-hint` 用 `textContent` 写入却先 `esc()` 导致的 HTML 实体明文显示 |
 | 版本 | `2.5.6 → 2.6.0 → 2.6.1`；五处版本戳同步，**`app.js?v=` 必须变化**，否则浏览器仍执行缓存旧脚本 |
 | 排障 | 见 [docs/ERROR_DIAGNOSTICS.md](docs/ERROR_DIAGNOSTICS.md) 第 7.1 节 |
+| **v2.6.2 追加修复** | v2.6.1 的 `rpcd restart` 在部分设备 `stop` 成功但 `start` 失败，rpcd 停在停止状态，LuCI 登录报「密码错误」。改为 `reload` + `running` 兜底 + `start`，错误写 `/tmp/online-upgrade-postinst.log`；对应缺陷 #18 |
 
 > 注意：CI `release` 作业「只保留最新 Release」，发布 `v2.6.1` 后 `v2.6.0` 的 Release 会被清理，Git tag 保留。

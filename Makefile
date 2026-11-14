@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=2.6.1
+PKG_VERSION:=2.6.2
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
@@ -105,12 +105,23 @@ define Package/luci-app-online-upgrade/postinst
 	# 菜单/模板或前端资源变更后让调度器与模块缓存失效即可。
 	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache*
 
-	# rpcd 在启动时扫描 /usr/share/rpcd/ucode/ 并缓存 ACL 白名单；
-	# 升级安装后若不重载，新增的 RPC 方法会被判为 Access denied (-32002)。
-	# 重载失败不得影响包安装结果。
+	# rpcd 在启动时扫描 /usr/share/rpcd/ucode/ 并缓存 ACL 白名单，
+	# 升级安装后需重载才能让新增 RPC 生效（否则报 Access denied -32002）。
+	#
+	# 关键：重载会导致 rpcd 先停后起。若 start 阶段失败就会把 rpcd
+	# 留在停止状态，LuCI 登录依赖的 session.login 随之全部失败，
+	# 表现为「密码错误」。因此这里必须做运行状态兜底，并且只记录
+	# 错误、绝不让安装事务失败。
 	if [ -x /etc/init.d/rpcd ]; then
-		/etc/init.d/rpcd restart >/dev/null 2>&1 || \
-			/etc/init.d/rpcd reload >/dev/null 2>&1 || true
+		/etc/init.d/rpcd reload >>/tmp/online-upgrade-postinst.log 2>&1 || true
+		sleep 1
+		if ! /etc/init.d/rpcd running >/dev/null 2>&1; then
+			/etc/init.d/rpcd start >>/tmp/online-upgrade-postinst.log 2>&1 || true
+			sleep 1
+			/etc/init.d/rpcd running >/dev/null 2>&1 || \
+				echo "WARN: rpcd 未能启动，请手动执行 /etc/init.d/rpcd start" \
+					>>/tmp/online-upgrade-postinst.log
+		fi
 	fi
 	exit 0
 }

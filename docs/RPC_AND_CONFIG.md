@@ -123,13 +123,13 @@ _set_default() {
 
 ## 6. 版本一致性
 
-CI `verify` 作业要求以下四处版本严格一致，当前均为 `2.6.1`（v2.6.1 为 `-32002` 修复补丁版）：
+CI `verify` 作业要求以下四处版本严格一致，当前均为 `2.6.2`（v2.6.1 修 `-32002`，v2.6.2 修 `rpcd` 停服回归）：
 
 | 位置 | 值 |
 | :--- | :--- |
-| `Makefile` `PKG_VERSION` | `2.6.1` |
-| `rust/Cargo.toml` `version` | `2.6.1` |
-| `rust/Cargo.lock` `online-upgrade` | `2.6.1` |
-| `main.ut` 的 `app.js?v=` / `style.css?v=` | `2.6.1` |
+| `Makefile` `PKG_VERSION` | `2.6.2` |
+| `rust/Cargo.toml` `version` | `2.6.2` |
+| `rust/Cargo.lock` `online-upgrade` | `2.6.2` |
+| `main.ut` 的 `app.js?v=` / `style.css?v=` | `2.6.2` |
 
 浏览器缓存戳随版本升级，避免升级后仍执行旧脚本。**修复前端问题时必须 bump 版本**：若 `app.js?v=` 不变，浏览器会继续使用缓存的旧脚本，代码修复不会生效；插件自我更新也依赖 `PKG_VERSION` 判断是否有新版本。
