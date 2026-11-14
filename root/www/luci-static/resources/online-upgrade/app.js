@@ -860,11 +860,7 @@
 					pollFilter = false;
 				}
 				if (lg && lg.log) {
-					var lv = $('log-view');
-					var text = lg.log;
-					if (text.length > 2097152) text = text.substring(text.length - 2097152);
-					lv.textContent = text;
-					lv.scrollTop = lv.scrollHeight;
+					renderLog(lg.log);
 				}
 				renderProgress(st);
 				ticks++;
@@ -1636,21 +1632,105 @@
 
 	/* ---------------- 日志 ---------------- */
 
+	var LOG_VIEW_MAX = 1200;
+
+	// 日志级别：只根据文本判定，不依赖后端格式，旧日志也能正确着色。
+	function logLevelOf(text) {
+		if (/失败|错误|异常|ERROR|FAIL|FATAL|超时/i.test(text)) return 'error';
+		if (/警告|WARN|注意|风险/i.test(text)) return 'warn';
+		if (/成功|完成|已就绪|OK\b|✓/i.test(text)) return 'ok';
+		return 'info';
+	}
+
+	// 结构化渲染运行日志：
+	//   - [tag] 前缀变成色块，正文单独成列，长行可读换行
+	//   - 纯 JSON 行（states 等）默认折叠，只显示 model/state/ok/时间摘要
+	//   - 连续重复行合并为 ×N，避免反复检测刷屏
+	//   - 超过 1200 行只渲染最近部分，顶部给出统计
+	function renderLog(text) {
+		var lv = $('log-view');
+		if (!lv) return;
+		var all = String(text == null ? '' : text).split('\n');
+		var total = all.length;
+		var truncated = false;
+		if (total > LOG_VIEW_MAX) {
+			all = all.slice(total - LOG_VIEW_MAX);
+			truncated = true;
+		}
+
+		var rows = [];
+		var errors = 0, warns = 0, jsonFolded = 0, prev = null, same = 0;
+
+		function markRepeat() {
+			if (same > 1 && rows.length)
+				rows[rows.length - 1] += '<span class="ou-log-repeat">×' + same + '</span>';
+		}
+
+		for (var i = 0; i < all.length; i++) {
+			var line = all[i];
+			if (!line.trim()) continue;
+			if (line === prev) { same++; continue; }
+			markRepeat();
+			prev = line;
+			same = 1;
+
+			var t = line.trim();
+			// 只有真能解析成对象/数组的长行才当 JSON 折叠；
+			// 否则 `[check] ...` 这类行会被误判（它们也以 [ 开头）。
+			var folded = null;
+			if ((t.charAt(0) === '{' || t.charAt(0) === '[') && t.length > 40) {
+				try {
+					var parsed = JSON.parse(t);
+					if (parsed && typeof parsed === 'object') folded = parsed;
+				} catch (e2) { folded = null; }
+			}
+			if (folded) {
+				var o = folded;
+				var summary = '';
+				if (!Array.isArray(o)) {
+					var bits = [];
+					if (o.model) bits.push('model=' + o.model);
+					if (o.state) bits.push('state=' + o.state);
+					if (o.ok !== undefined) bits.push('ok=' + o.ok);
+					if (o.generated_at_local) bits.push(o.generated_at_local);
+					summary = bits.join(' · ');
+				}
+				jsonFolded++;
+				rows.push('<details class="ou-log-json"><summary><span class="ou-log-tag json">JSON</span>' +
+					esc(summary || '结构化输出') + ' · ' + esc(fmtSize(t.length)) + '（点开查看）</summary>' +
+					'<pre class="ou-log-json-body">' + esc(t) + '</pre></details>');
+				continue;
+			}
+
+			var m = /^\[([A-Za-z0-9_.\-]+)\]\s?(.*)$/.exec(line);
+			var tag = m ? m[1] : '';
+			var body = m ? m[2] : line;
+			var lvl = logLevelOf(body);
+			if (lvl === 'error') errors++;
+			else if (lvl === 'warn') warns++;
+			rows.push('<div class="ou-log-line" data-level="' + lvl + '">' +
+				'<span class="ou-log-tag' + (tag ? '' : ' plain') + '">' + esc(tag || '·') + '</span>' +
+				'<span class="ou-log-text">' + esc(body) + '</span></div>');
+		}
+		markRepeat();
+
+		var head = '<div class="ou-log-summary"><strong>共 ' + total + ' 行</strong>' +
+			(truncated ? ' · 仅渲染最近 ' + LOG_VIEW_MAX + ' 行' : '') +
+			(errors ? ' · <span class="ou-log-err">错误 ' + errors + '</span>' : '') +
+			(warns ? ' · <span class="ou-log-warn">警告 ' + warns + '</span>' : '') +
+			(jsonFolded ? ' · 折叠 JSON ' + jsonFolded + ' 段' : '') + '</div>';
+
+		lv.innerHTML = head +
+			(rows.length ? rows.join('') : '<div class="ou-log-empty">暂无日志</div>');
+		lv.scrollTop = lv.scrollHeight;
+	}
+
 	function refreshLog() {
 		setBusy('btn-refresh-log', true);
 		ubus('get_log').then(function (r) {
-			var text = (r && r.log) ? r.log : '日志为空';
-			if (text.length > 2097152) {
-				text = text.substring(text.length - 2097152);
-			}
-			var lv = $('log-view');
-			if (lv) {
-				lv.textContent = text;
-				lv.scrollTop = lv.scrollHeight;
-			}
+			renderLog((r && r.log) ? r.log : '');
 		}).catch(function (e) {
-			var lv = $('log-view');
-			if (lv) lv.textContent = '日志读取失败: ' + e.message;
+			renderLog('日志读取失败: ' + e.message);
 		}).finally(function () {
 			setBusy('btn-refresh-log', false);
 		});
@@ -1668,8 +1748,7 @@
 			setBusy('btn-clear-log', true, '清空中...');
 			ubus('clear_log').then(function (r) {
 				if (r && r.ok) {
-					var lv = $('log-view');
-					if (lv) lv.textContent = '日志已清空';
+					renderLog('');
 				}
 			}).catch(function (e) {
 				ouAlert({

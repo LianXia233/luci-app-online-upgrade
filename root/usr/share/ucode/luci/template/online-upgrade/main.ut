@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.4">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.3">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -801,7 +801,7 @@
 				<div class="ou-terminal-spacer"></div>
 				<span class="ou-terminal-limit-badge">内存上限 2MB</span>
 			</div>
-			<pre class="ou-terminal" id="log-view">日志加载中...</pre>
+			<div class="ou-terminal ou-log" id="log-view"><div class="ou-log-empty">日志加载中...</div></div>
 		</div>
 	</div>
 </div>
@@ -867,6 +867,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.4"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.3"></script>
 
 {% include('footer') %}

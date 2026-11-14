@@ -50,11 +50,16 @@ function run_capture(cmd, args) {
 	return { out: out, code: code };
 }
 
-function run_detached(cmd, args) {
+function run_detached(cmd, args, quiet) {
 	let cmdline = 'setsid ' + cmd;
 	for (let a in (args ?? []))
 		cmdline += ' ' + shellquote(a);
-	system(cmdline + ' </dev/null >>/tmp/online-upgrade.log 2>&1 &');
+	// quiet：结构化 JSON 命令只保留 stderr，避免整段 JSON 刷进运行日志；
+	// 非 quiet：stdout/stderr 都进日志（check/upgrade 等人类可读输出）。
+	cmdline += quiet
+		? ' </dev/null >/dev/null 2>>' + LOG_FILE + ' &'
+		: ' </dev/null >>' + LOG_FILE + ' 2>&1 &';
+	system(cmdline);
 }
 
 function parse_json_stdout(text) {
@@ -699,7 +704,8 @@ const methods = {
 			}
 			if (request.args?.force === true)
 				push(args, '--force');
-			run_detached(BIN, args);
+			// refresh 的 stdout 是完整 states JSON，只保留 stderr 进日志
+			run_detached(BIN, args, true);
 			return { ok: true, model: model, force: request.args?.force === true };
 		}
 	},
