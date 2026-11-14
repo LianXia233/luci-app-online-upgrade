@@ -195,6 +195,29 @@ fn select(candidates: &[(String, String, String, Confidence)]) -> Option<usize> 
         .position(|(_, _, value, _)| pick(value).is_some())
 }
 
+/// 本插件在刷写成功后写入的版本锚点（UCI `last_upgrade_version`）。
+/// 默认值 `0` 表示尚未记录过，不得当成版本。
+fn upgrade_anchor() -> Option<String> {
+    let v = crate::uci::get("last_upgrade_version")?;
+    let v = v.trim().to_string();
+    if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    Some(v)
+}
+
+/// 锚点的前三段是否与 rootfs 构建日期一致（兼容 2 位 / 4 位年份）。
+/// 不一致说明设备可能被手动刷成了别的固件，此时不得采信锚点。
+fn anchor_matches_build(anchor: &Version, y: i64, m: u32, d: u32) -> bool {
+    let nums = &anchor.nums;
+    if nums.len() < 3 {
+        return false;
+    }
+    let ay = nums[0] as i64;
+    let year_ok = if ay >= 1900 { ay == y } else { ay == y % 100 };
+    year_ok && nums[1] as u32 == m && nums[2] as u32 == d
+}
+
 pub fn detect() -> LocalVersion {
     let rel = read_file("/etc/openwrt_release").unwrap_or_default();
     let osrel = read_file("/etc/os-release").unwrap_or_default();
@@ -289,7 +312,37 @@ pub fn detect() -> LocalVersion {
         };
     }
 
-    match build_ymd() {
+    let build = build_ymd();
+
+    // SNAPSHOT 镜像没有可解析的发布号时，优先采用「上次成功升级记录的版本」：
+    // 它由本插件在刷写成功后写入，比 rootfs 文件 mtime 稳定（overlay copy-up、
+    // 恢复配置都会改动 mtime）。为避免手动刷机后锚点过期，要求锚点日期与
+    // rootfs 构建日期一致才按强依据采信；不一致则退回构建时间。
+    if let Some(anchor_raw) = upgrade_anchor() {
+        if let Some(anchor) = pick(&anchor_raw) {
+            let trusted = match build {
+                Some((y, m, d)) => anchor_matches_build(&anchor, y, m, d),
+                None => true,
+            };
+            if trusted {
+                return LocalVersion {
+                    version: Some(anchor),
+                    raw: anchor_raw,
+                    source: "last_upgrade_version".into(),
+                    source_text: match build {
+                        Some((y, m, d)) => format!(
+                            "上次成功升级记录的版本（与固件构建日期 {y}-{m:02}-{d:02} 一致）"
+                        ),
+                        None => "上次成功升级记录的版本（未能与构建日期核对）".to_string(),
+                    },
+                    confidence: Confidence::Strong,
+                    build_ymd: None,
+                };
+            }
+        }
+    }
+
+    match build {
         Some((y, m, d)) => LocalVersion {
             version: None,
             raw: if raw_marker.is_empty() {
@@ -380,6 +433,15 @@ mod tests {
             .comparable(Some(&pick("25.12.0.1").unwrap()))
             .is_none());
         assert!(local.comparable(None).is_none());
+    }
+
+    #[test]
+    fn anchor_matches_build_date() {
+        assert!(anchor_matches_build(&pick("26.11.10").unwrap(), 2026, 11, 10));
+        assert!(anchor_matches_build(&pick("2026.11.10").unwrap(), 2026, 11, 10));
+        assert!(!anchor_matches_build(&pick("26.11.09").unwrap(), 2026, 11, 10));
+        // 段数不足时不可当作日期使用
+        assert!(!anchor_matches_build(&pick("1.2").unwrap(), 2026, 1, 2));
     }
 
     #[test]

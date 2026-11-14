@@ -12,6 +12,7 @@
 use crate::actions::{ActionsModel, ActionsState};
 use crate::artifacts::{ArtifactsModel, ArtifactsState};
 use crate::compatstate::{CompatModel, CompatState};
+use crate::firmware::MatchLevel;
 use crate::ghapi::NetClass;
 use crate::json::Value;
 use crate::network::ProbeResult;
@@ -271,15 +272,19 @@ pub fn diagnose(
     ));
 
     // ---- 5. 固件文件识别 ----
-    let fw_candidates = compat.checks.len();
+    let fw_candidates = compat.check_count.max(compat.checks.len());
     let fw_text = if fw_candidates == 0 {
         "暂未从 Release Assets / Actions Artifacts 中识别出可刷写的固件文件；这不代表设备不兼容".to_string()
     } else {
         format!(
-            "识别到 {} 个固件候选，最佳匹配等级「{}」；{}",
+            "识别到 {} 个固件候选，最佳匹配等级「{}」；最佳候选 {}",
             fw_candidates,
-            compat.checks.first().map(|c| c.match_level.label()).unwrap_or("无法识别"),
-            compat.detail
+            compat.best_level.map(|l| l.label()).unwrap_or("无法识别"),
+            compat
+                .best_name
+                .as_deref()
+                .map(|n| format!("[{}]", n))
+                .unwrap_or_else(|| "（未记录文件名）".to_string())
         )
     };
     let mut fw_details: Vec<String> = compat
@@ -302,8 +307,20 @@ pub fn diagnose(
     ));
 
     // ---- 6. 本机兼容性 ----
+    // 高置信度匹配 + 命中用户显式配置的 firmware_pattern：
+    // 属于「待下载验证」，不是「需人工确认才允许尝试」；下载/校验/预检仍不可跳过。
+    let rule_high = compat.rule_hit && compat.best_level == Some(MatchLevel::High);
     let c_text = if compat.state == CompatState::Compatible {
         "兼容性已通过全部验证，允许进入刷写流程".to_string()
+    } else if compat.state == CompatState::Risk && rule_high {
+        format!(
+            "已按你的固件匹配规则命中 {}，且型号与架构一致；未下载前不会宣称「确认兼容」，点击「立即升级」会自动完成 SHA-256 与 sysupgrade -T 预检",
+            compat
+                .best_name
+                .as_deref()
+                .map(|n| format!("[{}]", n))
+                .unwrap_or_else(|| "目标固件".to_string())
+        )
     } else {
         compat.blocking_reason().unwrap_or_else(|| compat.detail.clone())
     };
@@ -336,7 +353,12 @@ pub fn diagnose(
 
     // ---- 8. 无法升级的具体原因 ----
     if !compat.state.can_flash() {
-        blocking.push(compat.blocking_reason().unwrap_or_else(|| "兼容性未确认".into()));
+        if compat.state == CompatState::Risk && rule_high {
+            // 命中显式规则的高置信度匹配：作为「待下载验证」提示，不列为阻断项
+            next.push("点击「立即升级」下载后自动完成完整性校验与 sysupgrade -T 预检".into());
+        } else {
+            blocking.push(compat.blocking_reason().unwrap_or_else(|| "兼容性未确认".into()));
+        }
     }
     if any_api_error {
         blocking.push("部分远程状态来自缓存（API 查询失败或限流），当前结论可能不是最新".into());
@@ -480,6 +502,9 @@ fn build_summary(
     }
     if c.state == CompatState::Incompatible {
         return "已经找到固件文件，但与当前设备明确不兼容，已禁止自动刷写".into();
+    }
+    if c.state == CompatState::Risk && c.rule_hit && c.best_level == Some(MatchLevel::High) {
+        return "已找到与本机匹配规则和架构一致的固件；下载后会自动完成完整性校验与本机预检，通过即可升级".into();
     }
     if c.state == CompatState::Unconfirmed && !c.checks.is_empty() {
         return "已经找到固件文件，但当前设备的兼容性尚无法确认，因此暂不允许自动刷写".into();

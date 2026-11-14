@@ -13,6 +13,26 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.4] - 2026-11-14
+
+### Fixed
+
+- **修复「检查更新」与远程状态不同步**：`check` 原先只跑固件检测，四套状态仍用各自旧缓存，出现「检测完成但诊断还说没识别到固件」。现在先强制刷新
+  Actions / Releases / Artifacts / Compat / Network，再执行检测（刷新失败不阻断检测）；前端在检测结束后自动重读缓存，两个面板同源同刻。
+- **修复 compat 缓存丢失候选导致诊断误报**：`CompatModel::load()` 从缓存恢复时把 `checks` 清空，`fw_candidates = checks.len()` 恒为 0，于是页面一边报「找到 H5000M-SelfUse…」一边说「暂未识别出可刷写的固件文件」。
+  - 缓存恢复改为保留 `check_count`、最佳匹配等级、最佳候选名与「是否命中配置规则」。
+- **修复高置信度命中用户规则仍被列为阻断**：命中显式 `firmware_pattern` 且型号/架构一致时归为「待下载验证」，不再写入 `blocking_reasons`，同时在兼容性段落写明「未下载前不宣称确认兼容」。下载后的 SHA-256 与 `sysupgrade -T` 预检保持不变。
+- **修复下载任务永久停在「更新中」**：插件安装在 `postinst`（重启 rpcd）或断电时被打断，任务记录来不及写终态，界面一直显示「安装中」。
+  - 读取任务表时按锁文件 pid 收敛孤儿插件任务：下载已完成则删除记录并清理安装包，未完成则标记 `failed` 并提示重试。
+  - 插件更新成功后删除本次任务记录与内存盘安装包。
+- **更新包只落内存盘**：更新包固定写入 `/tmp`（tmpfs），每次更新前回收历史安装包与续传记录，保证任意时刻至多一个镜像，不在闪存留存安装包副本。
+
+### Changed
+
+- **SNAPSHOT 设备版本锚点**：新增「上次成功升级记录的版本」（UCI `last_upgrade_version`）作为本地版本来源，要求其年月日与 rootfs 构建日期一致才按可信依据（`decidable`）采信；不一致自动退回构建时间。解决自用构建永远显示「依据较弱」的问题。
+- **诊断卡片排版**：明细改双列卡片并带严重度色条，去掉与顶部重复的「无法升级的原因 / 建议下一步」；无阻断时显示绿色结论；设备信息在宽屏改双列，整卡高度明显下降。
+- **任务控件状态同步**：任务表为空时「开始下载」可用、「暂停 / 继续 / 取消」禁用；插件任务结束时自动刷新插件卡片与诊断状态。
+
 ## [2.6.3] - 2026-11-14
 
 ### Fixed

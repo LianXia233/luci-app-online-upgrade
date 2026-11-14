@@ -22,6 +22,8 @@ use tokio::time::Duration;
 pub const CONTROL_FILE: &str = "/tmp/online-upgrade-control.json";
 /// 持久化任务历史（与 /tmp 状态文件不同，重启后仍保留）。
 pub const TASKS_FILE: &str = "/root/.online-upgrade-tasks.json";
+/// 活跃任务锁：任务进程存活时由二进制持有，用来分辨「真在跑」与「孤儿任务」。
+pub const LOCK_FILE: &str = "/tmp/online-upgrade.lock";
 /// 归属下载任务的固件产物。
 pub const FIRMWARE_FILE: &str = "/tmp/firmware.img.gz";
 /// 闪存中保留的历史记录条数上限。
@@ -330,6 +332,11 @@ impl TaskStore {
     pub fn open() -> TaskStore {
         let mut s = TaskStore::with_path(TASKS_FILE);
         s.load();
+        // 插件更新在安装阶段会被 apk 的 postinst（重启 rpcd）连带杀掉，
+        // 来不及写终态；读取时收敛一次，避免界面永久停在「更新中」。
+        if s.reconcile_orphans() > 0 {
+            let _ = s.save();
+        }
         s
     }
 
@@ -358,6 +365,38 @@ impl TaskStore {
                 .unwrap_or_default(),
             Err(_) => Vec::new(),
         };
+    }
+
+    /// 收敛「进程已退出但状态仍是 running/paused」的插件任务。
+    ///
+    /// 判定依据是活跃锁文件（任务进程存活时由二进制持有）：锁不在即说明
+    /// 执行体已退出。此时：
+    ///   - 下载已完整（done >= total）→ 安装阶段被中断，按已完成收尾，
+    ///     直接移除任务记录并清掉内存盘上的安装包；
+    ///   - 未下完 → 标记 failed，明确告知重新发起，界面不再卡在「更新中」。
+    pub fn reconcile_orphans(&mut self) -> usize {
+        if task_alive() {
+            return 0;
+        }
+        let mut changed = 0;
+        let mut keep: Vec<Task> = Vec::with_capacity(self.tasks.len());
+        for mut t in self.tasks.drain(..) {
+            let orphan_plugin = t.kind == KIND_PLUGIN
+                && matches!(t.state.as_str(), ST_RUNNING | ST_PAUSED);
+            if !orphan_plugin {
+                keep.push(t);
+                continue;
+            }
+            changed += 1;
+            if t.total > 0 && t.done >= t.total {
+                cleanup_plugin_artifacts();
+                continue; // 已完成下载与安装，删掉记录
+            }
+            t.finish(ST_FAILED, "任务进程已退出（可能被中断），请重新发起插件更新");
+            keep.push(t);
+        }
+        self.tasks = keep;
+        changed
     }
 
     /// 原子地持久化历史。
@@ -458,6 +497,45 @@ impl TaskStore {
 ///
 /// 已完成并通过校验的下载会被 `upgrade` 复用（见
 /// `reuse_download`），因此只要还存在一个 `done` 任务，就保留该文件。
+/// 清理内存盘（/tmp）上的插件安装包与续传记录。
+///
+/// 更新包只允许落到 tmpfs：这里把所有历史包清掉，保证任意时刻
+/// 至多一个安装包镜像存在，安装/失败后立即回收内存。
+pub fn cleanup_plugin_artifacts() -> usize {
+    let mut removed = 0;
+    let entries = match fs::read_dir("/tmp") {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    for ent in entries.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        let hit = name.starts_with("online-upgrade-plugin.")
+            || name == "online-upgrade.apk"
+            || name == "online-upgrade.ipk";
+        if hit && fs::remove_file(ent.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// 锁文件里的 pid 是否仍存活；锁不存在、内容损坏或进程已退出都算“无人执”。
+fn task_alive() -> bool {
+    let text = match fs::read_to_string(LOCK_FILE) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let pid: i64 = text
+        .split_whitespace()
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if pid <= 0 {
+        return false;
+    }
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
 pub fn should_purge(tasks: &[Task]) -> bool {
     !tasks.iter().any(|t| t.state == ST_DONE)
 }

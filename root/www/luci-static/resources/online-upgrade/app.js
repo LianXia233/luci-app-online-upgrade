@@ -747,9 +747,13 @@
 					if (st.stage === 'check_done' && st.result) {
 						renderCheckResult(st.result);
 						finishCheck();
+						// 「检查更新」已在后端先刷新四套远程状态，这里直接重读缓存，
+						// 让「远程状态与统一诊断」跟本次检测同步更新。
+						loadStates();
 					} else if (st.stage === 'check_failed' || st.stage === 'failed') {
 						renderCheckResult({ ok: false, error: st.error || st.msg || '检测失败' });
 						finishCheck();
+						loadStates();
 					}
 				}).catch(function () { /* transient rpc errors during poll: ignore */ });
 			}
@@ -1069,16 +1073,20 @@
 		setBusy('btn-cancel-download', !busy, '取消');
 	}
 
+	var taskPluginRunning = false;
+
 	function renderTasks(list) {
 		var tbody = $('task-table').querySelector('tbody');
 		tbody.innerHTML = '';
 		var active = null;
 		var anyRunning = false;
+		var pluginRunning = false;
 		(list || []).forEach(function (t) {
 			var isPlugin = t.kind === 'plugin';
 			var running = t.state === 'running' || t.state === 'paused';
 			if (running) {
 				anyRunning = true;
+				if (isPlugin) pluginRunning = true;
 				// 固件下载控制按钮只跟随固件任务；插件任务由更新流程自动管理。
 				if (!isPlugin) active = t.state;
 			}
@@ -1116,6 +1124,16 @@
 		}
 		taskActive = active;
 		syncTaskButtons(active, anyRunning);
+		// 插件更新任务刚结束（完成/失败/崩溃收敛）时，把状态同步到插件卡片与诊断层，
+		// 避免任务已结束而其他面板还停在“更新中”。
+		if (taskPluginRunning && !pluginRunning) {
+			ubus('get_plugin_status').then(function (st) {
+				if (typeof renderPluginStatus === 'function') renderPluginStatus(st);
+			}).catch(function () { /* 尽力刷新，不阻断任务列表 */ });
+			loadStates();
+			setTimeout(refreshTasks, 1200);
+		}
+		taskPluginRunning = pluginRunning;
 		// 任意运行中的任务都需要刷新列表（插件任务没有暂停/取消按钮，
 		// 但必须持续展示下载/安装阶段和最终状态）。
 		if (anyRunning && !taskTimer) {
@@ -2233,6 +2251,9 @@
 			h += '<div class="ou-st-diag-block"><strong>无法升级的原因</strong><ul>' +
 				diag.blocking_reasons.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') +
 				'</ul></div>';
+		} else {
+			h += '<div class="ou-st-diag-ok"><span class="ou-st-diag-ok-dot"></span>' +
+				'当前没有阻断升级的因素；仍需下载后完成完整性与本机预检</div>';
 		}
 		if (diag.next_actions && diag.next_actions.length) {
 			h += '<div class="ou-st-diag-next"><strong>建议下一步</strong><ol>' +
@@ -2240,15 +2261,28 @@
 				'</ol></div>';
 		}
 		if (diag.sections && diag.sections.length) {
-			h += '<details class="ou-st-details" id="st-diag-sections"><summary>完整诊断明细（' +
-				diag.sections.length + ' 项）</summary>';
-			for (var i = 0; i < diag.sections.length; i++) {
-				var s = diag.sections[i];
-				h += '<div class="ou-st-diag-sec" data-severity="' + esc(s.severity) + '">' +
-					'<div class="ou-st-diag-sec-title">' + esc(s.title) + ' · ' + esc(s.severity_label) + '</div>' +
-					'<p>' + esc(s.text) + '</p></div>';
+			// blocking / next 已在上面单独成段，明细里不再重复
+			var secs = diag.sections.filter(function (s) {
+				return s.key !== 'blocking' && s.key !== 'next';
+			});
+			if (secs.length) {
+				h += '<details class="ou-st-details" id="st-diag-sections"><summary>完整诊断明细（' +
+					secs.length + ' 项）</summary><div class="ou-st-diag-grid">';
+				for (var i = 0; i < secs.length; i++) {
+					var s = secs[i];
+					var ev = '';
+					if (s.evidence && s.evidence.length) {
+						ev = '<ul class="ou-st-diag-ev">' + s.evidence.slice(0, 3).map(function (e) {
+							return '<li>' + esc(e) + '</li>';
+						}).join('') + '</ul>';
+					}
+					h += '<div class="ou-st-diag-sec" data-severity="' + esc(s.severity) + '">' +
+						'<div class="ou-st-diag-sec-title"><span class="ou-st-diag-sec-sev">' +
+						esc(s.severity_label) + '</span>' + esc(s.title) + '</div>' +
+						'<p>' + esc(s.text) + '</p>' + ev + '</div>';
+				}
+				h += '</div></details>';
 			}
-			h += '</details>';
 		}
 		stSetHtml('st-diag-body', h);
 	}

@@ -3486,6 +3486,81 @@ body.ou-modal-open {
 .ou-container .ou-st-diag-sec-title { font-weight: 600 !important; color: #0f172a !important; }
 .ou-container .ou-st-diag-sec p { margin: 3px 0 0 !important; color: #475569 !important; }
 
+/* 无阻断时的正向提示（与“无法升级的原因”互斥） */
+.ou-container .ou-st-diag-ok {
+	display: flex !important;
+	align-items: flex-start !important;
+	gap: 8px !important;
+	margin: 2px 0 10px !important;
+	font-size: 12.5px !important;
+	line-height: 1.6 !important;
+	color: #15803d !important;
+}
+.ou-container .ou-st-diag-ok-dot {
+	flex: 0 0 auto !important;
+	width: 8px !important;
+	height: 8px !important;
+	margin-top: 5px !important;
+	border-radius: 50% !important;
+	background: #16a34a !important;
+}
+
+/* 诊断明细：宽屏双列卡片，窄屏单列；每项带严重度色条 */
+.ou-container .ou-st-diag-grid {
+	display: grid !important;
+	grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+	gap: 10px !important;
+	margin: 6px 0 2px !important;
+}
+.ou-container .ou-st-diag-grid .ou-st-diag-sec {
+	border-top: none !important;
+	border-left: 3px solid #cbd5e1 !important;
+	border-radius: 8px !important;
+	background: #fff !important;
+	padding: 8px 10px !important;
+	margin: 0 !important;
+}
+.ou-container .ou-st-diag-sec[data-severity="success"] { border-left-color: #16a34a !important; }
+.ou-container .ou-st-diag-sec[data-severity="warning"] { border-left-color: #d97706 !important; }
+.ou-container .ou-st-diag-sec[data-severity="error"]   { border-left-color: #dc2626 !important; }
+.ou-container .ou-st-diag-sec[data-severity="info"]    { border-left-color: #2563eb !important; }
+.ou-container .ou-st-diag-sec-title {
+	display: flex !important;
+	align-items: baseline !important;
+	flex-wrap: wrap !important;
+	gap: 4px 8px !important;
+	font-size: 12.5px !important;
+	font-weight: 600 !important;
+	color: #0f172a !important;
+}
+.ou-container .ou-st-diag-sec-sev {
+	flex: 0 0 auto !important;
+	font-size: 11px !important;
+	font-weight: 600 !important;
+	padding: 1px 7px !important;
+	border-radius: 999px !important;
+	background: #f1f5f9 !important;
+	color: #475569 !important;
+	white-space: nowrap !important;
+}
+.ou-container .ou-st-diag-sec[data-severity="success"] .ou-st-diag-sec-sev { background: #dcfce7 !important; color: #15803d !important; }
+.ou-container .ou-st-diag-sec[data-severity="warning"] .ou-st-diag-sec-sev { background: #fef3c7 !important; color: #b45309 !important; }
+.ou-container .ou-st-diag-sec[data-severity="error"] .ou-st-diag-sec-sev   { background: #fee2e2 !important; color: #b91c1c !important; }
+.ou-container .ou-st-diag-sec[data-severity="info"] .ou-st-diag-sec-sev    { background: #dbeafe !important; color: #1d4ed8 !important; }
+.ou-container .ou-st-diag-sec p { margin: 4px 0 0 !important; font-size: 12px !important; line-height: 1.6 !important; color: #475569 !important; }
+.ou-container .ou-st-diag-ev {
+	margin: 6px 0 0 !important;
+	padding-left: 16px !important;
+	font-size: 11.5px !important;
+	line-height: 1.55 !important;
+	color: #64748b !important;
+}
+.ou-container .ou-st-diag-ev li { margin: 1px 0 !important; }
+
+@media (max-width: 760px) {
+	.ou-container .ou-st-diag-grid { grid-template-columns: 1fr !important; }
+}
+
 .ou-container .ou-st-grid {
 	display: grid !important;
 	grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
@@ -3565,6 +3640,15 @@ body.ou-modal-open {
 .ou-container .ou-st-api[data-status="error"] { color: #b91c1c !important; }
 
 .ou-container .ou-st-kv { display: grid !important; grid-template-columns: 1fr !important; gap: 2px 0 !important; min-width: 0 !important; }
+
+/* 设备信息：宽屏双列排布，避免单列拉长整张卡片 */
+@media (min-width: 900px) {
+	.ou-container .ou-st-kv-device {
+		grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+		column-gap: 20px !important;
+	}
+	.ou-container .ou-st-kv-device .ou-st-row:nth-child(15) { grid-column: 1 / -1 !important; }
+}
 .ou-container .ou-st-row {
 	display: flex !important;
 	flex-wrap: wrap !important;

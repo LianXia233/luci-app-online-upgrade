@@ -151,6 +151,14 @@ pub struct CompatModel {
     pub detail: String,
     pub checks: Vec<CompatCheck>,
     pub selected: Option<usize>,
+    /// 候选总数。从缓存恢复时 checks 为空，用该计数保留「识别到几个候选」的事实。
+    pub check_count: usize,
+    /// 最佳候选的匹配等级（无候选时为空）。
+    pub best_level: Option<MatchLevel>,
+    /// 最佳候选是否命中了用户显式配置的 firmware_pattern。
+    pub rule_hit: bool,
+    /// 最佳候选文件名（用于向用户点名具体固件）。
+    pub best_name: Option<String>,
     pub meta: ApiMeta,
     pub ttl: u64,
 }
@@ -164,6 +172,10 @@ impl CompatModel {
             detail: "尚未对候选固件执行兼容性检查".into(),
             checks: Vec::new(),
             selected: None,
+            check_count: 0,
+            best_level: None,
+            rule_hit: false,
+            best_name: None,
             meta: ApiMeta::not_checked(),
             ttl: cache::ttl_from_uci("ttl_compat", TTL_COMPAT),
         }
@@ -179,6 +191,38 @@ impl CompatModel {
         let meta = ApiMeta::from_envelope(&env);
         let p = &env.payload;
         let state = CompatState::from_code(&gs(p, "state"));
+        // 缓存里保留了候选摘要（含匹配等级与依据）。据此恢复候选计数与最佳等级，
+        // 否则 states/诊断层会把「已识别到候选」误判成「没有识别到任何固件」。
+        let cached_checks: &[Value] = match p.get("checks").and_then(|c| c.as_arr()) {
+            Some(a) => a,
+            None => &[],
+        };
+        let check_count = p
+            .get("check_count")
+            .and_then(|c| c.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(cached_checks.len())
+            .max(cached_checks.len());
+        let best_level = cached_checks
+            .first()
+            .and_then(|c| c.get("match_level"))
+            .and_then(|v| v.as_str())
+            .and_then(level_from_code);
+        let best_name = cached_checks
+            .first()
+            .and_then(|c| c.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let rule_hit = cached_checks.iter().any(|c| {
+            c.get("basis")
+                .and_then(|b| b.as_arr())
+                .map(|bs| {
+                    bs.iter().any(|s| {
+                        s.as_str().map(|t| t.contains("配置规则")).unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        });
         CompatModel {
             device,
             state,
@@ -186,6 +230,10 @@ impl CompatModel {
             detail: gs(p, "detail"),
             checks: Vec::new(), // 详细列表在 refresh 时重建，缓存只保留汇总
             selected: p.get("selected").and_then(|x| x.as_u64()).map(|x| x as usize),
+            check_count,
+            best_level,
+            best_name,
+            rule_hit,
             meta,
             ttl,
         }
@@ -199,7 +247,25 @@ impl CompatModel {
                 "checks".into(),
                 Value::Arr(self.checks.iter().map(|c| c.to_json()).collect()),
             ),
-            ("check_count".into(), Value::num(self.checks.len() as u64)),
+            (
+                "check_count".into(),
+                Value::num(self.check_count.max(self.checks.len()) as u64),
+            ),
+            (
+                "best_match_level".into(),
+                match self.best_level {
+                    Some(l) => Value::str(l.code()),
+                    None => Value::Null,
+                },
+            ),
+            ("rule_hit".into(), Value::Bool(self.rule_hit)),
+            (
+                "best_match_name".into(),
+                match self.best_name {
+                    Some(ref n) => Value::str(n),
+                    None => Value::Null,
+                },
+            ),
             (
                 "selected".into(),
                 match self.selected {
@@ -281,6 +347,13 @@ impl CompatModel {
             state,
             label: state.label().into(),
             detail,
+            check_count: checks.len(),
+            best_level: checks.first().map(|c| c.match_level),
+            best_name: checks.first().map(|c| c.file.name.clone()),
+            rule_hit: checks
+                .first()
+                .map(|c| c.basis.iter().any(|s| s.contains("配置规则")))
+                .unwrap_or(false),
             checks,
             selected,
             meta: ApiMeta::ok(Default::default()),
@@ -302,6 +375,17 @@ impl CompatModel {
                 _ => format!("兼容性检查未通过（{}）：{}", self.state.label(), self.detail),
             })
         }
+    }
+}
+
+fn level_from_code(s: &str) -> Option<MatchLevel> {
+    match s {
+        "high" => Some(MatchLevel::High),
+        "partial" => Some(MatchLevel::Partial),
+        "need_verify" => Some(MatchLevel::NeedVerify),
+        "mismatch" => Some(MatchLevel::Mismatch),
+        "unrecognized" => Some(MatchLevel::Unrecognized),
+        _ => None,
     }
 }
 

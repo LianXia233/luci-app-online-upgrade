@@ -1279,6 +1279,9 @@ pub async fn run_update() -> i32 {
         return 1;
     }
 
+    // 内存盘环形缓存：更新包只允许落在 /tmp(tmpsf)，每次更新前先回收
+    // 历史安装包与续传记录，保证任意时刻至多一个安装包镜像。
+    let _ = crate::taskctl::cleanup_plugin_artifacts();
     let task_id = create_plugin_task(&plan);
 
     write_status(
@@ -1471,15 +1474,14 @@ pub async fn run_update() -> i32 {
         downloaded_bytes,
         0,
     );
-    // 更新成功后自动清理历史：每种任务只保留最近一条终态记录，
-    // 避免插件/固件下载历史无限堆积。运行中的任务不受影响。
+    // 更新成功后自动清理：删除任务记录与内存盘上的安装包，
+    // 不在设备上留存可被重复安装的安装包副本。
     {
         let mut store = TaskStore::open();
-        let pruned = store.prune_terminal(1);
-        if pruned > 0 {
-            let _ = store.save();
-            logline!("[plugin] 已自动清理 {pruned} 条历史下载任务");
-        }
+        let _ = store.remove_any(&task_id);
+        let _ = store.save();
+        let removed = crate::taskctl::cleanup_plugin_artifacts();
+        logline!("[plugin] 已清理更新任务与临时安装包（{} 个文件）", removed);
     }
     logline!(
         "[plugin] 更新完成: {} -> {}（{}）",

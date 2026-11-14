@@ -259,7 +259,12 @@ const methods = {
 			let pid = busy_pid();
 			if (length(pid) > 0)
 				return { ok: false, error: '已有任务正在执行(pid ' + pid + ')，请等待完成后再试' };
-			run_detached(BIN, ['check']);
+			// 「检查更新」同时刷新四套远程状态：先强制刷新 Actions/Releases/
+			// Artifacts/Compat/Network，再执行固件检测，使「远程状态与统一诊断」
+			// 与本次检测同源同刻，而不是各自沿用旧缓存。
+			// 用 ; 而不是 &&：状态刷新失败不得阻断固件检测。
+			run_detached('/bin/sh', ['-c',
+				BIN + ' refresh --force >/dev/null 2>&1; ' + BIN + ' check']);
 			return { ok: true };
 		}
 	},
