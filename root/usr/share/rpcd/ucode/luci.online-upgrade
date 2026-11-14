@@ -7,7 +7,7 @@
 //   - 不能引用 `undefined`，只能判空
 //   - 辅助函数必须先定义后使用
 
-import { popen, readfile, lsdir, stat, unlink } from 'fs';
+import { popen, readfile, writefile, lsdir, stat, unlink } from 'fs';
 import { cursor } from 'uci';
 
 const BIN = '/usr/bin/online-upgrade';
@@ -89,12 +89,66 @@ function read_status() {
 
 // 插件自身状态独立存放：固件检查/升级与插件更新可以各自保留进度，
 // 不会互相覆盖对方的状态文件。
+// 只有仍在运行的更新进程才会写入这些状态。
+const PLUGIN_ACTIVE_STATES = ['checking', 'updating', 'downloading', 'verifying', 'installing'];
+
+function plugin_state_is_active(state) {
+	if (type(state) != 'string')
+		return false;
+	for (let s in PLUGIN_ACTIVE_STATES)
+		if (s == state)
+			return true;
+	return false;
+}
+
+// pid 是否仍是本插件的存活进程。
+// /proc/<pid>/comm 由内核维护、长度不超过 15 字节且不含 NUL，最可靠；
+// /proc/<pid>/cmdline 以 NUL 分隔，部分读法会在首个 NUL 处截断，因此
+// 只作兜底（可执行路径总在首段）。两者都要求出现程序名，避免内核
+// pid 复用把无关进程当成“仍在安装”。
+function plugin_pid_alive(pid) {
+	if (pid == null || type(pid) != 'int' || pid <= 0)
+		return false;
+
+	let comm = readfile('/proc/' + pid + '/comm');
+	if (comm != null && type(comm) == 'string' && match(comm, /online-upgrade/) != null)
+		return true;
+
+	let raw = readfile('/proc/' + pid + '/cmdline');
+	if (raw == null || type(raw) != 'string' || length(raw) == 0)
+		return false;
+	return match(raw, /online-upgrade/) != null;
+}
+
 function read_plugin_status() {
 	let content = readfile(PLUGIN_STATUS_FILE);
 	if (!content)
 		return { state: 'idle' };
 	let obj = json(content);
-	return type(obj) == 'object' ? obj : { state: 'idle' };
+	if (type(obj) != 'object')
+		return { state: 'idle' };
+
+	// 活跃状态但写入进程已不存在，说明上次更新被中断（设备重启、断电、
+	// apk 阻塞后被 kill、或安装超时中止）。这类残留状态必须收敛成终态，
+	// 否则状态文件会永久停留在「安装中」，界面再也无法发起新的更新。
+	if (plugin_state_is_active(obj.state) && !plugin_pid_alive(obj.pid)) {
+		let fixed = {
+			state: 'failed',
+			pct: obj.pct ?? 0,
+			msg: '上次插件更新已中断',
+			error: '更新进程已退出（可能是设备重启、断电或安装过程被中断），' +
+			       '插件版本未变更。请查看 /tmp/online-upgrade.log 确认原因，' +
+			       '然后重新点击「更新插件」。',
+			ts: obj.ts,
+			pid: obj.pid,
+			interrupted: true
+		};
+		// 尽力回写，避免每次轮询重复判定；写失败不影响本次返回值。
+		writefile(PLUGIN_STATUS_FILE, sprintf('%J', fixed));
+		return fixed;
+	}
+
+	return obj;
 }
 
 function read_log() {

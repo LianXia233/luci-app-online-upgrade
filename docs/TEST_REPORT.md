@@ -18,20 +18,21 @@
 | Ucode 真实编译 | VM 内 `/usr/bin/ucode -c` | **rc=0** |
 | rpcd 真实加载 | VM 内 `ubus call luci.online-upgrade ...` | **5 个 RPC 均返回**（详见第 5 节） |
 | 模板 | `div` 190/190、`section` 6/6、`details` 3/3 | 通过 |
-| 版本一致性 | CI `verify` 四处版本戳 | 全部 `2.6.2` |
+| 版本一致性 | CI `verify` 四处版本戳 | 全部 `2.6.3` |
 | v2.6.1 补丁 | `postinst` 重载 rpcd + 前端 `-32002` 中文指引 | 见第 6 节 #17 |
 | v2.6.2 补丁 | `postinst` 改为不会留下 rpcd 停止状态 | 见第 6 节 #18 |
+| v2.6.3 补丁 | 自更新加安装超时 + 活跃状态存活校验 | 见第 6 节 #19 |
 | 换行 | 47 个文本文件 | 全部 LF，无 CRLF |
 | 脱敏 | 全仓扫描 `ghp_*` / `github_pat_*` | **0 命中** |
 | 静态与接线综合校验 | 24 项 | **24 PASS / 0 FAIL** |
-| 真实 OpenWrt 25.12.0 QEMU 虚拟机 | 5 轮启动 + 135 条 `OPTEST:` 证据 | **全部 rc=0**，详见第 5 节 |
+| 真实 OpenWrt 25.12.0 QEMU 虚拟机 | 8 轮启动 + 171 条 `OPTEST:` 证据 | **全部 rc=0**，详见第 5 节 |
 
 ## 2. 静态与接线综合校验明细（24 项）
 
 | 检查项 | 结果 | 说明 |
 | :--- | :--- | :--- |
-| CI verify 版本一致性 | PASS | Makefile / Cargo.toml / Cargo.lock / app.js?v / style.css?v 均 2.6.2 |
-| CHANGELOG 结构完整 | PASS | 含 2.6.2 / 2.6.1 / 2.6.0 段落；2.5.6 无重复；无占位文本 |
+| CI verify 版本一致性 | PASS | Makefile / Cargo.toml / Cargo.lock / app.js?v / style.css?v 均 2.6.3 |
+| CHANGELOG 结构完整 | PASS | 含 2.6.3 / 2.6.2 / 2.6.1 / 2.6.0 段落；2.5.6 无重复；无占位文本 |
 | `node --check app.js` | PASS | |
 | `sh -n uci-defaults` | PASS | |
 | JSON 语法（2 个） | PASS | |
@@ -169,7 +170,7 @@
 | OpenWrt 25.12 默认 `br-lan` 静态 `192.168.1.1`、无默认路由 | `rc.local` 强制把 `br-lan` 改为 SLIRP 网段 `10.0.2.15`、加默认路由 `10.0.2.2`、写 `/tmp/resolv.conf` → `nameserver 10.0.2.3` |
 | chroot 中 `/etc/resolv.conf` 悬空软链 | chroot 测试时临时替换宿主 resolv.conf；注入 VM 前恢复原软链，由 `rc.local` 写 `/tmp/resolv.conf` |
 
-### 5.3 分步执行记录（5 轮）
+### 5.3 分步执行记录（8 轮）
 
 | 轮次 | 日志 | 时长 / 行数 | 目的 | 结果 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -178,6 +179,9 @@
 | 3 | `serial3.log` | 28 行 | 注入 ABI 修复后的二进制 + 改 `virtio-net-pci` + 修退出码捕获 | `eth0` 出现；`"abi":"unknown"`；`sysupgrade -T rc=1` / `fwtool rc=1`；网络仍因 `br-lan` 静态地址不通 |
 | 4 | `serial4.log` | 29 行 | `br-lan` 改 `10.0.2.15` + 默认路由 | **网络打通**：ping 0% 丢包、DNS 解析、`netcheck HTTP 200`；真实触发匿名限流 |
 | 5 | `serial5.log` | 32 行 | 补 `get_diagnostics` RPC、模型标签与 stale 标记 | 拿到**统一诊断层完整中文结论**与四套模型并存证据 |
+| 6 | `serial6.log` | 11 行 | v2.6.3 状态收敛：死 pid 场景 | `A_DEAD` 收敛为 `failed` + `interrupted`，状态文件被真实回写；`D_MISSING` 返回 `idle` |
+| 7 | `serial7.log` | 17 行 | 存活进程 + **自更新端到端**（伪造本地 2.6.1） | `plugin-update` 真实下载并安装 `2.6.2-r1`，`state=done`，`cache_version=2.6.2`；SHA256 通过 |
+| 8 | `serial8.log` | 9 行 | `comm` 优先的存活判定复测 | 存活（`comm=online-upgrade`）保持 `installing`；被 `kill` 后与 `comm=init` 均收敛为 `failed` |
 
 > 每轮 QEMU 均由 `rc.local` 末尾 `sync` + `poweroff` 正常收尾，`qemu-system-x86_64` 退出码全部 **0**。
 
@@ -218,10 +222,35 @@
 
 ### 5.6 VM 测试结论
 
-- 官方 25.12.0 镜像完整性校验通过，QEMU 真实启动链路（GRUB → Linux 6.12.71 → procd → `rc.local` → `poweroff`）5 轮全部成功。
+- 官方 25.12.0 镜像完整性校验通过，QEMU 真实启动链路（GRUB → Linux 6.12.71 → procd → `rc.local` → `poweroff`）8 轮全部成功。
 - 静态二进制、rpcd Ucode、ACL、`ucode -c`、四套独立缓存、设备信息、网络栈、真实 GitHub API（含限流）、统一诊断层、`fwtool` / `sysupgrade -T` 均在**真实 OpenWrt 系统内**实测通过。
 - 真实 VM 暴露并修复了 4 个问题（ABI 误推导、网卡驱动不匹配、退出码误报、SLIRP 网段不匹配），见第 6 节 #13–#16。
 - **全程未执行真实刷写**，只做 `sysupgrade -T` 只读验证。
+
+### 5.7 v2.6.3 插件状态收敛与自更新端到端（第 6–8 轮）
+
+针对「插件自更新永久卡在安装中」，在真实 VM 内用 `ubus call luci.online-upgrade get_plugin_status` 验证状态收敛：
+
+| 场景 | 构造方式 | 期望 | 实测（第 8 轮 `serial8.log`） |
+| :--- | :--- | :--- | :--- |
+| A 活跃状态 + 已退出 pid | 写入 `{"state":"installing","pid":999999}` | 收敛 | `state=failed`、`interrupted=true`，且状态文件被真实回写 |
+| E 活跃状态 + 存活的本程序进程 | `comm=online-upgrade` 的长驻进程 pid | **不得误判** | 原样返回 `state=installing`、`pct=90` |
+| F 进程运行中被 `kill` | 对 E 的进程执行 `kill` 后立即查询 | 立即收敛 | `state=failed`、`interrupted=true` |
+| G 活跃状态 + 存活但非本程序 | `pid=1`（`comm=init`） | 收敛（防 pid 复用） | `state=failed`、`interrupted=true` |
+| D 状态文件不存在 | `rm -f` 状态文件 | `idle` | `{"state":"idle"}` |
+
+自更新端到端（第 7 轮 `serial7.log`）：伪造本地版本为 `2.6.1` 后执行 `plugin-update`，真实下载 `luci-app-online-upgrade_2.6.2-r1_x86_64.apk` 并由 `apk` 安装成功：
+
+```json
+{"state":"done","pct":100,"msg":"插件更新完成","result":{
+  "from":"2.6.1","to":"2.6.2","asset":"luci-app-online-upgrade_2.6.2-r1_x86_64.apk",
+  "sha256":"0494cb4795baa8a0737a158b903c4fbee83060afe87c1d557c8ea61c496187c8",
+  "manager":"apk","installed_version":"2.6.2-r1","cache_version":"2.6.2"}}
+```
+
+`/usr/share/online-upgrade/version` 实际写入 `2.6.2-r1`，`apk info -v luci-app-online-upgrade` 可查到新版本 —— 证明新增的 `run_cmd_timeout()` 在真实安装路径上既不误伤、也不阻塞。
+
+> 第 6 轮首次尝试用 busybox 副本模拟 `online-upgrade` 进程失败（busybox 以 `argv[0]` 选择 applet，`online-upgrade` 不是合法 applet，进程立即退出），因此第 8 轮改用同名静态小程序，`comm` 才真正为 `online-upgrade`。这也暴露出 `cmdline` 在 ucode 中可能于首个 NUL 处截断，故实现改为 `comm` 优先、`cmdline` 兜底。
 
 ## 6. 缺陷发现与修复记录
 
@@ -245,7 +274,10 @@
 | 16 | VM 有网卡仍 `Network is unreachable` | OpenWrt 25.12 默认 `br-lan` 静态 `192.168.1.1` 且无默认路由，与 SLIRP `10.0.2.0/24` 不匹配 | `rc.local` 强制改 `br-lan` 为 `10.0.2.15` + 默认路由 `10.0.2.2` + DNS | ping 0% 丢包、`netcheck` HTTP 200 |
 | 17 | **WebUI「远程状态与统一诊断」显示 `RPC error -32002`（Access denied）** | 升级安装后 `postinst` 未重载 rpcd，旧 ACL 白名单不含 `get_states` 等新方法；已登录会话的 ACL 快照过期 | `postinst` 加 `/etc/init.d/rpcd restart`；前端把 `-32002` 转成中文指引并在四面板渲染「无法读取」；bump 到 2.6.1 让 `app.js?v=` 刷新浏览器缓存 | `node --check`、版本一致性、postinst `sh -n`；排障见 `ERROR_DIAGNOSTICS.md` 7.1 |
 
-> 第 12 项为真实 API 冒烟发现的功能缺陷；第 13–16 项为**真实 OpenWrt 25.12.0 QEMU 虚拟机测试**发现/验证的问题；第 17 项为 v2.6.0 发布后在真实 WebUI 暴露的 rpcd 权限问题，均已修复并给出排障步骤。
+| 18 | **v2.6.1 升级后 LuCI 无法登录（一直提示密码错误）** | `postinst` 的 `rpcd restart` 在部分设备 `stop` 成功但 `start` 失败，错误被 `>/dev/null 2>&1` 吞掉，rpcd 停在停止状态；LuCI 登录依赖 `session.login` | 改为 `reload` + `running` 兜底（未运行则 `start`），错误写 `/tmp/online-upgrade-postinst.log`，任何情况下都不留停止状态 | `sh -n`、静态校验确认不再出现 `/etc/init.d/rpcd restart` |
+| 19 | **插件自更新永久卡在「安装中」** | `install_package()` 与安装后版本复核都用无超时的 `Command::output()`；`apk` 卡在软件包锁 / 仓库索引 / 网络时会永久阻塞，状态停在 `installing`。另外 `get_plugin_status` 原样返回状态文件，进程已被重启或 `kill` 打断时残留活跃状态永不收敛 | 新增 `run_cmd_timeout()`（安装 300s / 查询 20s / 探测 5s，输出重定向到文件避免管道阻塞）；`get_plugin_status` 增加 pid 存活校验并自动收敛为 `failed` + `interrupted`；前端区分「中断」与「失败」并给出排查提示 | `cargo test`、`node --check`、`ucode` 静态检查；卡住设备删 `/tmp/online-upgrade-plugin-status.json` 即可复位 |
+
+> 第 12 项为真实 API 冒烟发现的功能缺陷；第 13–16 项为**真实 OpenWrt 25.12.0 QEMU 虚拟机测试**发现/验证的问题；第 17–19 项为 v2.6.0 发布后在真实 WebUI 暴露的权限、登录与自更新卡死问题，均已修复并给出排障步骤。
 
 ## 7. 结论
 
@@ -254,7 +286,7 @@
 - 通用仓库解析、默认分支/Workflow 自动发现、限流分类、网络探测经**真实匿名 GitHub API** 实测；VM 内真实触发 `rate_limited` 并正确保留状态。
 - **统一诊断层在真实限流场景下输出了完整中文结论**：进行中不判失败、架构冲突给出具体原因、`can_upgrade=false`、网络正常独立成节。
 - 安全边界（恶意 ZIP、解压炸弹、超大包、SHA-256、`sysupgrade -T`、`fwtool`、Token 脱敏、TLS 不关闭）有单测、代码级与**真实 VM 只读验证**三重保证；真实刷写未执行。
-- 官方 OpenWrt **25.12.0** 镜像 SHA256 校验通过，QEMU 真实启动 5 轮全部 `rc=0`；`rpcd` Ucode、`fwtool`、`sysupgrade -T`、设备信息采集均已实机（VM）验证，不再是「未实测」项。
+- 官方 OpenWrt **25.12.0** 镜像 SHA256 校验通过，QEMU 真实启动 8 轮全部 `rc=0`；`rpcd` Ucode、`fwtool`、`sysupgrade -T`、设备信息采集均已实机（VM）验证，不再是「未实测」项。
 - 未使用任何明文 Token；全仓扫描 0 命中。
 
 ## 8. 已知限制

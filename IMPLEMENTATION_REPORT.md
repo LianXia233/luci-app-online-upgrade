@@ -2,8 +2,8 @@
 
 > 目标：把现有插件改造为**不依赖特定设备、不依赖特定 CI 仓库、不依赖固定固件命名规则**的通用 OpenWrt / ImmortalWrt 在线固件检测与升级插件。
 > 技术栈保持：Rust + Tokio 后端、rpcd Ucode 桥接、原生 JavaScript / CSS / HTML5 前端。
-> 版本：`2.5.6` → `2.6.0` → `2.6.1` → `2.6.2`（第十四节为补丁记录）。
-> 验证：构建 / 单测 / 静态校验 + **官方 OpenWrt 25.12.0 QEMU 真实虚拟机 5 轮**（见第十节）。
+> 版本：`2.5.6` → `2.6.0` → `2.6.1` → `2.6.2` → `2.6.3`（第十四节为补丁记录）。
+> 验证：构建 / 单测 / 静态校验 + **官方 OpenWrt 25.12.0 QEMU 真实虚拟机 8 轮**（见第十节）。
 
 ---
 
@@ -170,7 +170,7 @@
 | 静态 PIE 构建 | 成功（`static-pie linked`），注入 OpenWrt rootfs 可直接运行 |
 | 静态与接线综合校验 | **24 / 24 PASS**（版本、语法、RPC/ACL、Ucode 括号、模板标签、UCI、前端接线、LF、脱敏、产物） |
 | 真实匿名 API 冒烟 | `probe-repo` 成功发现 `default_branch=main` 与 **12 个 Workflow**；限流正确分类；`netcheck` HTTP 200 |
-| **官方 OpenWrt 25.12.0 QEMU 真实虚拟机** | **5 轮启动全部 `rc=0`**，135 条 `OPTEST:` 证据；rpcd/ubus、四套缓存、设备信息、真实 API + 限流、诊断层、`sysupgrade -T` 全部实测 |
+| **官方 OpenWrt 25.12.0 QEMU 真实虚拟机** | **8 轮启动全部 `rc=0`**，171 条 `OPTEST:` 证据；rpcd/ubus、四套缓存、设备信息、真实 API + 限流、诊断层、`sysupgrade -T`、插件状态收敛与自更新端到端全部实测 |
 | 缺陷修复 | **17 项**（12 项开发期 + 4 项真实 VM 暴露 + 1 项 v2.6.1 WebUI 权限） |
 
 ### 10.1 真实 OpenWrt 25.12.0 QEMU 虚拟机验证摘要
@@ -178,7 +178,7 @@
 | 维度 | 实测结果 |
 | :--- | :--- |
 | 镜像完整性 | 官方 `combined-ext4.img.gz` / `rootfs.tar.gz` SHA256 双次校验 OK；内核 `6.12.71`；`DISTRIB_RELEASE=25.12.0` |
-| 启动链路 | GRUB → Linux → procd → `rc.local` → `poweroff`，5 轮 QEMU 退出码全部 0 |
+| 启动链路 | GRUB → Linux → procd → `rc.local` → `poweroff`，8 轮 QEMU 退出码全部 0 |
 | 设备信息 | `target=x86` / `subtarget=64` / `cpu_arch=x86_64` / `pkg_arch=x86_64` / **`abi=unknown`**（修复后）；`apk=x86_64`、`opkg` 不存在 |
 | rpcd Ucode | `ubus call luci.online-upgrade get_states / get_device / probe_repo / netcheck / get_diagnostics` 均返回；`ucode -c` rc=0 |
 | 四套缓存 | `actions.json` / `releases.json` / `artifacts.json` / `compat.json` / `network.json` 独立生成 |
@@ -238,7 +238,7 @@
 | `docs/STATE_MODELS.md` | 四套状态模型与统一诊断层设计、状态码表、Envelope、诊断规则矩阵 |
 | `docs/RPC_AND_CONFIG.md` | 30 个 RPC 总表、新增 7 个方法定义、CLI 子命令、UCI 10 字段、兼容策略 |
 | `docs/ERROR_DIAGNOSTICS.md` | `ApiError` / `NetClass` 码表、中文提示、缓存新鲜度、分步排查、Token 脱敏 |
-| `docs/TEST_REPORT.md` | 5 类测试矩阵、24 项静态校验、真实 API 冒烟证据、**OpenWrt 25.12.0 QEMU 5 轮虚拟机证据**、17 项缺陷修复记录、已知限制 |
+| `docs/TEST_REPORT.md` | 5 类测试矩阵、24 项静态校验、真实 API 冒烟证据、**OpenWrt 25.12.0 QEMU 8 轮虚拟机证据**、19 项缺陷修复记录、已知限制 |
 | `IMPLEMENTATION_REPORT.md` | 本文件（完整实施报告 + 变更清单 + VM 验证摘要） |
 
 ---
@@ -302,7 +302,7 @@ qemu-system-x86_64 -m 512 -smp 1 -no-reboot -display none -monitor none \
   -serial file:serial.log
 ```
 
-> 所有提交源文件强制 **LF 换行**；版本 `2.6.2`；全程未写入任何明文 GitHub Token。
+> 所有提交源文件强制 **LF 换行**；版本 `2.6.3`；全程未写入任何明文 GitHub Token。
 
 ---
 
@@ -318,5 +318,6 @@ qemu-system-x86_64 -m 512 -smp 1 -no-reboot -display none -monitor none \
 | 版本 | `2.5.6 → 2.6.0 → 2.6.1`；五处版本戳同步，**`app.js?v=` 必须变化**，否则浏览器仍执行缓存旧脚本 |
 | 排障 | 见 [docs/ERROR_DIAGNOSTICS.md](docs/ERROR_DIAGNOSTICS.md) 第 7.1 节 |
 | **v2.6.2 追加修复** | v2.6.1 的 `rpcd restart` 在部分设备 `stop` 成功但 `start` 失败，rpcd 停在停止状态，LuCI 登录报「密码错误」。改为 `reload` + `running` 兜底 + `start`，错误写 `/tmp/online-upgrade-postinst.log`；对应缺陷 #18 |
+| **v2.6.3 追加修复** | 插件自更新永久卡「安装中」：包管理器调用无超时 + 残留活跃状态无存活校验。新增 `run_cmd_timeout()`（安装 300s / 查询 20s / 探测 5s）与 `get_plugin_status` 存活收敛；对应缺陷 #19 |
 
 > 注意：CI `release` 作业「只保留最新 Release」，发布 `v2.6.1` 后 `v2.6.0` 的 Release 会被清理，Git tag 保留。

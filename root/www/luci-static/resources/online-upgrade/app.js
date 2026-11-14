@@ -1866,7 +1866,15 @@
 				state === 'verifying' ? '校验中' :
 				state === 'installing' ? '安装中' : '更新中';
 			pluginBadge(label, 'update');
-			pluginHint(st.msg || label, '');
+			var note = st.msg || label;
+			// 软件包管理器可能卡在数据库锁或等待仓库索引。进程没退出时
+			// 后端无法判定失败，这里按时间给出可操作的排查提示。
+			var age = Math.floor(Date.now() / 1000) - (st.ts || 0);
+			if (state === 'installing' && age > 300) {
+				note += '（已持续 ' + Math.floor(age / 60) + ' 分钟，可能卡在软件包锁；' +
+					'可查看 /tmp/online-upgrade.log，或 SSH 执行 ps | grep apk 排查）';
+			}
+			pluginHint(note, '');
 			setBusy('btn-plugin-check', true, '检查插件更新');
 			setBusy('btn-plugin-update', true, '更新插件');
 			showBtn('btn-plugin-update', false);
@@ -1895,12 +1903,14 @@
 		}
 		if (state === 'failed') {
 			setPluginProgress(st.pct || 0, true);
-			pluginBadge('更新失败', 'err');
+			pluginBadge(st.interrupted ? '更新已中断' : '更新失败', 'err');
 			pluginHint(st.error || st.msg || '插件更新失败', 'err');
 			if (lastPluginCheck && lastPluginCheck.update_available) {
 				showBtn('btn-plugin-update', true);
 			} else {
 				showBtn('btn-plugin-update', false);
+				// 中断后本地检查结果可能已过期，引导重新检查一次。
+				if (st.interrupted) showBtn('btn-plugin-check', true);
 			}
 			refreshTasks();
 			return false;

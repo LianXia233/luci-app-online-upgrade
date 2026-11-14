@@ -22,10 +22,99 @@ use crate::taskctl::{DownloadControl, Task, TaskStore, KIND_PLUGIN, ST_DONE, ST_
 use crate::{logline, uci};
 use regex::Regex;
 use std::fs;
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// 外部命令（apk / opkg）的默认等待上限。
+///
+/// 软件包管理器可能因为 `/lib/apk/db/lock` 被占用、等待仓库索引或
+/// 网络不可达而长时间阻塞。旧实现使用无超时的 `Command::output()`，
+/// 一旦阻塞，插件更新状态就会永久停留在「安装中」。这里统一加上限，
+/// 超时即中止并把明确原因写回状态文件。
+const CMD_TIMEOUT_INSTALL: Duration = Duration::from_secs(300);
+const CMD_TIMEOUT_QUERY: Duration = Duration::from_secs(20);
+const CMD_TIMEOUT_PROBE: Duration = Duration::from_secs(5);
+
+/// 带超时执行外部命令。
+///
+/// stdout/stderr 直接重定向到临时文件而不是管道：管道写满会让子进程
+/// 阻塞在 write()，反而制造出与「锁等待」一模一样的假死现象。
+fn run_cmd_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(ExitStatus, String), String> {
+    let out_path = format!("/tmp/online-upgrade-exec-{}.log", std::process::id());
+    let f_out = fs::File::create(&out_path).map_err(|e| format!("创建临时输出文件失败: {e}"))?;
+    let f_err = f_out
+        .try_clone()
+        .map_err(|e| format!("复制输出句柄失败: {e}"))?;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(f_out))
+        .stderr(Stdio::from(f_err))
+        .spawn()
+        .map_err(|e| format!("调用 {program} 失败: {e}"))?;
+
+    let started = Instant::now();
+    let mut timed_out = false;
+    let mut status: Option<ExitStatus> = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                status = Some(st);
+                break;
+            }
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    // 先 kill 再 wait，避免留下僵尸进程占用 pid。
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = fs::remove_file(&out_path);
+                return Err(format!("等待 {program} 结束失败: {e}"));
+            }
+        }
+    }
+
+    let text = fs::read_to_string(&out_path).unwrap_or_default();
+    let _ = fs::remove_file(&out_path);
+
+    if timed_out {
+        let brief: String = text
+            .lines()
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join(" | ");
+        return Err(format!(
+            "{program} 超过 {} 秒未完成，已中止。常见原因是软件包数据库锁被其他进程占用、\
+             等待仓库索引或网络不可达。{}",
+            timeout.as_secs(),
+            if brief.trim().is_empty() {
+                "（该命令无任何输出）".to_string()
+            } else {
+                format!("最后输出：{brief}")
+            }
+        ));
+    }
+
+    Ok((status.expect("非超时路径必有退出状态"), text))
+}
 
 pub const PACKAGE: &str = "luci-app-online-upgrade";
 pub const DEFAULT_REPO: &str = "LianXia233/luci-app-online-upgrade";
@@ -167,13 +256,11 @@ fn split_pkg_release(raw: &str) -> (String, String) {
 
 fn detect_manager() -> Option<&'static str> {
     for mgr in ["apk", "opkg"] {
-        if Command::new(mgr)
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return Some(mgr);
+        // 探测同样要限时：apk 在数据库锁被占用时连 --version 都可能阻塞。
+        if let Ok((st, _)) = run_cmd_timeout(mgr, &["--version"], CMD_TIMEOUT_PROBE) {
+            if st.success() {
+                return Some(mgr);
+            }
         }
     }
     None
@@ -205,11 +292,13 @@ fn installed_pkg_version(manager: &str) -> Option<String> {
     } else {
         vec!["info", PACKAGE]
     };
-    let out = Command::new(manager).args(&args).output().ok()?;
-    if !out.status.success() {
+    // 安装刚结束时 apk 数据库可能仍被持有；无超时会让「安装完成后的
+    // 版本复核」永久阻塞，状态于是停在「安装中」。这里改为限时查询。
+    let (status, text) = run_cmd_timeout(manager, &args, CMD_TIMEOUT_QUERY).ok()?;
+    if !status.success() {
         return None;
     }
-    parse_pkg_output(&String::from_utf8_lossy(&out.stdout))
+    parse_pkg_output(&text)
 }
 
 fn detect_local() -> LocalInfo {
@@ -1055,21 +1144,14 @@ fn looks_like_package(path: &str, _file: &str) -> bool {
 }
 
 fn install_package(path: &str, manager: &str) -> Result<String, String> {
-    let out = if manager == "apk" {
-        Command::new("apk")
-            .args(["add", "--allow-untrusted", path])
-            .output()
+    let args: Vec<&str> = if manager == "apk" {
+        vec!["add", "--allow-untrusted", path]
     } else {
-        Command::new("opkg").args(["install", path]).output()
-    }
-    .map_err(|e| format!("调用 {manager} 失败: {e}"))?;
+        vec!["install", path]
+    };
+    let (status, text) = run_cmd_timeout(manager, &args, CMD_TIMEOUT_INSTALL)?;
 
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    if out.status.success() {
+    if status.success() {
         return Ok(text);
     }
     let lower = text.to_ascii_lowercase();
@@ -1087,7 +1169,7 @@ fn install_package(path: &str, manager: &str) -> Result<String, String> {
         .join(" | ");
     Err(format!(
         "{manager} 安装失败（退出码 {}）: {}",
-        out.status.code().unwrap_or(-1),
+        status.code().unwrap_or(-1),
         if tail.is_empty() { "无输出" } else { &tail }
     ))
 }

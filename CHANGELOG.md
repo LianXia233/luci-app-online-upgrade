@@ -13,6 +13,22 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.3] - 2026-11-14
+
+### Fixed
+
+- **修复插件自更新永久卡在「安装中」**：`install_package()` 与安装后的版本复核都用无超时的 `Command::output()`，一旦 `apk`/`opkg` 阻塞（软件包数据库锁被占用、等待仓库索引、网络不可达）就会永久挂起，状态文件一直停在 `installing`。
+  - 新增 `run_cmd_timeout()`：安装 300 秒、版本查询 20 秒、管理器探测 5 秒上限；超时先 `kill` 再 `wait`，避免僵尸进程。
+  - 子进程输出重定向到临时文件而非管道：管道写满会让子进程阻塞在 `write()`，与「等锁」表现为同样的假死。
+  - 超时后写入 `failed` 终态，错误信息包含超时阈值、最后几行包管理器输出与常见原因，并提示查看日志后重试。
+- **修复残留活跃状态无法自动恢复**：`get_plugin_status` 原来只把状态文件原样返回。若更新进程被重启、断电或 `kill` 打断，`installing` 会永久保留，界面再也无法发起新更新。
+  - 新增存活校验：状态属于 `checking/updating/downloading/verifying/installing` 且写入它的 pid 已不存在（`/proc/<pid>/cmdline` 不可读，或 cmdline 不含 `online-upgrade`，防止 pid 复用误判）时，自动收敛为 `failed` + `interrupted: true` 并回写状态文件。
+- 前端区分「更新失败」与「上次更新中断」，中断时给出可操作中文说明并恢复「检查更新」入口；`installing` 持续超过 5 分钟时追加「可能卡在软件包锁，可查看 `/tmp/online-upgrade.log` 或 `ps | grep apk`」提示。
+
+### Notes
+
+- 已在「安装中」卡住的设备，删除 `/tmp/online-upgrade-plugin-status.json` 即可立即复位；升级到 2.6.3 后由后端自动收敛。
+
 ## [2.6.2] - 2026-11-14
 
 ### Fixed

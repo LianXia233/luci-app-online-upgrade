@@ -1,6 +1,6 @@
 [package]
 name = "online-upgrade"
-version = "2.6.2"
+version = "2.6.3"
 edition = "2021"
 
 # OpenWrt 目标平台：静态链接的 musl 二进制。

@@ -129,3 +129,34 @@ probe-repo https://github.com/LianXia233/H5000M-CI-Qmodem/tree/main
 | 5 | 强制刷新浏览器（Ctrl+F5） | 排除 `app.js?v=` 缓存的旧脚本 |
 
 v2.6.1 起，前端会把该错误渲染成上述中文指引，并在四套状态面板内显示明确的「无法读取」文字状态，不再留空白卡片。
+
+### 7.2 插件自更新卡在「安装中」
+
+v2.6.3 之前，该状态没有任何超时与存活判定，一旦底层 `apk`/`opkg` 阻塞或更新进程被打断，界面会永久停在「安装中」，且无法再次发起更新。
+
+先按顺序判定属于哪一类：
+
+| 现象 | 判定 | 处置 |
+| :--- | :--- | :--- |
+| `ps w \| grep '[o]nline-upgrade'` 有输出，且 `ps w \| grep '[a]pk'` 也有输出 | 安装进程仍在运行，卡在软件包锁或仓库索引 | 继续等待至多 5 分钟；仍无进展则 `kill` 掉该 `apk` 再重试 |
+| `online-upgrade` 进程不存在，但 `/tmp/online-upgrade-plugin-status.json` 仍写 `installing` | 上次更新被中断（重启 / 断电 / 被 kill），v2.6.3 之前不会自动恢复 | `rm -f /tmp/online-upgrade-plugin-status.json` 立即复位 |
+| 状态文件里 `state=failed`、`interrupted=true` | v2.6.3 已自动收敛，属正常提示 | 查看 `error` 与 `/tmp/online-upgrade.log`，重新点击「更新插件」 |
+
+诊断命令：
+
+```sh
+cat /tmp/online-upgrade-plugin-status.json
+ps w | grep -E '[a]pk|[o]nline-upgrade'
+tail -40 /tmp/online-upgrade.log
+ls -l /lib/apk/db/lock          # apk 3.x 的数据库锁
+cat /tmp/online-upgrade.lock    # 插件自身的操作锁（记录 pid）
+```
+
+v2.6.3 的处理策略：
+
+- 外部命令统一限时（安装 300 秒、版本查询 20 秒、管理器探测 5 秒），超时先 `kill` 再 `wait`，并把超时阈值与包管理器最后几行输出写入 `error`。
+- 子进程输出重定向到临时文件而非管道：管道写满会让子进程阻塞在 `write()`，表现得和「等锁」完全一样。
+- `get_plugin_status` 对活跃状态做 pid 存活校验（`/proc/<pid>/cmdline` 可读且含 `online-upgrade`，防止 pid 复用误判），不满足则收敛为 `failed` + `interrupted: true` 并回写状态文件。
+- 前端对 `installing` 持续超过 5 分钟的情况追加提示：可能卡在软件包锁，可查看日志或 `ps | grep apk`。
+
+> 超时中止时 `apk` 可能已进入半提交状态。若随后 `apk info -v luci-app-online-upgrade` 报数据库异常，执行 `apk fix` 或重新安装一次完整包即可恢复；插件自身不修改包数据库。
