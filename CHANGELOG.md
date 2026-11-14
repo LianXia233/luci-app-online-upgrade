@@ -13,6 +13,13 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.6] - 2026-11-14
+
+### Fixed
+
+- **GitHub Token 不回填且会被误清空**：`get_config` 虽已返回 `github_token`，但前端 `fillConfig()` 未将其写回输入框，页面上的「GitHub Personal Token」一直为空；此时保存配置会提交空值并清除已存 Token。
+  - 现已在页面初始化时回填已存 Token，并新增「显示 / 隐藏」切换（默认掩码）；字段说明注明「留空并保存会清除已存 Token」。
+
 ## [2.6.5] - 2026-11-14
 
 ### Changed

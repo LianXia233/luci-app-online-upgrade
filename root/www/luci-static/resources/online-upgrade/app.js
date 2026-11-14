@@ -1403,6 +1403,9 @@
 				$(f[0]).value = (f[1] == null || f[1] === '') ? f[2] : f[1];
 			}
 		});
+		// Token 已存在 UCI 中（后端默认从这里读取），回填到输入框，
+		// 否则页面看起来“没配置”，保存时空值还会把已有 Token 清掉。
+		if ($('cfg-token')) $('cfg-token').value = settings.github_token || '';
 		if ($('cfg-expected-sha256')) {
 			$('cfg-expected-sha256').value = settings.expected_sha256 || '';
 		}
@@ -2596,6 +2599,17 @@
 
 	function boot() {
 		$('btn-check').addEventListener('click', runCheck);
+
+	// Token 默认掩码显示，可临时切换为明文核对。
+	(function () {
+		var btn = $('btn-toggle-token'), field = $('cfg-token');
+		if (!btn || !field) return;
+		btn.addEventListener('click', function () {
+			var show = field.type === 'password';
+			field.type = show ? 'text' : 'password';
+			btn.textContent = show ? '隐藏' : '显示';
+		});
+	})();
 		$('btn-upgrade').addEventListener('click', function () { startUpgrade(false); });
 		$('btn-force').addEventListener('click', function () { startUpgrade(true); });
 		$('btn-backup').addEventListener('click', runBackup);
