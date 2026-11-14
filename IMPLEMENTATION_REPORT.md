@@ -2,7 +2,7 @@
 
 > 目标：把现有插件改造为**不依赖特定设备、不依赖特定 CI 仓库、不依赖固定固件命名规则**的通用 OpenWrt / ImmortalWrt 在线固件检测与升级插件。
 > 技术栈保持：Rust + Tokio 后端、rpcd Ucode 桥接、原生 JavaScript / CSS / HTML5 前端。
-> 版本：`2.5.6` → `2.6.0`。
+> 版本：`2.5.6` → `2.6.0` → `2.6.1`（第十四节为 -32002 修复补丁）。
 > 验证：构建 / 单测 / 静态校验 + **官方 OpenWrt 25.12.0 QEMU 真实虚拟机 5 轮**（见第十节）。
 
 ---
@@ -154,7 +154,7 @@
 - **UCI**：新增 10 个可选字段，中性默认值；`uci-defaults` 用 `_set_default()` 只补缺失、不覆盖历史配置；`repo_url` 为空时回退旧 `repo`。
 - **WebUI**：新增「远程状态与统一诊断」卡片（诊断结论、设备信息、四面板、网络策略），新增 3 个通用仓库/筛选配置控件与 3 个诊断工具按钮；状态文字 + 色标双表达；760px / 380px 单列适配。
 - **旧流程**：`check` / `download` / `upgrade` 与刷写安全标准未改；新增只读/刷新命令不写全局 `status.json`、不占用升级操作锁。
-- **版本戳**：`Makefile` / `Cargo.toml` / `Cargo.lock` / `app.js?v=` / `style.css?v=` 统一 `2.6.0`。
+- **版本戳**：`Makefile` / `Cargo.toml` / `Cargo.lock` / `app.js?v=` / `style.css?v=` 在 v2.6.0 阶段统一 `2.6.0`，v2.6.1 补丁同步升至 `2.6.1`。
 
 详见 [docs/RPC_AND_CONFIG.md](docs/RPC_AND_CONFIG.md)。
 
@@ -171,7 +171,7 @@
 | 静态与接线综合校验 | **24 / 24 PASS**（版本、语法、RPC/ACL、Ucode 括号、模板标签、UCI、前端接线、LF、脱敏、产物） |
 | 真实匿名 API 冒烟 | `probe-repo` 成功发现 `default_branch=main` 与 **12 个 Workflow**；限流正确分类；`netcheck` HTTP 200 |
 | **官方 OpenWrt 25.12.0 QEMU 真实虚拟机** | **5 轮启动全部 `rc=0`**，135 条 `OPTEST:` 证据；rpcd/ubus、四套缓存、设备信息、真实 API + 限流、诊断层、`sysupgrade -T` 全部实测 |
-| 缺陷修复 | **16 项**（12 项开发期 + 4 项真实 VM 暴露） |
+| 缺陷修复 | **17 项**（12 项开发期 + 4 项真实 VM 暴露 + 1 项 v2.6.1 WebUI 权限） |
 
 ### 10.1 真实 OpenWrt 25.12.0 QEMU 虚拟机验证摘要
 
@@ -238,7 +238,7 @@
 | `docs/STATE_MODELS.md` | 四套状态模型与统一诊断层设计、状态码表、Envelope、诊断规则矩阵 |
 | `docs/RPC_AND_CONFIG.md` | 30 个 RPC 总表、新增 7 个方法定义、CLI 子命令、UCI 10 字段、兼容策略 |
 | `docs/ERROR_DIAGNOSTICS.md` | `ApiError` / `NetClass` 码表、中文提示、缓存新鲜度、分步排查、Token 脱敏 |
-| `docs/TEST_REPORT.md` | 5 类测试矩阵、24 项静态校验、真实 API 冒烟证据、**OpenWrt 25.12.0 QEMU 5 轮虚拟机证据**、16 项缺陷修复记录、已知限制 |
+| `docs/TEST_REPORT.md` | 5 类测试矩阵、24 项静态校验、真实 API 冒烟证据、**OpenWrt 25.12.0 QEMU 5 轮虚拟机证据**、17 项缺陷修复记录、已知限制 |
 | `IMPLEMENTATION_REPORT.md` | 本文件（完整实施报告 + 变更清单 + VM 验证摘要） |
 
 ---
@@ -302,4 +302,20 @@ qemu-system-x86_64 -m 512 -smp 1 -no-reboot -display none -monitor none \
   -serial file:serial.log
 ```
 
-> 所有提交源文件强制 **LF 换行**（已校验 47 个文本文件）；版本 `2.6.0`；全程未写入任何明文 GitHub Token。
+> 所有提交源文件强制 **LF 换行**；版本 `2.6.1`；全程未写入任何明文 GitHub Token。
+
+---
+
+## 十四、v2.6.1 补丁（RPC -32002 修复）
+
+| 项 | 内容 |
+| :--- | :--- |
+| 现象 | WebUI「远程状态与统一诊断」卡片未加载，提示 `请求失败: RPC error -32002` |
+| 根因 | `-32002` = rpcd `/ubus` 的 `Access denied`。升级安装后 `postinst` 只清了 LuCI 缓存，**未重载 rpcd**；rpcd 启动时扫描 ucode 插件并缓存 ACL 白名单，新增的 `get_states` 等方法不在旧白名单里。已登录会话的 ACL 快照同样是登录时生成的 |
+| 修复 1 | `Makefile` `postinst` 增加 `/etc/init.d/rpcd restart`（失败回落 `reload`，再失败不影响安装结果） |
+| 修复 2 | `app.js` 把 `-32002` 转成可操作中文指引（重新登录 / 重启 rpcd / 确认已装最新版），并在四套面板内渲染明确的「无法读取」文字状态，不再留空白卡片 |
+| 修复 3 | 顺手修 `states-hint` 用 `textContent` 写入却先 `esc()` 导致的 HTML 实体明文显示 |
+| 版本 | `2.5.6 → 2.6.0 → 2.6.1`；五处版本戳同步，**`app.js?v=` 必须变化**，否则浏览器仍执行缓存旧脚本 |
+| 排障 | 见 [docs/ERROR_DIAGNOSTICS.md](docs/ERROR_DIAGNOSTICS.md) 第 7.1 节 |
+
+> 注意：CI `release` 作业「只保留最新 Release」，发布 `v2.6.1` 后 `v2.6.0` 的 Release 会被清理，Git tag 保留。

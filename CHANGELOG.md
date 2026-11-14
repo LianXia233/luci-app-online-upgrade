@@ -13,6 +13,14 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.1] - 2026-11-14
+
+### Fixed
+
+- **修复「远程状态与统一诊断」卡片未加载 / `RPC error -32002`（Access denied）**：升级安装后 `rpcd` 仍持有旧的 ucode 插件与 ACL 白名单，新增的 `get_states` 等 RPC 被判为权限不足。现在 `postinst` 会重载 `rpcd`，使新 ACL 与新方法立即生效；已登录会话的 ACL 快照在重新登录 LuCI 后刷新。
+- 前端把 `-32002` 转成可操作的中文指引（重新登录 / `/etc/init.d/rpcd restart` / 确认已装最新版），并在四套面板内显示明确的失败状态，不再留空白卡片。
+- 附带修掉 `states-hint` 用 `textContent` 写入却先 `esc()` 导致的 HTML 实体明文显示（如 `&amp;`）。
+
 ## [2.6.0] - 2026-11-14
 
 ### Added

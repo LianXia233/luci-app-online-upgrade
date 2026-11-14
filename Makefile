@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-online-upgrade
-PKG_VERSION:=2.6.0
+PKG_VERSION:=2.6.1
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=gooyjq <gooyjq@users.noreply.github.com>
@@ -104,6 +104,14 @@ define Package/luci-app-online-upgrade/postinst
 	# ucode 版 LuCI（26.x）：不再提供 /lib/functions/luci.sh 和 luci-reload，
 	# 菜单/模板或前端资源变更后让调度器与模块缓存失效即可。
 	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache*
+
+	# rpcd 在启动时扫描 /usr/share/rpcd/ucode/ 并缓存 ACL 白名单；
+	# 升级安装后若不重载，新增的 RPC 方法会被判为 Access denied (-32002)。
+	# 重载失败不得影响包安装结果。
+	if [ -x /etc/init.d/rpcd ]; then
+		/etc/init.d/rpcd restart >/dev/null 2>&1 || \
+			/etc/init.d/rpcd reload >/dev/null 2>&1 || true
+	fi
 	exit 0
 }
 endef

@@ -112,3 +112,20 @@ probe-repo https://github.com/LianXia233/H5000M-CI-Qmodem/tree/main
 | 加速源返回 HTML 而非 JSON | 加速源不支持 API | API 保持直连 `api.github.com`；仅下载链路使用加速源并自动回退 |
 | 构建显示「等待中」很久 | `status` 仍是 `waiting` / `queued` | 属正常进行中状态，不是失败；刷新后仍不变再查仓库 Workflow |
 | 「无法确认兼容」但不提示不兼容 | 信息不足（无校验依据 / 文件无法识别） | 属设计行为：不自动刷写，也不会误判成明确不兼容 |
+| 「远程状态与统一诊断」显示 `RPC error -32002` / Access denied | 升级安装后 `rpcd` 未重载，仍持有旧 ucode 插件与 ACL 白名单；或已登录会话的 ACL 快照是登录时生成的 | 见 7.1 专项 |
+
+### 7.1 `RPC error -32002`（Access denied）专项
+
+`-32002` 是 rpcd 在 `/ubus` JSON-RPC 层返回的**权限错误**，不是插件业务逻辑失败。它表示当前会话未被授予该 ubus 方法的访问权限；方法不存在、ACL 文件未更新、会话过期都会表现为这个码。
+
+升级到 **v2.6.1** 后 `postinst` 会自动执行 `/etc/init.d/rpcd restart`，让新的 ucode 方法与 ACL 白名单立即注册。但**已登录的 LuCI 会话**在登录时已固化 ACL 快照，仍需按顺序处理：
+
+| 步骤 | 操作 | 目的 |
+| :--- | :--- | :--- |
+| 1 | 确认已安装 `v2.6.1` 及以上（插件版本卡或 `/usr/share/online-upgrade/version`） | 旧版没有 `get_states` 方法 |
+| 2 | 退出 LuCI 并**重新登录** | 让会话重新计算 ACL 组与方法白名单 |
+| 3 | 若仍失败，SSH 执行 `/etc/init.d/rpcd restart` 后刷新页面 | 强制 rpcd 重新扫描 `/usr/share/rpcd/ucode/` 与 `acl.d/` |
+| 4 | 检查 `/usr/share/rpcd/acl.d/luci-app-online-upgrade.json` 的 `read` 组是否含 `get_states` 等 5 个新方法 | 排除旧 ACL 文件残留 |
+| 5 | 强制刷新浏览器（Ctrl+F5） | 排除 `app.js?v=` 缓存的旧脚本 |
+
+v2.6.1 起，前端会把该错误渲染成上述中文指引，并在四套状态面板内显示明确的「无法读取」文字状态，不再留空白卡片。

@@ -18,7 +18,8 @@
 | Ucode 真实编译 | VM 内 `/usr/bin/ucode -c` | **rc=0** |
 | rpcd 真实加载 | VM 内 `ubus call luci.online-upgrade ...` | **5 个 RPC 均返回**（详见第 5 节） |
 | 模板 | `div` 190/190、`section` 6/6、`details` 3/3 | 通过 |
-| 版本一致性 | CI `verify` 四处版本戳 | 全部 `2.6.0` |
+| 版本一致性 | CI `verify` 四处版本戳 | 全部 `2.6.1` |
+| v2.6.1 补丁 | `postinst` 重载 rpcd + 前端 `-32002` 中文指引 | 见第 6 节 #17 |
 | 换行 | 47 个文本文件 | 全部 LF，无 CRLF |
 | 脱敏 | 全仓扫描 `ghp_*` / `github_pat_*` | **0 命中** |
 | 静态与接线综合校验 | 24 项 | **24 PASS / 0 FAIL** |
@@ -28,8 +29,8 @@
 
 | 检查项 | 结果 | 说明 |
 | :--- | :--- | :--- |
-| CI verify 版本一致性 | PASS | Makefile / Cargo.toml / Cargo.lock / app.js?v / style.css?v 均 2.6.0 |
-| CHANGELOG 结构完整 | PASS | 含 2.6.0 段落；2.5.6 无重复；无占位文本 |
+| CI verify 版本一致性 | PASS | Makefile / Cargo.toml / Cargo.lock / app.js?v / style.css?v 均 2.6.1 |
+| CHANGELOG 结构完整 | PASS | 含 2.6.1 / 2.6.0 段落；2.5.6 无重复；无占位文本 |
 | `node --check app.js` | PASS | |
 | `sh -n uci-defaults` | PASS | |
 | JSON 语法（2 个） | PASS | |
@@ -241,8 +242,9 @@
 | 14 | **QEMU 内无 `eth0`，网络 `class=tcp`** | 镜像 `modules.builtin` 仅内建 `virtio_net` / `vmxnet3`；`-nic user,model=e1000` 的 `[8086:100e]` 设备无驱动绑定 | 改用 `-netdev user,id=n0 -device virtio-net-pci,netdev=n0` | VM 出现 `eth0` 与 `br-lan` |
 | 15 | `SYSUPGRADE_T` / `FWTOOL_I` 日志误报 `rc=0` | `$(cmd | tr | head; echo rc=$?)` 的 `$?` 取到管道末端退出码 | 改为输出重定向到临时文件后单独保存 `$?` | VM 输出真实 `rc=1` |
 | 16 | VM 有网卡仍 `Network is unreachable` | OpenWrt 25.12 默认 `br-lan` 静态 `192.168.1.1` 且无默认路由，与 SLIRP `10.0.2.0/24` 不匹配 | `rc.local` 强制改 `br-lan` 为 `10.0.2.15` + 默认路由 `10.0.2.2` + DNS | ping 0% 丢包、`netcheck` HTTP 200 |
+| 17 | **WebUI「远程状态与统一诊断」显示 `RPC error -32002`（Access denied）** | 升级安装后 `postinst` 未重载 rpcd，旧 ACL 白名单不含 `get_states` 等新方法；已登录会话的 ACL 快照过期 | `postinst` 加 `/etc/init.d/rpcd restart`；前端把 `-32002` 转成中文指引并在四面板渲染「无法读取」；bump 到 2.6.1 让 `app.js?v=` 刷新浏览器缓存 | `node --check`、版本一致性、postinst `sh -n`；排障见 `ERROR_DIAGNOSTICS.md` 7.1 |
 
-> 第 12 项为真实 API 冒烟发现的功能缺陷；第 13–16 项为**真实 OpenWrt 25.12.0 QEMU 虚拟机测试**发现/验证的问题，均已修复或给出确定绕过方案。
+> 第 12 项为真实 API 冒烟发现的功能缺陷；第 13–16 项为**真实 OpenWrt 25.12.0 QEMU 虚拟机测试**发现/验证的问题；第 17 项为 v2.6.0 发布后在真实 WebUI 暴露的 rpcd 权限问题，均已修复并给出排障步骤。
 
 ## 7. 结论
 

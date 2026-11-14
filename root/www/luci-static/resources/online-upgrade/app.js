@@ -39,7 +39,14 @@
 				throw new Error('会话已过期,请刷新页面重新登录 LuCI');
 			return r.json();
 		}).then(function (res) {
-			if (res.error) throw new Error('RPC error ' + res.error.code);
+			if (res.error) {
+				if (res.error.code === -32002)
+					throw new Error('权限不足（Access denied）：插件可能刚升级但 rpcd 未重载。'
+						+ '请重新登录 LuCI 后刷新页面；若仍失败，在设备上执行 '
+						+ '/etc/init.d/rpcd restart，并确认已安装最新版本插件。');
+				throw new Error('RPC error ' + res.error.code
+					+ (res.error.message ? '：' + res.error.message : ''));
+			}
 			var result = res.result;
 			if (!Array.isArray(result)) throw new Error('invalid rpc reply');
 			if (result[0] !== 0) throw new Error('ubus error ' + result[0] + (SID ? '' : '(未获取到会话)'));
@@ -2260,8 +2267,26 @@
 			pill.innerHTML = '<span class="ou-dot ' + (staleCount ? '' : 'ok') + '"></span> ' +
 				(staleCount ? (staleCount + ' 套缓存数据') : '状态已同步');
 		}
-		hint('states-hint', '仓库 ' + esc(st.repo || '未配置') + ' · ' +
-			esc(st.generated_at_local || '') + ' · 四套状态独立缓存，API 故障不覆盖真实状态', '');
+		// hint() 用 textContent 写入，不能再 esc()，否则会显示 &amp; 等实体
+		hint('states-hint', '仓库 ' + (st.repo || '未配置') + ' · ' +
+			(st.generated_at_local || '') + ' · 四套状态独立缓存，API 故障不覆盖真实状态', '');
+	}
+
+	// get_states 被 rpcd 拒绝（升级后 rpcd 未重载 / 会话 ACL 快照过期）时，
+	// 四套面板保持「尚未查询」会让用户误以为功能没做；这里改为明确的
+	// 文字化失败状态 + 可操作指引，不用颜色单独表达。
+	function renderStatesFailure(msg) {
+		var note = '<p class="ou-st-empty">' + esc(msg) + '</p>';
+		var ids = ['actions', 'releases', 'artifacts', 'compat', 'device', 'network'];
+		for (var i = 0; i < ids.length; i++) {
+			stBadge('st-' + ids[i] + '-state', 'error', '无法读取');
+			stSetHtml('st-' + ids[i] + '-body', note);
+		}
+		stBadge('st-diag-severity', 'error', '异常');
+		stSetHtml('st-diag-summary', '远程状态未加载');
+		stSetHtml('st-diag-body', note);
+		var pill = $('st-freshness-pill');
+		if (pill) pill.setAttribute('data-state', 'error');
 	}
 
 	// 请求去重：同一时刻只允许一个 get_states 在途，避免轮询叠加浪费请求。
@@ -2273,6 +2298,7 @@
 			return st;
 		}).catch(function (e) {
 			hint('states-hint', '读取状态失败: ' + e.message, 'err');
+			renderStatesFailure(e.message);
 			return null;
 		}).then(function (st) {
 			statesBusy = false;
