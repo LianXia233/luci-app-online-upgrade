@@ -338,7 +338,10 @@ impl TaskStore {
         s.load();
         // 插件更新在安装阶段会被 apk 的 postinst（重启 rpcd）连带杀掉，
         // 来不及写终态；读取时收敛一次，避免界面永久停在「更新中」。
-        if s.reconcile_orphans() > 0 {
+        let reconciled = s.reconcile_orphans();
+        // 写完 done 但进程在删除任务前被杀：回收残留任务与安装包。
+        let pruned = s.prune_completed_plugin();
+        if reconciled + pruned > 0 {
             let _ = s.save();
         }
         s
@@ -408,6 +411,25 @@ impl TaskStore {
         }
         self.tasks = keep;
         changed
+    }
+
+    /// 回收已完成但未来得及删除的插件任务。
+    ///
+    /// 典型场景：自更新写入 `done` 后，postinst 重启 rpcd 杀掉进程，
+    /// 任务记录与安装包留了下来。读取任务表时一并清理，
+    /// 保证“完成后任务消失”这一语义最终成立。
+    pub fn prune_completed_plugin(&mut self) -> usize {
+        if task_alive() {
+            return 0;
+        }
+        let before = self.tasks.len();
+        self.tasks
+            .retain(|t| !(t.kind == KIND_PLUGIN && t.state == ST_DONE));
+        let removed = before - self.tasks.len();
+        if removed > 0 {
+            cleanup_plugin_artifacts();
+        }
+        removed
     }
 
     /// 原子地持久化历史。

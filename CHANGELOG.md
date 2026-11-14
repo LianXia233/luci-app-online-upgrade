@@ -13,6 +13,14 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.8] - 2026-11-15
+
+### Fixed
+
+- **残留的已完成插件任务不回收**：自更新写入 `done` 后，`postinst` 重启 rpcd 会杀掉更新进程，来不及执行“删除任务”，任务记录与 `/tmp` 安装包会留在设备上。
+  - `TaskStore::open()` 新增 `prune_completed_plugin()`：无活跃进程时删除 `kind=plugin` 且状态为 `done` 的任务，并清理安装包。
+  - 与既有孤儿收敛（`running/paused`）配合，覆盖“进程在写终态前后任一时点被杀”的情况。
+
 ## [2.6.7] - 2026-11-14
 
 ### Fixed
