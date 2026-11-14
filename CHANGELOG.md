@@ -13,6 +13,13 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.9] - 2026-11-15
+
+### Changed
+
+- **下载任务与固件状态合并**：移除独立的「下载任务管理」卡片，任务按钮与任务表并入「固件状态与版本检测」；按钮/表格 ID 保持不变，任务轮询与状态同步逻辑无需改动。
+- **手机多分辨率排版**：≤760px 下载按钮改为 2 列、任务表堆叠为卡片（文件名整行，状态/速度/原因分行）；761–992px 按钮为 4 列一行；≤380px 收紧卡片内边距与表格间距。
+
 ## [2.6.8] - 2026-11-15
 
 ### Fixed

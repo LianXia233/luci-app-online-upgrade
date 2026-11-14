@@ -1330,6 +1330,116 @@
 	.ou-container .ou-ttl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
 
+/* 固件状态卡内的下载任务子区块 */
+.ou-container .ou-subsection {
+	margin-top: 18px !important;
+	padding-top: 14px !important;
+	border-top: 1px dashed #e2e8f0 !important;
+}
+.ou-container .ou-subsection-head {
+	display: flex !important;
+	align-items: center !important;
+	justify-content: space-between !important;
+	gap: 10px 14px !important;
+	flex-wrap: wrap !important;
+	margin-bottom: 10px !important;
+}
+.ou-container .ou-subsection-title h4 {
+	margin: 0 !important;
+	font-size: 14px !important;
+	font-weight: 700 !important;
+	color: #0f172a !important;
+}
+.ou-container .ou-subsection-sub {
+	display: block !important;
+	margin-top: 2px !important;
+	font-size: 12px !important;
+	color: #64748b !important;
+}
+.ou-container .ou-subsection .ou-btn-row { margin-left: auto !important; }
+@media (max-width: 760px) {
+	.ou-container .ou-subsection .ou-btn-row { margin-left: 0 !important; width: 100% !important; }
+}
+
+/* 手机端：下载按钮 2 列、任务表堆叠为卡片 */
+@media (max-width: 760px) {
+	.ou-container .ou-subsection .ou-btn-row {
+		display: grid !important;
+		grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+		gap: 8px !important;
+		width: 100% !important;
+		margin-left: 0 !important;
+	}
+	.ou-container .ou-subsection .ou-btn-row .btn { width: 100% !important; }
+
+	.ou-container .ou-table { min-width: 0 !important; }
+	.ou-container .ou-table thead { display: none !important; }
+	.ou-container .ou-table,
+	.ou-container .ou-table tbody,
+	.ou-container .ou-table tr,
+	.ou-container .ou-table td { display: block !important; width: 100% !important; }
+	.ou-container .ou-table tr {
+		border-bottom: 1px solid #eef2f7 !important;
+		padding: 9px 12px !important;
+	}
+	.ou-container .ou-table td {
+		border: none !important;
+		padding: 3px 0 !important;
+		display: flex !important;
+		align-items: flex-start !important;
+		justify-content: space-between !important;
+		gap: 12px !important;
+		text-align: right !important;
+		font-size: 12.5px !important;
+		background: transparent !important;
+	}
+	.ou-container .ou-table td::before {
+		content: attr(data-label);
+		flex: 0 0 auto !important;
+		color: #64748b !important;
+		font-size: 12px !important;
+		text-align: left !important;
+	}
+	.ou-container .ou-table td:first-child {
+		display: block !important;
+		text-align: left !important;
+		padding-bottom: 5px !important;
+	}
+	.ou-container .ou-table td:first-child::before { content: none !important; }
+	.ou-container .ou-table td:last-child {
+		justify-content: flex-end !important;
+		text-align: right !important;
+		padding-top: 6px !important;
+	}
+	.ou-container .ou-table td:last-child::before { content: none !important; }
+	.ou-container .ou-table td.ou-empty {
+		display: block !important;
+		text-align: center !important;
+		padding: 18px 0 !important;
+	}
+	.ou-container .ou-table td.ou-empty::before { content: none !important; }
+	.ou-container .ou-table .ou-file-cell { align-items: flex-start !important; }
+	.ou-container .ou-table .ou-file-text { white-space: normal !important; overflow-wrap: anywhere !important; }
+}
+
+@media (min-width: 761px) and (max-width: 992px) {
+	.ou-container .ou-subsection .ou-btn-row {
+		display: grid !important;
+		grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+		gap: 8px !important;
+		width: 100% !important;
+		margin-left: 0 !important;
+	}
+	.ou-container .ou-subsection .ou-btn-row .btn { width: 100% !important; }
+}
+
+@media (max-width: 380px) {
+	.ou-container .ou-card { padding-left: 12px !important; padding-right: 12px !important; }
+	.ou-container .ou-subsection .ou-btn-row { gap: 6px !important; }
+	.ou-container .ou-table tr { padding: 8px 10px !important; }
+	.ou-container .ou-table td { font-size: 12px !important; }
+}
+
 .ou-container .ou-terminal.ou-log {
 	white-space: normal !important;
 	word-break: normal !important;

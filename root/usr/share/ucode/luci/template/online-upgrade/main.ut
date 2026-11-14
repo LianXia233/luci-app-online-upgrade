@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.8">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.9">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -252,6 +252,51 @@
 			</div>
 			<p class="ou-hint" id="check-result">点击「检查更新」检测 GitHub 是否有新固件</p>
 		</div>
+
+		<!-- 下载任务（与固件状态合并） -->
+		<div class="ou-subsection">
+			<div class="ou-subsection-head">
+				<div class="ou-subsection-title">
+					<h4>下载任务</h4>
+					<span class="ou-subsection-sub">开始 / 暂停 / 继续 / 取消；完成后自动清理任务与安装包</span>
+				</div>
+				<div class="ou-btn-row">
+					<button id="btn-start-download" class="btn ou-btn ou-btn-primary" type="button" title="仅下载并校验固件，不执行刷写">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+					<span class="btn-label">开始下载</span>
+					</button>
+					<button id="btn-pause-download" class="btn ou-btn ou-btn-default" type="button" title="在下一个分块边界暂停">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+					<span class="btn-label">暂停</span>
+					</button>
+					<button id="btn-resume-download" class="btn ou-btn ou-btn-default" type="button" title="继续已暂停的下载">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+					<span class="btn-label">继续</span>
+					</button>
+					<button id="btn-cancel-download" class="btn ou-btn ou-btn-danger" type="button" title="取消当前下载，保留断点续传记录">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+					<span class="btn-label">取消</span>
+					</button>
+				</div>
+			</div>
+			<div class="ou-table-responsive">
+			<table class="ou-table" id="task-table">
+			<thead>
+			<tr>
+			<th>文件 / 任务</th>
+			<th>状态 / 进度</th>
+			<th>速度</th>
+			<th>原因 / 备注</th>
+			<th style="width:100px;text-align:right">操作</th>
+			</tr>
+			</thead>
+			<tbody>
+			<tr><td colspan="5" class="ou-empty">暂无下载任务</td></tr>
+			</tbody>
+			</table>
+			</div>
+			<p class="ou-hint" id="task-hint"></p>
+		</div>
 	</div>
 
 	<!-- 1b. 远程状态与统一诊断（四套独立状态模型，v2.6） -->
@@ -380,59 +425,6 @@
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-info-icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
 			<span class="ou-hint" id="progress-text">正在启动升级流程...</span>
 		</div>
-	</div>
-
-	<!-- 2.5 下载任务管理 -->
-	<div class="cbi-section ou-card" id="card-tasks">
-		<div class="ou-card-head">
-			<div class="ou-head-title-wrap">
-				<div class="ou-icon-badge cyan">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-head-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-				</div>
-				<div>
-					<div class="ou-head-title-row">
-						<h3>下载任务管理</h3>
-					</div>
-					<p class="ou-head-sub">开始 / 暂停 / 继续 / 取消下载；速度异常缓慢自动停止并输出原因；历史任务可单条删除</p>
-				</div>
-			</div>
-			<div class="ou-btn-row">
-				<button id="btn-start-download" class="btn ou-btn ou-btn-primary" type="button" title="仅下载并校验固件，不执行刷写">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-					<span class="btn-label">开始下载</span>
-				</button>
-				<button id="btn-pause-download" class="btn ou-btn ou-btn-default" type="button" title="在下一个分块边界暂停">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-					<span class="btn-label">暂停</span>
-				</button>
-				<button id="btn-resume-download" class="btn ou-btn ou-btn-default" type="button" title="继续已暂停的下载">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-					<span class="btn-label">继续</span>
-				</button>
-				<button id="btn-cancel-download" class="btn ou-btn ou-btn-danger" type="button" title="取消当前下载，保留断点续传记录">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-					<span class="btn-label">取消</span>
-				</button>
-			</div>
-		</div>
-
-		<div class="ou-table-responsive">
-			<table class="ou-table" id="task-table">
-				<thead>
-					<tr>
-						<th>文件 / 任务</th>
-						<th>状态 / 进度</th>
-						<th>速度</th>
-						<th>原因 / 备注</th>
-						<th style="width:100px;text-align:right">操作</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr><td colspan="5" class="ou-empty">暂无下载任务</td></tr>
-				</tbody>
-			</table>
-		</div>
-		<p class="ou-hint" id="task-hint"></p>
 	</div>
 
 	<!-- 3. 备份与恢复 -->
@@ -900,6 +892,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.8"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.9"></script>
 
 {% include('footer') %}
