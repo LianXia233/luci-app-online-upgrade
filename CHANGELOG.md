@@ -13,6 +13,38 @@
 - **CI 发布后自动清理旧 Release**：`Build Package` 上传当前版本后，通过 GitHub API 删除除当前 tag 外的所有 Release 对象，并校验清理后数量必须为 1；仅删除 Release，不删除 Git tag，保留历史源码引用。
 - **CI 构建提速与 Node 24 迁移**：Rust 后端保持在 `rust` 作业中用 rustup/cargo 直接交叉编译（`aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`），新增 `Swatinem/rust-cache` 缓存 Cargo registry 与 `target`；OpenWrt SDK 仅负责 LuCI 文件、包结构与 `.apk` 生成，新增 `actions/cache` 复用 SDK 压缩包，避免重复下载。所有 action 统一升级到当前最新大版本（`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`、`cache@v6`、`setup-node@v7`、`action-gh-release@v3`），消除 Node 20 弃用告警；`Makefile` 增加预编译二进制校验，明确不在 SDK 内编译 Rust。
 
+## [2.6.0] - 2026-11-14
+
+### Added
+
+- **四套完全独立的状态模型**：新增 `actions` / `releases` / `artifacts` / `compat` 四个独立 Rust 模块，各自拥有独立数据结构、状态枚举、缓存文件（`/tmp/online-upgrade-cache/*.json`）、独立 TTL、独立刷新与独立错误处理。任一模型刷新失败或异常都不会覆盖其他模型的真实状态。新增统一诊断层 `diagnostics`，只读汇总四套模型并输出中文诊断结论。
+- **GitHub Actions 匿名状态检测**：新增 `ghapi` 通用 API 层，支持仓库地址解析（owner/repo 或完整 URL）、公开信息/默认分支/Workflow 自动发现、最近多条运行记录、分支与 Workflow 筛选；严格区分 `status` 与 `conclusion`，覆盖 queued/requested/waiting/pending/in_progress 与 success/failure/cancelled/timed_out/action_required/neutral/skipped；只有 `status=completed` 才依据 conclusion 判定结果。
+- **GitHub Artifacts 状态检测**：独立识别可用/多个/过期/已删除/匿名无法下载/尚未生成等状态，展示过期时间与关联构建任务；明确区分 Artifact 与 Release Asset，且不凭名称判定内部固件。
+- **通用设备信息标准化**：新增 `device` 模块，采集型号、board_name、Device Tree compatible、Target/Subtarget、CPU 架构、Package Arch/ABI、固件版本、发行版、内核、系统标识、升级方式与固件平台；多来源逐级兜底，识别失败保留未知、绝不推测。
+- **固件自动发现与识别**：新增 `firmware` 模块，支持 Release Assets/Artifacts 多来源、常见镜像与压缩格式、文件用途分类（sysupgrade/factory/uboot/efi/rootfs/kernel/packages/sdk/toolchain/debug/校验文件/日志等）、ZIP 中央目录安全解析（防路径穿越与解压炸弹）、多维度匹配与置信度分级。
+- **五层兼容性判定**：新增 `compatstate` 模块，按文件名初筛 → 内部元数据 → 设备维度比对 → 下载后完整性 → `sysupgrade -T` 本机验证分层记录；严格区分「无法确认兼容」与「明确不兼容」，未下载绝不宣称确认兼容或允许自动刷写。
+- **缓存 / 限流 / 并发控制**：新增 `cache` 与 `network` 模块；读取 `X-RateLimit-*`/`Retry-After`，区分 403 限流与权限、429/5xx/DNS/TCP/TLS/超时分类，请求去重与并发限制，失败退避，缓存数据显式标记 stale 与「上次成功查询时间」，绝不把缓存伪装成实时数据；加速源优先、失败可靠回退官方直连，API 与下载策略分离，不关闭 TLS 校验。
+- **RPC / WebUI 扩展**：新增 `get_states`、`get_device`、`get_diagnostics`、`probe_repo`、`netcheck`、`refresh_states`、`clear_states_cache` 七个 RPC 并同步 ACL；新增「远程状态与统一诊断」卡片（设备信息 / Actions / Releases / Artifacts / 固件兼容性 / 诊断结果 / 网络策略），状态均用文字 + 色标表达，含 760px / 380px 移动端适配。
+- **通用 UCI 配置**：新增 `repo_url`、`build_branch`、`workflow_filter`、`api_via_proxy`、`api_timeout` 及五套独立 `ttl_*`，全部可选且带中性默认值；老配置升级时逐项补齐，绝不覆盖用户已有值。
+
+### Changed
+
+- 保留全部原有子命令、RPC 方法、返回字段与 UCI 字段；`check` / `download` / `upgrade` 现有流程与刷写安全标准一字未改。
+- 新增只读状态子命令 `states` / `device` / `probe-repo` / `netcheck` / `clear-cache` 与独立刷新子命令 `refresh`；它们不写全局 `status.json`、不占用升级流程操作锁。
+- 完成官方 OpenWrt **25.12.0 x86/64** 真实 QEMU 虚拟机验证（GRUB → Linux 6.12.71 → procd → rpcd/ubus → 真实 GitHub API → `sysupgrade -T`），证据与限制见 `docs/TEST_REPORT.md` 第 5 节。
+
+### Fixed
+
+- 设备信息采集的 `KEY='value'` 逐行解析：早期草稿在首行不匹配时提前返回，会导致后续字段全部丢失（单元测试覆盖）。
+- 固件用途分类改用 token 精确匹配：避免短词裸子串匹配把普通文件名误判为 EFI/SDK 镜像。
+- `ghapi::api_url()` 空 suffix 产生尾斜杠导致 GitHub 返回 404：真实匿名 API 冒烟发现「公开仓库被误判资源不存在」，已改为不带尾斜杠并加回归单测。
+- `device.rs` ABI 误推导：真实 OpenWrt 25.12.0 的 `DISTRIB_ARCH='x86_64'` 曾被 `split_once('_')` 拆成 `abi="64"`，把 CPU 位宽当成 ABI。改为 `derive_abi()` 只在后缀确含字母（CPU 变体 / FPU / 浮点 ABI）时拆分，纯数字位宽、空后缀、无分隔符一律保留 `unknown`；新增 10 组回归单测。
+
+### Security
+
+- GitHub Token 全程只从 UCI 读取、仅在 `api.github.com` 作为请求头发送；所有日志、错误消息、返回值、前端输出均经脱敏，绝不落盘到交付文件。
+- ZIP 解析拒绝绝对路径、`..`、反斜杠与 NUL 路径，限制条目数、单条目与总未压缩体积、异常压缩比；不落盘解压。
+
 ## [2.5.6] - 2026-11-10
 
 ### Changed

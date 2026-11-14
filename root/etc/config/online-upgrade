@@ -13,3 +13,21 @@ config online-upgrade 'settings'
 	option dl_min_speed_kb '32'
 	option dl_slow_window_sec '15'
 	option dl_slow_grace_sec '10'
+
+# ---- v2.6 通用化配置（全部可选，留空/缺省即使用内置默认值） ----
+# 完整 GitHub 仓库 URL；填写时优先于 repo。支持 owner/repo 或完整 URL
+	option repo_url ''
+# 可选构建分支；留空跟随仓库 default_branch
+	option build_branch ''
+# 可选 Workflow 筛选（名称或路径子串）；留空表示自动发现全部
+	option workflow_filter ''
+# 是否允许把下载加速源用于 GitHub API（默认 0：多数镜像不支持 api.github.com）
+	option api_via_proxy '0'
+# GitHub API 请求整体超时（秒）
+	option api_timeout '25'
+# 四套状态模型 + 网络连通性的独立缓存 TTL（秒）
+	option ttl_actions '120'
+	option ttl_releases '300'
+	option ttl_artifacts '180'
+	option ttl_compat '600'
+	option ttl_network '60'

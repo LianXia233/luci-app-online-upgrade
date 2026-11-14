@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.5.6">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.0">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -252,6 +252,77 @@
 			</div>
 			<p class="ou-hint" id="check-result">点击「检查更新」检测 GitHub 是否有新固件</p>
 		</div>
+	</div>
+
+	<!-- 1b. 远程状态与统一诊断（四套独立状态模型，v2.6） -->
+	<div class="cbi-section ou-card" id="card-states">
+		<div class="ou-card-head">
+			<div class="ou-head-title-wrap">
+				<div class="ou-icon-badge violet">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-head-icon"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+				</div>
+				<div>
+					<div class="ou-head-title-row">
+						<h3 class="ou-head-title">远程状态与统一诊断</h3>
+						<span class="ou-status-pill" id="st-freshness-pill"><span class="ou-dot"></span> 未加载</span>
+					</div>
+					<p class="ou-head-sub">Actions / Releases / Artifacts / 固件兼容性四套状态各自独立，由诊断层汇总解释</p>
+				</div>
+			</div>
+			<div class="ou-head-actions">
+				<button id="btn-states-refresh" class="btn ou-btn ou-btn-primary" type="button" title="刷新四套状态模型（重新查询 GitHub）">刷新状态</button>
+				<button id="btn-states-reload" class="btn ou-btn ou-btn-default" type="button" title="仅读取缓存，不发起网络请求">读取缓存</button>
+			</div>
+		</div>
+
+		<!-- 诊断结论：置于最前，最重要 -->
+		<div class="ou-st-diag" id="st-diag" data-severity="unknown">
+			<div class="ou-st-diag-head">
+				<span class="ou-st-diag-badge" id="st-diag-severity">未知</span>
+				<span class="ou-st-diag-summary" id="st-diag-summary">正在读取状态...</span>
+			</div>
+			<div class="ou-st-diag-body" id="st-diag-body"></div>
+		</div>
+
+		<!-- 四套独立状态模型 -->
+		<div class="ou-st-grid">
+			<section class="ou-st-panel" id="st-panel-actions">
+				<div class="ou-st-panel-head"><h4>① 远程构建状态 · Actions</h4><span class="ou-st-state" data-state="not_checked" id="st-actions-state">未检测</span></div>
+				<div class="ou-st-panel-body" id="st-actions-body"><p class="ou-st-empty">尚未查询 GitHub Actions 构建状态</p></div>
+			</section>
+			<section class="ou-st-panel" id="st-panel-releases">
+				<div class="ou-st-panel-head"><h4>② 正式发布状态 · Releases</h4><span class="ou-st-state" data-state="not_checked" id="st-releases-state">未检测</span></div>
+				<div class="ou-st-panel-body" id="st-releases-body"><p class="ou-st-empty">尚未查询 GitHub Releases</p></div>
+			</section>
+			<section class="ou-st-panel" id="st-panel-artifacts">
+				<div class="ou-st-panel-head"><h4>③ 临时构建产物 · Artifacts</h4><span class="ou-st-state" data-state="not_checked" id="st-artifacts-state">未检测</span></div>
+				<div class="ou-st-panel-body" id="st-artifacts-body"><p class="ou-st-empty">尚未查询 Actions Artifacts</p></div>
+			</section>
+			<section class="ou-st-panel" id="st-panel-compat">
+				<div class="ou-st-panel-head"><h4>④ 固件兼容性 · Compat</h4><span class="ou-st-state" data-state="not_checked" id="st-compat-state">未检测</span></div>
+				<div class="ou-st-panel-body" id="st-compat-body"><p class="ou-st-empty">尚未执行兼容性检查</p></div>
+			</section>
+		</div>
+
+		<!-- 设备信息 -->
+		<section class="ou-st-device">
+			<div class="ou-st-panel-head"><h4>设备信息（动态采集）</h4><span class="ou-st-state" data-state="ok" id="st-device-state">加载中</span></div>
+			<div class="ou-st-panel-body" id="st-device-body"><p class="ou-st-empty">正在读取设备信息...</p></div>
+		</section>
+
+		<!-- 网络与线路策略 -->
+		<section class="ou-st-network">
+			<div class="ou-st-panel-head"><h4>网络与请求策略</h4><span class="ou-st-state" data-state="not_checked" id="st-network-state">未检测</span></div>
+			<div class="ou-st-panel-body" id="st-network-body"><p class="ou-st-empty">尚未执行网络连通性检测</p></div>
+		</section>
+
+		<div class="ou-st-tools">
+			<button id="btn-probe-repo" class="btn ou-btn ou-btn-default" type="button" title="校验当前配置的仓库地址并自动发现默认分支与公开 Workflow">校验仓库</button>
+			<button id="btn-netcheck" class="btn ou-btn ou-btn-default" type="button" title="真实 HTTP 探测 GitHub API 连通性与线路状态">网络检测</button>
+			<button id="btn-clear-states" class="btn ou-btn ou-btn-default" type="button" title="清空四套状态模型与网络缓存，不影响固件、任务与日志">清空状态缓存</button>
+		</div>
+
+		<p class="ou-hint" id="states-hint">四套状态各自独立缓存与刷新；API 故障不会覆盖已获取的真实状态。</p>
 	</div>
 
 	<!-- 2. 升级进度 -->
@@ -525,6 +596,21 @@
 					<label for="cfg-repo">GitHub 仓库 (owner/repo)</label>
 					<input type="text" id="cfg-repo" class="ou-input-text" placeholder="owner/repo" spellcheck="false">
 				</div>
+				<div class="ou-form-field ou-field-full">
+					<label for="cfg-repo-url">通用仓库地址（可选，优先于上方 owner/repo）</label>
+					<input type="text" id="cfg-repo-url" class="ou-input-text" placeholder="https://github.com/owner/repo 或 owner/repo" spellcheck="false">
+					<p class="ou-field-help">支持完整 GitHub URL、<code>/tree/分支</code>、<code>.git</code>；留空则沿用上方「GitHub 仓库」</p>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-build-branch">Actions 构建分支筛选（可选）</label>
+					<input type="text" id="cfg-build-branch" class="ou-input-text" placeholder="留空跟随仓库默认分支" spellcheck="false">
+					<p class="ou-field-help">仅筛选 Actions 运行记录，不影响 Release 资产检测</p>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-workflow-filter">Actions Workflow 名称筛选（可选）</label>
+					<input type="text" id="cfg-workflow-filter" class="ou-input-text" placeholder="留空显示全部工作流" spellcheck="false">
+					<p class="ou-field-help">按名称子串筛选公开工作流，不写死任何 Workflow 名称</p>
+				</div>
 				<div class="ou-form-field">
 					<label for="cfg-tag">Release 标签追踪策略</label>
 					<input type="text" id="cfg-tag" class="ou-input-text" placeholder="latest / latest@^前缀 / 指定 tag" spellcheck="false">
@@ -781,6 +867,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.5.6"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.0"></script>
 
 {% include('footer') %}

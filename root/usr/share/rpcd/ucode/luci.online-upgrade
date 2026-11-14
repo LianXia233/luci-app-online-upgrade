@@ -423,7 +423,18 @@ const methods = {
 			dl_min_speed_kb: 0,
 			dl_slow_window_sec: 0,
 			dl_slow_grace_sec: 0,
-			expected_sha256: ''
+			expected_sha256: '',
+			// v2.6 新增：全部可选，未出现时保持原值，不覆盖历史配置
+			repo_url: '',
+			build_branch: '',
+			workflow_filter: '',
+			api_via_proxy: '',
+			api_timeout: 0,
+			ttl_actions: 0,
+			ttl_releases: 0,
+			ttl_artifacts: 0,
+			ttl_compat: 0,
+			ttl_network: 0
 		},
 		call: function(request) {
 			let a = request.args ?? {};
@@ -520,10 +531,149 @@ const methods = {
 				touched++;
 			}
 
+			// ---- v2.6 新增配置：通用仓库 / 分支 / Workflow / 缓存 TTL ----
+			// 字符串类：禁止引号与空白，长度受限；空串表示清空该可选值。
+			let str_opts = [
+				['repo_url', 512], ['build_branch', 128], ['workflow_filter', 256]
+			];
+			for (let idx, opt in str_opts) {
+				let key = opt[0], lim = opt[1];
+				if (type(a[key]) == 'string') {
+					let v = trim(a[key]);
+					if (length(v) > lim || (length(v) > 0 && bad_field(v)))
+						return { ok: false, error: key + ' 不合法(过长或含引号/空白)' };
+					ctx.set('online-upgrade', 'settings', key, v);
+					touched++;
+				}
+			}
+			if (type(a.api_via_proxy) == 'string') {
+				let v = trim(a.api_via_proxy);
+				if (v != '' && v != '0' && v != '1')
+					return { ok: false, error: 'api_via_proxy 只能为 0 或 1' };
+				ctx.set('online-upgrade', 'settings', 'api_via_proxy', v);
+				touched++;
+			}
+			// 整数类：0 表示恢复默认（删除该键，让后端使用内置 TTL）
+			let int_opts2 = [
+				['api_timeout', 5, 120],
+				['ttl_actions', 15, 86400], ['ttl_releases', 15, 86400],
+				['ttl_artifacts', 15, 86400], ['ttl_compat', 15, 86400],
+				['ttl_network', 15, 86400]
+			];
+			for (let idx, opt in int_opts2) {
+				let key = opt[0], lo = opt[1], hi = opt[2];
+				if (type(a[key]) == 'int') {
+					let v = a[key];
+					if (v == 0) {
+						// 置空即恢复内置默认：后端 ttl_from_uci 解析失败会回落默认值，
+						// 不依赖各版本 ucode cursor 是否提供 delete()。
+						ctx.set('online-upgrade', 'settings', key, '');
+						touched++;
+						continue;
+					}
+					if (v < lo || v > hi)
+						return { ok: false, error: key + ' 超出范围 (' + lo + '-' + hi + ')' };
+					ctx.set('online-upgrade', 'settings', key, '' + v);
+					touched++;
+				}
+			}
+
 			if (touched == 0)
 				return { ok: false, error: '没有可保存的配置' };
 			ctx.commit('online-upgrade');
 			return { ok: true };
+		}
+	},
+
+	// ---- 四套独立状态模型 / 统一诊断层（v2.6 新增） ----------------------
+	// 契约：
+	// - 全部只读方法只读取 /tmp 下的独立缓存文件，不发起 GitHub 请求，
+	//   因此页面轮询不会消耗匿名 API 额度。
+	// - 失败统一返回 { ok:false, error, error_code }；绝不把 Token 放进返回值。
+	// - refresh_states 走 detached，但只写独立缓存文件，不占用全局操作锁。
+	// - 所有旧方法的参数、返回字段、类型一字未改。
+
+	// 只读聚合：设备信息 + 四套模型 + 网络 + 诊断结果
+	get_states: {
+		call: function() {
+			return control_call('states');
+		}
+	},
+
+	// 只读：仅设备标准化信息
+	get_device: {
+		call: function() {
+			return control_call('device');
+		}
+	},
+
+	// 只读：仅诊断结果（轻量，供手机端 / 状态条单独刷新）
+	get_diagnostics: {
+		call: function() {
+			let obj = control_call('states');
+			if (type(obj) == 'object' && obj.ok == true)
+				return { ok: true, diagnostics: obj.diagnostics, generated_at: obj.generated_at };
+			return obj;
+		}
+	},
+
+	// 触发刷新：model 为空=全部；可选 actions/releases/artifacts/compat/network
+	refresh_states: {
+		args: { model: '', force: false },
+		call: function(request) {
+			let model = request.args?.model ?? '';
+			if (type(model) != 'string' || length(model) > 32)
+				return { ok: false, error: '刷新目标不合法' };
+			if (length(model) > 0) {
+				let allowed = ['all', 'actions', 'releases', 'artifacts', 'compat', 'network'];
+				let valid = false;
+				for (let m in allowed)
+					if (m == model)
+						valid = true;
+				if (!valid)
+					return { ok: false, error: '刷新目标不合法' };
+			}
+			let args = ['refresh'];
+			if (length(model) > 0) {
+				push(args, '--only');
+				push(args, model);
+			}
+			if (request.args?.force === true)
+				push(args, '--force');
+			run_detached(BIN, args);
+			return { ok: true, model: model, force: request.args?.force === true };
+		}
+	},
+
+	// 仓库自动发现：校验地址 + 读取默认分支 + 列出全部公开 Workflow
+	probe_repo: {
+		args: { repo: '' },
+		call: function(request) {
+			let repo = request.args?.repo ?? '';
+			if (type(repo) != 'string' || length(repo) == 0 || length(repo) > 512 || bad_field(repo))
+				return { ok: false, error: '仓库地址不合法(应为 owner/repo 或完整 GitHub URL)' };
+			let obj = control_call('probe-repo', [repo]);
+			if (type(obj) == 'object' && obj.ok == false && !obj.error_code)
+				obj.error_code = 'probe_failed';
+			return obj;
+		}
+	},
+
+	// 网络连通性独立探测（真实 HTTP 请求，非 Ping）
+	netcheck: {
+		args: { force: false },
+		call: function(request) {
+			let extra = [];
+			if (request.args?.force === true)
+				push(extra, '--force');
+			return control_call('netcheck', extra);
+		}
+	},
+
+	// 清空四套模型与网络缓存（不动 status.json / 任务历史 / 固件文件）
+	clear_states_cache: {
+		call: function() {
+			return control_call('clear-cache');
 		}
 	}
 };

@@ -21,6 +21,25 @@ if [ -z "$(uci -q get online-upgrade.settings)" ]; then
 	EOF
 fi
 
+# ---- v2.6 新增配置：仅在字段缺失时补默认值，绝不覆盖用户已有配置 ----
+# 老用户升级后 settings 节已存在，上面的整块初始化不会执行，
+# 因此这里逐项补齐；所有取值都是中性默认，不改变原有升级行为。
+_set_default() {
+	[ -z "$(uci -q get online-upgrade.settings.$1)" ] || return 0
+	uci -q set "online-upgrade.settings.$1=$2"
+}
+_set_default repo_url ''
+_set_default build_branch ''
+_set_default workflow_filter ''
+_set_default api_via_proxy '0'
+_set_default api_timeout '25'
+_set_default ttl_actions '120'
+_set_default ttl_releases '300'
+_set_default ttl_artifacts '180'
+_set_default ttl_compat '600'
+_set_default ttl_network '60'
+uci -q commit online-upgrade
+
 # ---- 清理 v1 文件（shell 后端 / lua 控制器 / cbi / 旧版 js / cgi） ----
 rm -f /usr/bin/online-upgrade.sh
 rm -f /usr/lib/lua/luci/controller/admin_system/online_upgrade.lua

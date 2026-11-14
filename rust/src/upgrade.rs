@@ -301,7 +301,7 @@ struct Integrity {
     sha256: String,
 }
 
-/// 先尝试配置的代理线路，再尝试 GitHub 的 API 资产端点。
+/// 线路优先级：加速源 → 官方直连 → GitHub API 资产端点。
 /// `browser_download_url` 由 github.com 的 Web 前端提供，
 /// 它可能返回 504，而 API + release-assets CDN 路径仍能提供文件。
 ///
@@ -315,8 +315,22 @@ async fn fetch_firmware(
     report: ProgressFn,
     control: &DownloadControl,
 ) -> Result<downloader::Downloaded, DownloadError> {
-    let mut candidates = vec![full_url(&github::load_cfg(), &asset.url)];
-    if !asset.api_url.is_empty() {
+    let cfg = github::load_cfg();
+    let mut candidates: Vec<String> = Vec::new();
+    // v2.6：统一线路策略——加速源优先、官方直连兜底。
+    // download_routes 只对下载主机加前缀，绝不把加速源套到
+    // api.github.com，也不改写 URL 参数；TLS 校验保持开启。
+    for u in crate::network::download_routes(&asset.url, &cfg.proxy) {
+        if !candidates.iter().any(|x| x == &u) {
+            candidates.push(u);
+        }
+    }
+    // 兼容旧行为：保留直接前缀线路，覆盖非 GitHub 下载主机。
+    let legacy = full_url(&cfg, &asset.url);
+    if !candidates.iter().any(|x| x == &legacy) {
+        candidates.push(legacy);
+    }
+    if !asset.api_url.is_empty() && !candidates.iter().any(|x| x == &asset.api_url) {
         candidates.push(asset.api_url.clone());
     }
     let mut last = DownloadError::Other("没有可用的下载地址".to_string());
@@ -417,12 +431,71 @@ async fn fetch_asset(client: &reqwest::Client) -> Result<Asset, String> {
     })
 }
 
+/// v2.6：下载完成后，若目标明确是归档包（ZIP / tar 系列），先做只读安全清单
+/// 解析。普通 `.bin` / `.img` / `.gz` 镜像零额外开销。
+///
+/// - 恶意路径、解压炸弹、条目数超限、结构损坏一律拒绝，`force` 也不豁免；
+/// - 归档内没有任何可刷写镜像时拒绝直接刷写（可由 `force` 豁免）；
+/// - 其余情况只记录诊断，旧 `fwtool` / `sysupgrade -T` 决策链完全不变。
+fn inspect_downloaded_archive(asset: &Asset, force: bool) -> Result<(), String> {
+    const MAX_INSPECT_BYTES: u64 = 256 * 1024 * 1024;
+    let lower = asset.name.to_ascii_lowercase();
+    let is_archive = [
+        ".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.zst", ".7z",
+    ]
+    .iter()
+    .any(|e| lower.ends_with(e));
+    if !is_archive {
+        return Ok(());
+    }
+
+    let size = std::fs::metadata(TMP_FIRMWARE)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if size > MAX_INSPECT_BYTES {
+        return Err(format!(
+            "归档包体积 {} 超过安全解析上限 {}，已拒绝（避免耗尽内存）",
+            github::human_size(size),
+            github::human_size(MAX_INSPECT_BYTES)
+        ));
+    }
+
+    match crate::firmware::inspect_archive_file(TMP_FIRMWARE) {
+        Ok(entries) => {
+            let flashable = crate::firmware::flashable_from_entries(&entries);
+            logline!(
+                "[verify] 归档包只读清单解析: {} 个条目, 可刷写镜像候选 {} 个",
+                entries.len(),
+                flashable.len()
+            );
+            for e in flashable.iter().take(5) {
+                logline!("[verify] 归档内固件候选: {} ({} bytes, 压缩 {} bytes)", e.name, e.size, e.compressed_size);
+            }
+            if flashable.is_empty() && !force {
+                return Err(format!(
+                    "归档包 [{}] 内未发现可刷写的 sysupgrade/factory 镜像，请勿直接刷写压缩包",
+                    asset.name
+                ));
+            }
+            Ok(())
+        }
+        Err(crate::firmware::ArchiveError::Unsupported) => Ok(()),
+        Err(e) => Err(format!("固件归档包安全校验未通过: {}", e.message())),
+    }
+}
+
 fn verify_firmware_integrity(
     device: &crate::compat::DeviceProfile,
     asset: &Asset,
     force: bool,
 ) -> Result<Integrity, String> {
     status::set("verifying", 91, "正在校验固件 SHA256 哈希完整性...");
+
+    if let Err(e) = inspect_downloaded_archive(asset, force) {
+        cleanup_download();
+        return Err(e);
+    }
+
     let actual_sha256 =
         crate::hash::sha256_file(TMP_FIRMWARE).map_err(|e| format!("SHA256 计算失败: {e}"))?;
 
@@ -461,13 +534,37 @@ fn verify_firmware_integrity(
     };
 
     // 硬件与 sysupgrade -T 镜像兼容性校验
+    let mut l5_passed = true;
+    let mut l5_detail = "本机 fwtool / sysupgrade -T 预检通过".to_string();
     if let Err(e) = crate::compat::verify_downloaded_image(device, TMP_FIRMWARE) {
+        l5_passed = false;
+        l5_detail = e.clone();
         if !force {
             cleanup_download();
             return Err(e);
         }
         logline!("[verify] 强制模式生效，跳过未通过的固件兼容性预检: {e}");
     }
+
+    // v2.6：把 L4/L5 的真实结果回写到四套状态模型中 compat 自己的缓存。
+    // 这里只做状态记录，不改变本函数返回值，也不参与刷写决策。
+    let l4_basis = !expected.is_empty();
+    let l4_detail = if l4_basis {
+        format!("SHA256 校验一致（来源 {source}）")
+    } else {
+        "未提供校验依据，仅记录本地 SHA256，未宣称已校验".to_string()
+    };
+    crate::compatstate::record_download_result(
+        &asset.name,
+        asset.size,
+        &actual_sha256,
+        asset.rule.as_deref(),
+        l4_basis,
+        verified,
+        &l4_detail,
+        l5_passed,
+        &l5_detail,
+    );
 
     Ok(Integrity {
         verified,

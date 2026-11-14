@@ -1,15 +1,27 @@
 // online-upgrade —— OpenWrt/ImmortalWrt 固件在线升级后端。
 // 取代原有的 shell 实现，通过 JSON 与 LuCI 前端通信。
 
+mod actions;
+mod artifacts;
+mod cache;
 mod compat;
+mod compatstate;
+mod device;
+mod diagnostics;
 mod downloader;
+mod firmware;
+mod ghapi;
 mod github;
 mod hash;
 mod http;
 mod json;
 mod localver;
 mod lock;
+mod model;
+mod network;
+mod releases;
 mod selfupdate;
+mod states;
 mod status;
 mod taskctl;
 mod uci;
@@ -41,9 +53,20 @@ async fn cmd_check() -> i32 {
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: online-upgrade <check|upgrade [--force]|download|pause|resume|cancel|tasks|task-delete <id> [--force]|backup|restore <file>|status|clear-log|probe|plugin-info|plugin-check|plugin-update>"
+        "usage: online-upgrade <check|upgrade [--force]|download|pause|resume|cancel|tasks|task-delete <id> [--force]|backup|restore <file>|status|clear-log|probe|plugin-info|plugin-check|plugin-update|states|refresh [--only <model>] [--force]|device|probe-repo <url>|netcheck|clear-cache>"
     );
     2
+}
+
+// ---- 新增只读/刷新子命令的公共参数解析 ----
+fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == key {
+            return it.next().map(|s| s.as_str());
+        }
+    }
+    None
 }
 
 fn ok_json(pairs: Vec<(&str, Value)>) -> String {
@@ -239,6 +262,72 @@ fn main() {
             .build()
             .unwrap()
             .block_on(selfupdate::run_update()),
+
+        // ---- 四套独立状态模型 / 统一诊断层（新增，均为只读或独立刷新） ----
+        // 这些命令不写 /tmp/online-upgrade-status.json，不占用升级流程的
+        // 全局操作锁，因此不会干扰 check / download / upgrade 的进度上报。
+        "states" => {
+            println!("{}", states::read_only().dump());
+            0
+        }
+        "device" => {
+            println!("{}", states::device_json().dump());
+            0
+        }
+        "refresh" => {
+            let only = arg_value(&args, "--only");
+            let force = args.iter().any(|a| a == "--force");
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let res = states::refresh_all(only, force).await;
+                    println!("{}", res.dump());
+                });
+            0
+        }
+        "probe-repo" => match args.get(2) {
+            Some(u) => {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let res = states::probe_repo(u).await;
+                        println!("{}", res.dump());
+                    });
+                0
+            }
+            None => usage(),
+        },
+        "netcheck" => {
+            let force = args.iter().any(|a| a == "--force");
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let hub = ghapi::Hub::new(ghapi::ApiCfg::from_uci());
+                    let r = network::probe(&hub, force).await;
+                    println!("{}", r.to_json().dump());
+                });
+            0
+        }
+        "clear-cache" => {
+            let n = cache::invalidate_all();
+            println!(
+                "{}",
+                ok_json(vec![
+                    ("ok", Value::Bool(true)),
+                    ("cleared", Value::num(n as u64)),
+                ])
+            );
+            0
+        }
         _ => usage(),
     };
     // process::exit 不会执行析构函数，因此必须显式释放锁：

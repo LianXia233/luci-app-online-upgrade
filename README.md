@@ -136,6 +136,83 @@
 
 ---
 
+## v2.6 通用化架构：四套独立状态模型与统一诊断
+
+> 本节说明 v2.6 的通用化改造。核心原则：**不依赖特定设备、不依赖特定 CI 仓库、不依赖固定固件命名规则**。文中出现的仓库名仅为兼容性测试样本，代码中没有任何硬编码依赖。
+
+### 1. 旧实现的问题
+
+| 旧实现 | 后果 |
+| :--- | :--- |
+| 检测 / 下载 / 升级 / 兼容性共用一份 `/tmp/online-upgrade-status.json`（`stage` / `pct` / `msg` / `error` / `result`） | 一次 API 失败会覆盖已获取的 Release 状态；无法区分「构建失败」与「没有固件」 |
+| 只解析 Release，完全没有 Actions 与 Artifacts | 正在构建、构建失败、仅有 Artifacts 等场景无法解释 |
+| 仅靠文件名判断设备适配 | 容易把 SDK / rootfs / 校验文件当成固件，或漏掉压缩包内的镜像 |
+| HTTP 403 一律按普通错误处理 | 匿名 API 限流与权限错误混为一谈 |
+| 单一状态变量 | 四套信息无法独立缓存、独立刷新、独立失败 |
+
+### 2. 四套完全独立的状态模型
+
+四套模型在**底层真正独立**：各有自己的 Rust 模块、状态枚举、缓存文件、TTL、刷新函数与错误处理。任一模型刷新失败绝不会覆盖其他模型的真实状态。
+
+| 模型 | 模块 | 独立缓存 | 默认 TTL | 只回答什么 |
+| :--- | :--- | :--- | :--- | :--- |
+| GitHub Actions | `actions.rs` | `actions.json` | 120s | 远程 CI 构建任务状态 |
+| GitHub Releases | `releases.rs` | `releases.json` | 300s | 正式发布与发布资产 |
+| Actions Artifacts | `artifacts.rs` | `artifacts.json` | 180s | 临时构建产物（会过期） |
+| 固件兼容性 | `compatstate.rs` | `compat.json` | 600s | 某个固件文件是否适合本机 |
+
+缓存目录统一为 `/tmp/online-upgrade-cache/`，另有独立的 `network.json` 保存网络探测结果。**统一诊断层 `diagnostics.rs` 只以不可变引用读取这四套模型**（编译期即阻止修改），输出中文结论，不写回任何模型。
+
+### 3. GitHub Actions 的 `status` / `conclusion` 严格分离
+
+只有 `status=completed` 才依据 `conclusion` 判定最终结果；未完成状态不会被误显示成「构建失败」。
+
+| 阶段 | 识别值 | 显示 |
+| :--- | :--- | :--- |
+| 未完成 | `queued` / `requested` / `waiting` / `pending` / `in_progress` | 排队中 / 已请求 / 等待中 / 待处理 / 构建中 |
+| 已完成 | `success` / `failure` / `cancelled` / `timed_out` / `action_required` / `neutral` / `skipped` | 成功 / 失败 / 已取消 / 超时 / 需人工处理 / 中性 / 跳过 |
+| 未知 | 其它值 | 未知状态（不推测） |
+
+### 4. 统一诊断层的典型结论
+
+| 场景 | 诊断结论（摘要） |
+| :--- | :--- |
+| 构建失败 + 已有历史 Release | 最新构建失败，但历史正式发布仍可能可用 |
+| 无 Release + 存在 Artifacts | 没有正式 Release，不代表没有可用固件 |
+| API 限流 | GitHub API 请求受到限流，暂时无法获取最新构建状态，已保留上次成功查询的数据 |
+| 构建成功但无可识别固件 | 构建成功，但未识别到可刷写镜像；不等于设备不兼容 |
+| 兼容性无法确认 | 当前设备的兼容性尚无法确认，因此暂不允许自动刷写 |
+
+### 5. 固件识别与五层兼容性判定
+
+固件来源支持 **Release Assets / Actions Artifacts / 自定义公开地址**；格式覆盖 `.bin` / `.img` / `.gz` / `.xz` / `.zst` / `.zip` / `.tar*` / `.ubi` / `.trx` / `.chk` 等；用途区分 `sysupgrade` / `factory` / U-Boot / EFI / rootfs / kernel / packages / SDK / Toolchain / Debug / 校验文件 / 构建日志。ZIP 等压缩包**只读取中央目录清单、绝不落盘解压**，并拦截路径穿越、绝对路径、NUL、异常条目数与解压炸弹。
+
+| 层 | 名称 | 内容 |
+| :--- | :--- | :--- |
+| L1 | 文件名 / 格式初筛 | 扩展名与用途分类，排除校验文件、日志、SDK |
+| L2 | 固件内部元数据 | 压缩包清单、Release `digest`、声明字段 |
+| L3 | 设备维度比对 | 型号 / Device Tree compatible / Target / Subtarget / CPU 架构 / Package Arch / ABI / 版本 / 类型 |
+| L4 | 下载后完整性 | HTTP 响应、文件大小、SHA-256、实际格式 |
+| L5 | 系统原生安全验证 | `fwtool` 元数据 + `sysupgrade -T`（只读测试，绝不刷写） |
+
+**「无法确认兼容」不等于「明确不兼容」**：下载前绝不宣称已确认兼容；未通过安全检查不允许自动刷写。设备信息采集失败一律保留 `unknown`，Target / Subtarget / CPU 架构 / Package Arch / ABI 互不混淆。
+
+### 6. 网络、缓存与安全
+
+- **匿名优先**：公开仓库默认匿名调用 GitHub API，不强制 Token；可选 Token 仅从 UCI 读取、仅在 `api.github.com` 作为请求头发送，日志 / 错误消息 / 前端 / 交付文件全程脱敏。
+- **限流与错误分类**：读取 `X-RateLimit-*` / `Retry-After`，区分 403 限流与权限、429、5xx、DNS / TCP / TLS / 超时、响应内容异常、加速源不可用、官方服务不可用。
+- **缓存 Envelope**：失败时保留上次成功 payload 并显式标记 `stale` 与「上次成功查询时间」，**绝不把缓存伪装成实时数据**；提供进程内请求去重、并发限制与失败退避，不无限重试、不高频轮询。
+- **API 与下载策略分离**：API 默认直连 `api.github.com`（多数加速源不支持 API）；下载链路加速源优先、失败自动回退官方直连。**不关闭 TLS 证书验证**。
+- 新增只读 / 刷新命令不写全局 `status.json`、不占用升级流程操作锁；旧 `check` / `download` / `upgrade` 流程与刷写安全标准未改。
+
+### 7. WebUI
+
+「远程状态与统一诊断」卡片包含：诊断结论、设备信息、Actions / Releases / Artifacts / 固件兼容性四面板、网络与请求策略，以及「刷新状态 / 读取缓存 / 校验仓库 / 网络检测 / 清空状态缓存」按钮。所有状态均**文字 + 色标**同时表达，760px / 380px 下自动单列并强制长文本换行。
+
+> 详细设计见 [docs/STATE_MODELS.md](docs/STATE_MODELS.md)；RPC 与配置见 [docs/RPC_AND_CONFIG.md](docs/RPC_AND_CONFIG.md)；错误诊断见 [docs/ERROR_DIAGNOSTICS.md](docs/ERROR_DIAGNOSTICS.md)；测试矩阵与报告见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)；完整实施报告见 [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)。
+
+---
+
 ## 使用向导
 
 ### 步骤一：填入或识别仓库
@@ -401,6 +478,18 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | `dl_slow_grace_sec` | integer | `10` | 启动宽限期（秒，范围 0~300）：TLS 握手与 TCP 慢启动期间不做慢速判定 |
 | `github_token` | string | 空 | 可选。GitHub Personal Access Token（只读权限即可），用于防止局域网内公网 IP 触发 GitHub API 403 限流。令牌只会发给 `api.github.com`，经镜像前缀转发或回退到镜像下载时一律不带 Authorization 头 |
 | `plugin_repo` | string | `LianXia233/luci-app-online-upgrade` | 插件自身更新源，格式为 `owner/repo`。默认指向本仓库；自更新会读取该仓库中符合 `vX.Y.Z` 的稳定 Release，并按 `online-upgrade-manifest.json` 选择本机架构安装包 |
+| `repo_url` | string | 空 | **v2.6** 通用仓库地址，支持 `owner/repo`、完整 GitHub URL、`/tree/<分支>`、`.git`、SSH 形式；留空时回退旧 `repo` 字段，保证历史配置兼容 |
+| `build_branch` | string | 空 | **v2.6** Actions 构建分支筛选；留空跟随仓库默认分支。仅筛选运行记录，不影响 Release 资产 |
+| `workflow_filter` | string | 空 | **v2.6** Actions Workflow 名称子串筛选；留空显示全部公开工作流 |
+| `api_via_proxy` | bool | `0` | **v2.6** 是否让 API 也走加速源。默认关闭（多数加速源不支持 API），下载链路仍保持加速源优先 |
+| `api_timeout` | integer | `25` | **v2.6** GitHub API 请求超时（秒），`0` 恢复默认 |
+| `ttl_actions` | integer | `120` | **v2.6** Actions 模型独立缓存 TTL（秒），`0` 恢复默认 |
+| `ttl_releases` | integer | `300` | **v2.6** Releases 模型独立缓存 TTL（秒），`0` 恢复默认 |
+| `ttl_artifacts` | integer | `180` | **v2.6** Artifacts 模型独立缓存 TTL（秒），`0` 恢复默认 |
+| `ttl_compat` | integer | `600` | **v2.6** 兼容性模型独立缓存 TTL（秒），`0` 恢复默认 |
+| `ttl_network` | integer | `60` | **v2.6** 网络探测结果缓存 TTL（秒），`0` 恢复默认 |
+
+> 以上 v2.6 字段**全部可选且带中性默认值**；`uci-defaults` 采用「字段缺失才补默认值」策略，升级时绝不覆盖用户已有配置。WebUI 的「高级配置」中可直接填写 `repo_url` / `build_branch` / `workflow_filter`，其余可通过 UCI 命令设置。
 
 ### 2. 标准 UCI 配置文件示例 (`/etc/config/online-upgrade`)
 
@@ -421,6 +510,17 @@ config online-upgrade 'settings'
 	option dl_slow_window_sec '15'
 	option dl_slow_grace_sec '10'
 	option plugin_repo 'LianXia233/luci-app-online-upgrade'
+	# --- v2.6 可选：通用仓库与四套状态模型独立 TTL ---
+	option repo_url ''
+	option build_branch ''
+	option workflow_filter ''
+	option api_via_proxy '0'
+	option api_timeout '25'
+	option ttl_actions '120'
+	option ttl_releases '300'
+	option ttl_artifacts '180'
+	option ttl_compat '600'
+	option ttl_network '60'
 ```
 
 ---
@@ -598,6 +698,15 @@ online-upgrade status
 online-upgrade plugin-info
 online-upgrade plugin-check
 online-upgrade plugin-update
+
+# --- v2.6 只读 / 诊断命令（不写全局 status.json，不占用升级操作锁）---
+online-upgrade device                 # 输出标准化设备信息 JSON
+online-upgrade states                 # 只读四套状态模型 + 网络 + 诊断结果（不联网）
+online-upgrade probe-repo owner/repo  # 校验仓库并自动发现默认分支与公开 Workflow
+online-upgrade netcheck               # 真实 HTTP 探测 GitHub API 连通性
+online-upgrade refresh                # 并发刷新四套模型 + 网络，最后只读汇总诊断
+online-upgrade refresh --only actions --force   # 只强制刷新指定模型，其他缓存不动
+online-upgrade clear-cache            # 清空四套模型与网络缓存（不动固件/任务/日志）
 ```
 
 ### Ubus JSON-RPC 接口 (`luci.online-upgrade`)
@@ -622,7 +731,34 @@ ubus call luci.online-upgrade plugin_info
 ubus call luci.online-upgrade get_plugin_status
 ubus call luci.online-upgrade start_plugin_check
 ubus call luci.online-upgrade start_plugin_update
+
+# --- v2.6：只读状态 / 诊断 / 刷新 ---
+ubus call luci.online-upgrade get_states          # 一次拿到四套模型 + 设备 + 网络 + 诊断（只读缓存）
+ubus call luci.online-upgrade get_device          # 标准化设备信息（CLI / 外部诊断用）
+ubus call luci.online-upgrade get_diagnostics     # 仅诊断层结论（CLI / 外部诊断用）
+ubus call luci.online-upgrade refresh_states '{"model":"","force":false}'  # detached 提交刷新
+ubus call luci.online-upgrade probe_repo '{"repo":"owner/repo"}'           # 必填 repo
+ubus call luci.online-upgrade netcheck '{"force":true}'                     # 真实 HTTP 探测
+ubus call luci.online-upgrade clear_states_cache                            # 清空状态缓存
 ```
+
+---
+
+## 错误诊断与状态说明（v2.6）
+
+所有错误都带 **模块 / 阶段 / HTTP 状态码 / 关键原因 / 是否可重试 / 是否存在缓存**，且日志按模块区分（`[ghapi]` / `[actions]` / `[releases]` / `[artifacts]` / `[compat]` / `[network]` / `[download]` / `[verify]`）。日志与错误消息绝不输出 Token、敏感请求头或用户隐私。
+
+| 现象 | 正确处理 |
+| :--- | :--- |
+| 匿名 API 403 且 `remaining=0` | `rate_limited`：保留上次成功数据并标记 `stale`，提示约多少秒后可重试 |
+| 403 但非限流 | `forbidden`：权限不足，不伪装成「没有 Release」 |
+| 404 | 仓库 / 资源不存在；`probe-repo` 会给出解析后的 `owner/repo` 便于核对 |
+| 429 / 5xx | 可重试错误，按 `Retry-After` 退避，不无限重试 |
+| DNS / TCP / TLS / 超时 | 按 `NetClass` 分类，明确区分网络层与 API 层故障 |
+| API 查询失败 | **只替换该模型的 `api` 元数据**，业务 `state` / `data` 保持不变 |
+| 缓存已过期 | 标记 `stale` 并显示「上次成功查询时间」，不当实时数据使用 |
+
+状态一律**文字化**表达（如「排队中」「等待中」「构建中」「无法确认兼容」「明确不兼容」），颜色只是辅助。完整错误码表与排查步骤见 [docs/ERROR_DIAGNOSTICS.md](docs/ERROR_DIAGNOSTICS.md)。
 
 ---
 

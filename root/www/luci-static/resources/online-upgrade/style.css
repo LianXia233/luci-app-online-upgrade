@@ -3421,3 +3421,232 @@ body.ou-modal-open {
 .ou-card-plugin.ou-card-collapsed .ou-card-head .ou-btn-row {
 	display: none !important;
 }
+/* ==========================================================================
+   v2.6 —— 四套独立状态模型 / 统一诊断层
+   状态一律「文字 + 色标」双通道表达，不依赖颜色单独区分。
+   布局全部使用流式盒模型，长文件名/仓库地址强制换行，避免窄屏横向溢出。
+   ========================================================================== */
+
+.ou-container #card-states {
+	overflow: hidden !important;
+}
+
+.ou-container .ou-st-diag {
+	border: 1px solid #e2e8f0 !important;
+	border-left: 4px solid #94a3b8 !important;
+	border-radius: 12px !important;
+	background: #f8fafc !important;
+	padding: 14px 16px !important;
+	margin: 4px 0 18px !important;
+	min-width: 0 !important;
+}
+.ou-container .ou-st-diag[data-severity="success"] { border-left-color: #16a34a !important; background: #f0fdf4 !important; }
+.ou-container .ou-st-diag[data-severity="info"]    { border-left-color: #2563eb !important; background: #eff6ff !important; }
+.ou-container .ou-st-diag[data-severity="warning"] { border-left-color: #d97706 !important; background: #fffbeb !important; }
+.ou-container .ou-st-diag[data-severity="error"]   { border-left-color: #dc2626 !important; background: #fef2f2 !important; }
+
+.ou-container .ou-st-diag-head {
+	display: flex !important;
+	flex-wrap: wrap !important;
+	align-items: center !important;
+	gap: 8px 10px !important;
+	min-width: 0 !important;
+}
+.ou-container .ou-st-diag-badge {
+	flex: 0 0 auto !important;
+	font-size: 12px !important;
+	font-weight: 600 !important;
+	padding: 2px 10px !important;
+	border-radius: 999px !important;
+	background: #e2e8f0 !important;
+	color: #334155 !important;
+	white-space: nowrap !important;
+}
+.ou-container .ou-st-diag-summary {
+	flex: 1 1 240px !important;
+	min-width: 0 !important;
+	font-size: 14px !important;
+	font-weight: 600 !important;
+	line-height: 1.55 !important;
+	overflow-wrap: anywhere !important;
+	word-break: break-word !important;
+}
+.ou-container .ou-st-diag-body { margin-top: 10px !important; font-size: 12.5px !important; line-height: 1.65 !important; }
+.ou-container .ou-st-diag-block strong,
+.ou-container .ou-st-diag-next strong { display: block !important; margin-bottom: 4px !important; }
+.ou-container .ou-st-diag-block ul,
+.ou-container .ou-st-diag-next ol { margin: 0 0 8px !important; padding-left: 20px !important; }
+.ou-container .ou-st-diag-block li,
+.ou-container .ou-st-diag-next li { overflow-wrap: anywhere !important; }
+.ou-container .ou-st-diag-sec {
+	border-top: 1px dashed #cbd5e1 !important;
+	padding: 8px 0 !important;
+	overflow-wrap: anywhere !important;
+}
+.ou-container .ou-st-diag-sec-title { font-weight: 600 !important; color: #0f172a !important; }
+.ou-container .ou-st-diag-sec p { margin: 3px 0 0 !important; color: #475569 !important; }
+
+.ou-container .ou-st-grid {
+	display: grid !important;
+	grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+	gap: 14px !important;
+	margin-bottom: 14px !important;
+	min-width: 0 !important;
+}
+.ou-container .ou-st-panel,
+.ou-container .ou-st-device,
+.ou-container .ou-st-network {
+	border: 1px solid #e2e8f0 !important;
+	border-radius: 12px !important;
+	background: #fff !important;
+	padding: 12px 14px !important;
+	min-width: 0 !important;
+	overflow: hidden !important;
+}
+.ou-container .ou-st-device,
+.ou-container .ou-st-network { margin-bottom: 14px !important; }
+.ou-container .ou-st-panel-head {
+	display: flex !important;
+	flex-wrap: wrap !important;
+	align-items: center !important;
+	justify-content: space-between !important;
+	gap: 6px 10px !important;
+	margin-bottom: 8px !important;
+	min-width: 0 !important;
+}
+.ou-container .ou-st-panel-head h4 {
+	margin: 0 !important;
+	font-size: 13px !important;
+	font-weight: 700 !important;
+	color: #0f172a !important;
+	min-width: 0 !important;
+	overflow-wrap: anywhere !important;
+}
+.ou-container .ou-st-state {
+	flex: 0 0 auto !important;
+	font-size: 11.5px !important;
+	font-weight: 600 !important;
+	padding: 2px 9px !important;
+	border-radius: 999px !important;
+	background: #f1f5f9 !important;
+	color: #475569 !important;
+	white-space: nowrap !important;
+}
+.ou-container .ou-st-state[data-state*="success"],
+.ou-container .ou-st-state[data-state="ok"],
+.ou-container .ou-st-state[data-state="has_stable"],
+.ou-container .ou-st-state[data-state="available"],
+.ou-container .ou-st-state[data-state="multiple"],
+.ou-container .ou-st-state[data-state="compatible"] { background: #dcfce7 !important; color: #166534 !important; }
+.ou-container .ou-st-state[data-state*="building"],
+.ou-container .ou-st-state[data-state*="queued"],
+.ou-container .ou-st-state[data-state*="pending"],
+.ou-container .ou-st-state[data-state="warning"],
+.ou-container .ou-st-state[data-state="risk"],
+.ou-container .ou-st-state[data-state="unconfirmed"],
+.ou-container .ou-st-state[data-state="not_downloadable"] { background: #fef3c7 !important; color: #92400e !important; }
+.ou-container .ou-st-state[data-state*="failure"],
+.ou-container .ou-st-state[data-state="incompatible"],
+.ou-container .ou-st-state[data-state="api_failed"],
+.ou-container .ou-st-state[data-state="error"] { background: #fee2e2 !important; color: #991b1b !important; }
+
+.ou-container .ou-st-panel-body { min-width: 0 !important; font-size: 12.5px !important; line-height: 1.6 !important; }
+.ou-container .ou-st-lead { margin: 0 0 8px !important; color: #334155 !important; overflow-wrap: anywhere !important; }
+.ou-container .ou-st-empty,
+.ou-container .ou-st-foot,
+.ou-container .ou-st-note,
+.ou-container .ou-st-api,
+.ou-container .ou-st-more { margin: 6px 0 0 !important; overflow-wrap: anywhere !important; }
+.ou-container .ou-st-empty { color: #94a3b8 !important; }
+.ou-container .ou-st-foot { color: #64748b !important; font-size: 11.5px !important; }
+.ou-container .ou-st-note { color: #b45309 !important; font-size: 11.5px !important; }
+.ou-container .ou-st-api { color: #64748b !important; font-size: 11.5px !important; border-top: 1px dashed #e2e8f0 !important; padding-top: 6px !important; }
+.ou-container .ou-st-api[data-status="rate_limited"],
+.ou-container .ou-st-api[data-status="error"] { color: #b91c1c !important; }
+
+.ou-container .ou-st-kv { display: grid !important; grid-template-columns: 1fr !important; gap: 2px 0 !important; min-width: 0 !important; }
+.ou-container .ou-st-row {
+	display: flex !important;
+	flex-wrap: wrap !important;
+	gap: 2px 8px !important;
+	min-width: 0 !important;
+	padding: 2px 0 !important;
+	overflow-wrap: anywhere !important;
+}
+.ou-container .ou-st-key { flex: 0 0 auto !important; color: #64748b !important; font-size: 11.5px !important; }
+.ou-container .ou-st-val { flex: 1 1 120px !important; min-width: 0 !important; color: #0f172a !important; overflow-wrap: anywhere !important; word-break: break-word !important; }
+.ou-container .ou-file-text { overflow-wrap: anywhere !important; word-break: break-word !important; min-width: 0 !important; }
+
+.ou-container .ou-st-details { margin-top: 8px !important; border-top: 1px dashed #e2e8f0 !important; padding-top: 6px !important; }
+.ou-container .ou-st-details summary { cursor: pointer !important; color: #2563eb !important; font-size: 11.5px !important; }
+.ou-container .ou-st-mini {
+	display: flex !important;
+	flex-wrap: wrap !important;
+	gap: 2px 8px !important;
+	padding: 4px 0 !important;
+	border-bottom: 1px solid #f1f5f9 !important;
+	font-size: 11.5px !important;
+	min-width: 0 !important;
+}
+.ou-container .ou-st-mini > span { min-width: 0 !important; overflow-wrap: anywhere !important; }
+.ou-container .ou-st-mini-state { font-weight: 600 !important; }
+
+.ou-container .ou-st-art {
+	display: flex !important;
+	flex-wrap: wrap !important;
+	gap: 2px 8px !important;
+	padding: 5px 0 !important;
+	border-bottom: 1px solid #f1f5f9 !important;
+	font-size: 11.5px !important;
+	min-width: 0 !important;
+}
+.ou-container .ou-st-art > span { min-width: 0 !important; overflow-wrap: anywhere !important; }
+.ou-container .ou-st-art-time { color: #94a3b8 !important; }
+
+.ou-container .ou-st-fw {
+	border: 1px solid #e2e8f0 !important;
+	border-radius: 8px !important;
+	padding: 8px 10px !important;
+	margin: 6px 0 !important;
+	min-width: 0 !important;
+	font-size: 11.5px !important;
+}
+.ou-container .ou-st-fw > span { margin-right: 8px !important; overflow-wrap: anywhere !important; }
+.ou-container .ou-st-fw-state { font-weight: 600 !important; }
+.ou-container .ou-st-fw-reason { margin: 5px 0 0 !important; color: #475569 !important; overflow-wrap: anywhere !important; }
+.ou-container .ou-st-layers { display: flex !important; flex-wrap: wrap !important; gap: 4px !important; margin-top: 6px !important; }
+.ou-container .ou-st-layer {
+	font-size: 10.5px !important;
+	padding: 1px 7px !important;
+	border-radius: 999px !important;
+	background: #f1f5f9 !important;
+	color: #64748b !important;
+}
+.ou-container .ou-st-layer[data-passed="1"] { background: #dcfce7 !important; color: #166534 !important; }
+
+/* ---- 诊断工具按钮行（v2.6） ---- */
+.ou-container .ou-st-tools {
+	display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px;
+}
+.ou-container .ou-st-tools .ou-btn { flex: 0 1 auto; min-width: 0; }
+
+/* ---- 移动端：单列、不横向溢出、长文本强制换行 ---- */
+@media (max-width: 760px) {
+	.ou-container .ou-st-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 10px !important; }
+	.ou-container .ou-st-diag { padding: 12px !important; }
+	.ou-container .ou-st-panel,
+	.ou-container .ou-st-device,
+	.ou-container .ou-st-network { padding: 10px 11px !important; }
+	.ou-container .ou-st-panel-head h4 { font-size: 12.5px !important; }
+	.ou-container .ou-st-diag-summary { flex: 1 1 100% !important; font-size: 13px !important; }
+	.ou-container #card-states .ou-head-actions { flex-wrap: wrap !important; }
+	.ou-container #card-states .ou-head-actions .ou-btn { flex: 1 1 120px !important; min-width: 0 !important; }
+	.ou-container .ou-st-tools .ou-btn { flex: 1 1 120px !important; }
+	.ou-container .ou-st-row,
+	.ou-container .ou-st-mini,
+	.ou-container .ou-st-art { gap: 1px 6px !important; }
+}
+@media (max-width: 380px) {
+	.ou-container .ou-st-panel-head { align-items: flex-start !important; }
+	.ou-container .ou-st-layer { font-size: 10px !important; }
+}

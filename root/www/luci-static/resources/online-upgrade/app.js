@@ -1392,6 +1392,11 @@
 		} else {
 			$('cfg-url').value = '';
 		}
+		// v2.6：通用仓库地址与 Actions 筛选（get_config 返回 UCI 全量字段，缺失即留空）
+		[['cfg-repo-url', settings.repo_url], ['cfg-build-branch', settings.build_branch],
+		 ['cfg-workflow-filter', settings.workflow_filter]].forEach(function (f) {
+			if ($(f[0])) $(f[0]).value = f[1] || '';
+		});
 		updateSummary();
 	}
 
@@ -1563,7 +1568,10 @@
 			pattern: $('cfg-pattern').value.trim(),
 			proxy: $('cfg-proxy').value.trim(),
 			github_token: $('cfg-token').value,
-			expected_sha256: $('cfg-expected-sha256') ? $('cfg-expected-sha256').value.trim() : ''
+			expected_sha256: $('cfg-expected-sha256') ? $('cfg-expected-sha256').value.trim() : '',
+			repo_url: $('cfg-repo-url') ? $('cfg-repo-url').value.trim() : '',
+			build_branch: $('cfg-build-branch') ? $('cfg-build-branch').value.trim() : '',
+			workflow_filter: $('cfg-workflow-filter') ? $('cfg-workflow-filter').value.trim() : ''
 		};
 		[['dl_workers', 'cfg-workers'], ['dl_chunk_mb', 'cfg-chunk'],
 		 ['dl_stall_sec', 'cfg-stall'], ['dl_retries', 'cfg-retries'],
@@ -1992,12 +2000,391 @@
 		});
 	}
 
+	/* ---------------- 四套独立状态模型 / 统一诊断层 (v2.6) ----------------
+	 * 只读渲染：get_states 只读取 /tmp 下的独立缓存文件，不消耗 GitHub 额度。
+	 * 刷新走 refresh_states（detached），再有限次读取缓存，避免高频轮询。
+	 * 所有状态同时用「文字 + data-state」表达，不依赖颜色单独区分。 */
+
+	var statesBusy = false;      // 请求去重：同一时刻只允许一个 get_states 在途
+	var statesRefreshing = false;
+	var statesBaseline = 0;
+
+	function stSetHtml(id, html) {
+		var el = $(id);
+		if (el) el.innerHTML = html;
+	}
+
+	function stRow(label, value, extraCls) {
+		if (value === undefined || value === null || value === '' || value === 'unknown') return '';
+		return '<div class="ou-st-row' + (extraCls ? ' ' + extraCls : '') + '">' +
+			'<span class="ou-st-key">' + esc(label) + '</span>' +
+			'<span class="ou-st-val">' + esc(value) + '</span></div>';
+	}
+
+	function stBadge(id, state, label) {
+		var el = $(id);
+		if (!el) return;
+		el.setAttribute('data-state', String(state || 'unknown'));
+		el.textContent = label || '未知';
+	}
+
+	function stList(arr, fmt, limit) {
+		if (!Array.isArray(arr) || !arr.length) return '';
+		var out = '', n = Math.min(arr.length, limit || 5);
+		for (var i = 0; i < n; i++) out += fmt(arr[i]);
+		if (arr.length > n) out += '<p class="ou-st-more">还有 ' + (arr.length - n) + ' 项…</p>';
+		return out;
+	}
+
+	function stApiNote(api) {
+		if (!api) return '';
+		var bits = [];
+		if (api.status === 'rate_limited') bits.push('API 限流');
+		else if (api.status === 'error') bits.push('查询失败');
+		else if (api.status === 'cached') bits.push('缓存命中');
+		else if (api.status === 'ok') bits.push('实时数据');
+		else bits.push('未查询');
+		if (api.stale) bits.push('数据已过期，非实时');
+		if (api.last_success_local) bits.push('上次成功 ' + api.last_success_local);
+		if (api.error) bits.push(api.error);
+		return '<p class="ou-st-api" data-status="' + esc(api.status || '') + '">' +
+			esc(bits.join(' · ')) + '</p>';
+	}
+
+	function renderActions(a) {
+		if (!a) return;
+		stBadge('st-actions-state', a.state, a.state_label);
+		var h = '<p class="ou-st-lead">' + esc(a.detail || '') + '</p>';
+		var lb = a.latest_build;
+		if (lb && lb.workflow_name) {
+			h += '<div class="ou-st-kv">' +
+				stRow('Workflow', lb.workflow_name) +
+				stRow('状态', lb.state_label) +
+				stRow('分支', lb.branch) +
+				stRow('Commit', lb.sha ? String(lb.sha).substring(0, 10) : '') +
+				stRow('触发方式', lb.event) +
+				stRow('开始时间', lb.started_at_local || lb.created_at_local) +
+				stRow('完成时间', lb.completed_at_local) +
+				(lb.html_url ? '<div class="ou-st-row"><a class="ou-file-text" href="' + esc(lb.html_url) +
+					'" target="_blank" rel="noopener">在 GitHub 查看本次运行 ↗</a></div>' : '') +
+				'</div>';
+		}
+		if (a.runs && a.runs.length > 1) {
+			h += '<details class="ou-st-details"><summary>全部运行记录 (' + a.runs.length + ')</summary>' +
+				stList(a.runs, function (r) {
+					return '<div class="ou-st-mini"><span class="ou-file-text">' + esc(r.workflow_name) +
+						'</span><span class="ou-st-mini-state" data-state="' + esc(r.state) + '">' +
+						esc(r.state_label) + '</span><span>' + esc(r.branch) + '</span></div>';
+				}, 10) + '</details>';
+		}
+		if (a.workflow_count) h += '<p class="ou-st-foot">自动发现 ' + a.workflow_count + ' 个 Workflow，' +
+			a.run_count + ' 条运行记录' +
+			(a.workflow_filter ? '（已按 ' + esc(a.workflow_filter) + ' 筛选）' : '') + '</p>';
+		h += stApiNote(a.api);
+		stSetHtml('st-actions-body', h);
+	}
+
+	function renderReleases(r) {
+		if (!r) return;
+		stBadge('st-releases-state', r.state, r.state_label);
+		var h = '<p class="ou-st-lead">' + esc(r.detail || '') + '</p>';
+		if (r.latest && r.latest.tag_name) {
+			h += '<div class="ou-st-kv">' +
+				stRow('Release', r.latest.name || r.latest.tag_name) +
+				stRow('Tag', r.latest.tag_name) +
+				stRow('发布时间', r.latest.published_at_local) +
+				stRow('预发布', r.latest.prerelease ? '是' : '否') +
+				stRow('资产数', r.latest.asset_count) +
+				(r.latest.html_url ? '<div class="ou-st-row"><a class="ou-file-text" href="' +
+					esc(r.latest.html_url) + '" target="_blank" rel="noopener">查看 Release ↗</a></div>' : '') +
+				'</div>';
+		}
+		if (r.releases && r.releases.length > 1) {
+			h += '<details class="ou-st-details"><summary>全部 Release (' + r.releases.length + ')</summary>' +
+				stList(r.releases, function (rel) {
+					return '<div class="ou-st-mini"><span class="ou-file-text">' + esc(rel.tag_name) +
+						'</span><span>' + esc(rel.published_at_local || '') + '</span><span>' +
+						(rel.prerelease ? '预发布' : '正式') + '</span></div>';
+				}, 10) + '</details>';
+		}
+		h += '<p class="ou-st-foot">资产合计 ' + (r.total_assets || 0) +
+			' 个，其中识别为固件候选 ' + (r.total_firmware_candidates || 0) + ' 个</p>';
+		h += stApiNote(r.api);
+		stSetHtml('st-releases-body', h);
+	}
+
+	function renderArtifacts(t) {
+		if (!t) return;
+		stBadge('st-artifacts-state', t.state, t.state_label);
+		var h = '<p class="ou-st-lead">' + esc(t.detail || '') + '</p>';
+		if (t.artifacts && t.artifacts.length) {
+			h += stList(t.artifacts, function (a) {
+				return '<div class="ou-st-art"><span class="ou-file-text">' + esc(a.name) + '</span>' +
+					'<span>' + esc(a.size_human) + '</span>' +
+					'<span>' + (a.expired ? '已过期' : '未过期') + '</span>' +
+					'<span>' + (a.downloadable ? '可下载' : '匿名不可下载') + '</span>' +
+					'<span class="ou-st-art-time">' + esc(a.expires_at_local || '') + '</span></div>';
+			}, 6);
+			h += '<p class="ou-st-foot">未过期 ' + (t.usable_count || 0) + ' 个 / 已过期 ' +
+				(t.expired_count || 0) + ' 个 / 可下载 ' + (t.downloadable_count || 0) + ' 个</p>';
+		}
+		h += '<p class="ou-st-note">Artifact 会过期，且内部文件必须下载后安全解析，名称不足以判定固件。</p>';
+		h += stApiNote(t.api);
+		stSetHtml('st-artifacts-body', h);
+	}
+
+	function renderCompat(c) {
+		if (!c) return;
+		stBadge('st-compat-state', c.state, c.state_label);
+		var h = '<p class="ou-st-lead">' + esc(c.detail || '') + '</p>';
+		if (c.checks && c.checks.length) {
+			h += stList(c.checks, function (chk) {
+				var layers = '';
+				if (chk.layers && chk.layers.length) {
+					layers = '<div class="ou-st-layers">' + chk.layers.map(function (l) {
+						return '<span class="ou-st-layer" data-passed="' + (l.passed ? '1' : '0') + '">' +
+							'L' + l.layer + ' ' + esc(l.name) + (l.passed ? ' ✓' : ' · 待验证') + '</span>';
+					}).join('') + '</div>';
+				}
+				return '<div class="ou-st-fw"><span class="ou-file-text">' + esc(chk.name) + '</span>' +
+					'<span class="ou-st-fw-state" data-state="' + esc(chk.state) + '">' +
+					esc(chk.state_label) + '</span><span>' + esc(chk.match_level_label) + '</span>' +
+					'<p class="ou-st-fw-reason">' + esc(chk.reason) + '</p>' + layers + '</div>';
+			}, 4);
+		}
+		h += '<p class="ou-st-foot">' + (c.can_upgrade ? '允许进入刷写流程' : '暂不允许自动刷写') +
+			' · 本机 ' + (c.supports_sysupgrade_test ? '支持' : '不支持') + ' sysupgrade -T 预检</p>';
+		h += stApiNote(c.api);
+		stSetHtml('st-compat-body', h);
+	}
+
+	function renderDeviceInfo(d) {
+		if (!d) return;
+		stBadge('st-device-state', d.complete ? 'ok' : 'warning', d.complete ? '信息完整' : '部分未知');
+		var compat = Array.isArray(d.compatible) ? d.compatible.join(', ') : d.compatible;
+		var methods = Array.isArray(d.upgrade_methods) ? d.upgrade_methods.join(', ') : d.upgrade_methods;
+		var h = '<div class="ou-st-kv ou-st-kv-device">' +
+			stRow('设备型号', d.model) + stRow('board_name', d.board_name) +
+			stRow('Device Tree Compatible', compat) +
+			stRow('Target', d.target) + stRow('Subtarget', d.subtarget) +
+			stRow('CPU 架构', d.cpu_arch) + stRow('Package Arch', d.pkg_arch) +
+			stRow('ABI', d.abi) + stRow('发行版', d.distro) +
+			stRow('固件版本', d.firmware_version) + stRow('内核版本', d.kernel_version) +
+			stRow('系统标识', d.system_id) + stRow('固件平台', d.platform) +
+			stRow('支持的升级方式', methods) + '</div>';
+		if (d.unknown_fields && d.unknown_fields.length)
+			h += '<p class="ou-st-note">以下字段未能识别，已保留未知（未推测）：' +
+				esc(d.unknown_fields.join('、')) + '</p>';
+		stSetHtml('st-device-body', h);
+	}
+
+	function renderNetwork(net, policy) {
+		var state = 'not_checked', label = '未检测';
+		var h = '';
+		if (net) {
+			state = net.class || 'unknown';
+			label = net.label || '未知';
+			h = '<div class="ou-st-kv">' +
+				stRow('检测结果', net.label) + stRow('说明', net.detail) +
+				stRow('HTTP 状态', net.http_status ? String(net.http_status) : '') +
+				stRow('耗时', net.latency_ms ? net.latency_ms + ' ms' : '') +
+				stRow('上次成功', net.last_success_local) +
+				(net.stale ? stRow('数据状态', '缓存/已过期，非实时') : '') + '</div>';
+		} else {
+			h = '<p class="ou-st-empty">尚未执行网络连通性检测（真实 HTTP 请求，非 Ping）</p>';
+		}
+		if (policy) {
+			h += '<p class="ou-st-foot">线路策略：' +
+				(policy.api_via_proxy ? 'API 可经加速源' : 'API 默认直连 api.github.com') +
+				' · 下载加速源优先、失败回退官方 · TLS 校验' +
+				(policy.tls_verification_disabled ? '已关闭（异常）' : '开启') +
+				' · 并发上限 ' + policy.max_concurrency + '</p>';
+		}
+		stBadge('st-network-state', state, label);
+		stSetHtml('st-network-body', h);
+	}
+
+	function renderDiagnostics(diag) {
+		if (!diag) return;
+		var sev = diag.severity || 'unknown';
+		var box = $('st-diag');
+		if (box) box.setAttribute('data-severity', sev);
+		setText('st-diag-severity', diag.severity_label || '未知');
+		setText('st-diag-summary', diag.summary || '暂无诊断结论');
+		var h = '';
+		if (diag.blocking_reasons && diag.blocking_reasons.length) {
+			h += '<div class="ou-st-diag-block"><strong>无法升级的原因</strong><ul>' +
+				diag.blocking_reasons.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') +
+				'</ul></div>';
+		}
+		if (diag.next_actions && diag.next_actions.length) {
+			h += '<div class="ou-st-diag-next"><strong>建议下一步</strong><ol>' +
+				diag.next_actions.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') +
+				'</ol></div>';
+		}
+		if (diag.sections && diag.sections.length) {
+			h += '<details class="ou-st-details" id="st-diag-sections"><summary>完整诊断明细（' +
+				diag.sections.length + ' 项）</summary>';
+			for (var i = 0; i < diag.sections.length; i++) {
+				var s = diag.sections[i];
+				h += '<div class="ou-st-diag-sec" data-severity="' + esc(s.severity) + '">' +
+					'<div class="ou-st-diag-sec-title">' + esc(s.title) + ' · ' + esc(s.severity_label) + '</div>' +
+					'<p>' + esc(s.text) + '</p></div>';
+			}
+			h += '</details>';
+		}
+		stSetHtml('st-diag-body', h);
+	}
+
+	function renderStates(st) {
+		if (!st || st.ok === false) {
+			hint('states-hint', (st && st.error) ? ('读取状态失败: ' + st.error +
+				(st.hint ? '。' + st.hint : '')) : '读取状态失败', 'err');
+			return;
+		}
+		statesBaseline = Number(st.generated_at) || 0;
+		renderDiagnostics(st.diagnostics);
+		renderActions(st.actions);
+		renderReleases(st.releases);
+		renderArtifacts(st.artifacts);
+		renderCompat(st.compat);
+		renderDeviceInfo(st.device);
+		renderNetwork(st.network, st.policy);
+
+		var fresh = (st.model_freshness || st.diagnostics && st.diagnostics.model_freshness) || [];
+		var staleCount = 0;
+		for (var i = 0; i < fresh.length; i++) if (fresh[i].stale) staleCount++;
+		var pill = $('st-freshness-pill');
+		if (pill) {
+			pill.setAttribute('data-state', staleCount ? 'warning' : 'ok');
+			pill.innerHTML = '<span class="ou-dot ' + (staleCount ? '' : 'ok') + '"></span> ' +
+				(staleCount ? (staleCount + ' 套缓存数据') : '状态已同步');
+		}
+		hint('states-hint', '仓库 ' + esc(st.repo || '未配置') + ' · ' +
+			esc(st.generated_at_local || '') + ' · 四套状态独立缓存，API 故障不覆盖真实状态', '');
+	}
+
+	// 请求去重：同一时刻只允许一个 get_states 在途，避免轮询叠加浪费请求。
+	function loadStates() {
+		if (statesBusy) return Promise.resolve(null);
+		statesBusy = true;
+		return ubus('get_states').then(function (st) {
+			renderStates(st);
+			return st;
+		}).catch(function (e) {
+			hint('states-hint', '读取状态失败: ' + e.message, 'err');
+			return null;
+		}).then(function (st) {
+			statesBusy = false;
+			return st;
+		});
+	}
+
+	// 刷新：detached 提交后有限次读取缓存（最多 4 次，约 8 秒），
+	// 不做无限轮询；用户可随时点「读取缓存」手动刷新。
+	function refreshStates(force) {
+		if (statesRefreshing) return;
+		statesRefreshing = true;
+		setBusy('btn-states-refresh', true, '刷新中...');
+		hint('states-hint', '已提交状态刷新，正在等待各模型独立写入缓存...', '');
+		ubus('refresh_states', { model: '', force: !!force }).then(function (r) {
+			if (r && r.ok === false) {
+				hint('states-hint', '刷新被拒绝: ' + (r.error || ''), 'err');
+				statesRefreshing = false;
+				setBusy('btn-states-refresh', false, '刷新状态');
+				return;
+			}
+			var tries = 0;
+			var tick = function () {
+				tries++;
+				loadStates().then(function () {
+					if (tries >= 4) {
+						statesRefreshing = false;
+						setBusy('btn-states-refresh', false, '刷新状态');
+						applyMobileSections();
+						return;
+					}
+					setTimeout(tick, 2000);
+				});
+			};
+			setTimeout(tick, 1800);
+		}).catch(function (e) {
+			hint('states-hint', '刷新请求失败: ' + e.message, 'err');
+			statesRefreshing = false;
+			setBusy('btn-states-refresh', false, '刷新状态');
+		});
+	}
+
+	/* ---------------- 诊断工具（v2.6） ---------------- */
+
+	// 从当前表单取仓库地址：通用地址 > 旧 owner/repo > 粘贴的完整 URL
+	function currentRepoSpec() {
+		var ids = ['cfg-repo-url', 'cfg-repo', 'cfg-url'];
+		for (var i = 0; i < ids.length; i++) {
+			var el = $(ids[i]);
+			if (el && el.value.trim()) return el.value.trim();
+		}
+		return '';
+	}
+
+	function probeRepo() {
+		var repo = currentRepoSpec();
+		if (!repo) { hint('states-hint', '请先在「仓库配置」中填写仓库地址', 'err'); return; }
+		setBusy('btn-probe-repo', true, '校验中...');
+		hint('states-hint', '正在校验仓库地址并读取公开信息...', '');
+		ubus('probe_repo', { repo: repo }).then(function (r) {
+			if (r && r.ok) {
+				var meta = r.repo || {};
+				var wf = (r.workflows && r.workflows.length) || 0;
+				hint('states-hint', '仓库可用：' + esc(meta.slug || (r.parsed && r.parsed.slug) || repo) +
+					(meta.default_branch ? (' · 默认分支 ' + esc(meta.default_branch)) : '') +
+					' · 发现 ' + wf + ' 个公开 Workflow', 'ok');
+			} else {
+				hint('states-hint', '仓库校验失败：' + esc((r && r.error) || '未知错误'), 'err');
+			}
+		}).catch(function (e) {
+			hint('states-hint', '仓库校验请求失败: ' + e.message, 'err');
+		}).then(function () {
+			setBusy('btn-probe-repo', false, '校验仓库');
+		});
+	}
+
+	function runNetcheck() {
+		setBusy('btn-netcheck', true, '检测中...');
+		hint('states-hint', '正在执行真实 HTTP 连通性探测...', '');
+		ubus('netcheck', { force: true }).then(function (r) {
+			var ok = r && (r.class === 'ok' || r.label === '正常');
+			hint('states-hint', '网络检测：' + esc((r && r.label) || '未知') +
+				' — ' + esc((r && r.detail) || '') +
+				((r && r.http_status) ? (' (HTTP ' + r.http_status + ')') : ''), ok ? 'ok' : 'err');
+			loadStates();
+		}).catch(function (e) {
+			hint('states-hint', '网络检测请求失败: ' + e.message, 'err');
+		}).then(function () {
+			setBusy('btn-netcheck', false, '网络检测');
+		});
+	}
+
+	function clearStatesCache() {
+		setBusy('btn-clear-states', true, '清理中...');
+		ubus('clear_states_cache').then(function (r) {
+			hint('states-hint', '已清空 ' + ((r && r.cleared) || 0) +
+				' 份状态缓存；固件文件、任务历史与运行日志不受影响', 'ok');
+			loadStates();
+		}).catch(function (e) {
+			hint('states-hint', '清空缓存失败: ' + e.message, 'err');
+		}).then(function () {
+			setBusy('btn-clear-states', false, '清空状态缓存');
+		});
+	}
+
 	/* ---------------- 手机端信息密度 ---------------- */
 
 	// 手机端默认收起下载任务、备份、仓库配置与运行日志，只保留标题和展开入口。
 	// 桌面端完全不受影响；按钮由 JS 动态插入，模板里不增加额外结构。
 	var MOBILE_MQ = window.matchMedia('(max-width: 760px)');
 	var MOBILE_SECTIONS = [
+		['card-states', '远程状态与诊断'],
 		['card-backup', '备份与恢复'],
 		['card-config', '仓库配置'],
 		['card-log', '运行日志']
@@ -2085,6 +2472,12 @@
 		$('evidence-toggle').addEventListener('click', function () {
 			setEvidenceExpanded(!$('check-evidence').classList.contains('is-open'));
 		});
+		// 四套状态模型 / 诊断层：只读加载缓存，刷新走独立 detached 命令
+		$('btn-states-refresh') && $('btn-states-refresh').addEventListener('click', function () { refreshStates(false); });
+		$('btn-states-reload') && $('btn-states-reload').addEventListener('click', function () { loadStates(); });
+		$('btn-probe-repo') && $('btn-probe-repo').addEventListener('click', probeRepo);
+		$('btn-netcheck') && $('btn-netcheck').addEventListener('click', runNetcheck);
+		$('btn-clear-states') && $('btn-clear-states').addEventListener('click', clearStatesCache);
 		bindDialog();
 		applyMobileSections();
 		setupPluginCollapse();
@@ -2098,6 +2491,8 @@
 		});
 
 		refreshLog();
+		// 只读取缓存，不发起 GitHub 请求；避免与其它初始化请求叠加触发限流
+		loadStates();
 		loadPluginInfo();
 		ubus('get_plugin_status').then(function (st) {
 			if (renderPluginStatus(st)) startPluginPoll();
