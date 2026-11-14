@@ -23,6 +23,8 @@
 
 ---
 
+> 本文档对应插件版本 **2.6.7**。
+
 ## 简介
 
 `luci-app-online-upgrade` 是专为 ImmortalWrt 与 OpenWrt 路由器打造的在线固件检测与一键升级插件。
@@ -218,27 +220,191 @@
 
 ## 使用向导
 
-### 步骤一：填入或识别仓库
-1. 进入 LuCI 菜单：**系统** → **在线升级**。
-2. 在「**1. 固件仓库来源**」中直接粘贴您的 GitHub Release 网址、仓库网址或 `owner/repo`（如 `LianXia233/OpenWRT-CI`），点击「**识别**」。系统将自动解析仓库名并设定 Release 追踪规则。
+> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.7 实际界面为准。
 
-### 步骤二：选择目标固件文件（自动过滤小文件）
-1. 点击「**获取固件列表**」。
-2. 系统会自动请求该仓库最新的 Release 产物附件，**并自动过滤掉所有小于 15MB 的配置文件和辅助文本**。
-3. 从下拉菜单中点选您设备对应的固件型号（如 `xxx-sysupgrade.bin`），点击「**使用此文件 → 生成规则**」，插件将自动生成精准的匹配规则。
+### 步骤一：填写固件仓库
 
-### 步骤三：选择加速代理并保存
-1. 在「**3. 下载加速代理**」中，可直接点击已实测可用的节点按钮（`gh.acg2.mom`、`ghfast.top`、`ghproxy.net` 等 7 个）或「直连 GitHub」快速填入代理，国内网络环境强烈推荐启用。
-2. 下载任务的开始 / 暂停 / 继续 / 取消与历史删除在「**下载任务管理**」卡片操作；慢速保护阈值可在「高级配置」中调整（默认低于 32 KB/s 持续 15 秒自动停止）。
-3. 点击「**保存配置**」，此时当前配置已被持久化至路由器的 UCI 配置文件中。
+1. 打开「在线升级」页面，在仓库输入框中粘贴 GitHub Release 链接、仓库链接或 `owner/repo`（例如 `LianXia233/OpenWRT-CI`）。
+2. 点击「识别」，插件会解析出 `repo` 与 `tag`；也可以直接填写高级配置里的 `repo_url`。
+3. 点击「保存配置」，写入 `/etc/config/online-upgrade` 的 `settings` 段。
 
-### 步骤四：一键检测与极速升级
-1. 点击「**检查更新**」按钮，系统开始向 GitHub 查询最新版本。
-2. 查看「**检测依据与规则**」全宽卡片，确认目标版本、发布日期与本地固件比对信息。
-3. 点击「**一键在线升级**」：
-   - 系统自动为当前路由器的网络、密码、插件等配置创建备份压缩包；
-   - 启动多线程分段极速下载，在页面可实时观测下载速度与进度条；
-   - 下载校验完成后自动调用 `sysupgrade -f` 刷写固件并重启路由器。
+### 步骤二：获取固件列表并生成匹配规则
+
+1. 点击「获取固件列表」，插件读取目标 Release 的资产列表。
+2. 默认过滤小于 **15 MB** 的文件（`min_size_mb`，可设为 0 关闭），避免把 `sha256sums`、说明文本当成固件。
+3. 在下拉框选择本机固件，点击「使用此文件 → 生成规则」，`firmware_pattern` 会被写成该文件名的正则。
+4. 再次「保存配置」。规则保存在 `online-upgrade.settings.firmware_pattern`，检测与下载都以它为准。
+
+### 步骤三：选择加速代理与高级配置
+
+1. 「下载加速代理」提供若干实测节点与「直连 GitHub」，对应 `proxy`；下载链路加速源优先，失败自动回退官方直连。
+2. 展开「高级配置」，可修改并发线程、分块大小、停滞超时、重试、最小体积、慢速保护、Token、期望 SHA256 等。
+3. 本版本新增的高级项：
+
+| 界面字段 / UCI 键 | 默认值 | 取值范围 | 实际作用 |
+| :--- | :--- | :--- | :--- |
+| 升级时保留配置 `keep_config` | `1` | `0` / `1` | `1` 时刷写使用 `sysupgrade -f` 保留现有配置；`0` 为全新刷入 |
+| GitHub API 走加速源 `api_via_proxy` | `0` | `0` / `1` | `1` 时 API 也经 `proxy` 前缀转发；多数镜像不支持 `api.github.com`，默认直连 |
+| API 超时 `api_timeout` | `25` | `5`–`120` 秒 | 单次 GitHub API 请求的整体超时，超时后按失败/重试策略处理 |
+| Actions 缓存 `ttl_actions` | `120` | `15`–`86400` 秒 | 远程构建状态在缓存内直接复用，不重复请求 |
+| Releases 缓存 `ttl_releases` | `300` | `15`–`86400` 秒 | 正式发布列表的缓存时长 |
+| Artifacts 缓存 `ttl_artifacts` | `180` | `15`–`86400` 秒 | 临时构建产物的缓存时长 |
+| 兼容性缓存 `ttl_compat` | `600` | `15`–`86400` 秒 | 五层兼容性判定结果的缓存时长 |
+| 网络探测缓存 `ttl_network` | `60` | `15`–`86400` 秒 | GitHub API 连通性探测结果的缓存时长 |
+
+> `enabled` 是内部开关（默认 `0`），界面**不提供**修改入口，保持默认即可；不要把它当成“启用插件”的开关手动改成 `1`。
+
+4. 修改后点击「保存配置」立即生效；状态缓存相关项在下次刷新或 TTL 到期后体现。
+
+### 步骤四：检查更新与升级
+
+1. 点击「检查更新」：先强制刷新 Actions / Releases / Artifacts / Compat / Network 四套状态，再执行版本检测，结论与「远程状态与统一诊断」同源同刻。
+2. 查看「检测依据与规则」：目标版本、资产名、大小、SHA256、本机版本来源（强/弱依据）都会列出。
+3. 存在新版本时会出现「立即升级」：下载 → SHA256 校验 → `sysupgrade -T` 预检 → 备份配置 → 刷写。仅想验证下载链路时，可用「下载任务管理」里的「开始下载」，它只下载与校验，**不刷写**。
+4. 同版本重装不会出现在普通升级入口，需要用命令行 `online-upgrade upgrade --force` 显式强制。
+
+### 任务状态与清理规则
+
+| 场景 | 任务终态 | 临时文件 | 状态文件 |
+| :--- | :--- | :--- | :--- |
+| 正常完成 | `done` | 固件保留（等待刷写）；插件安装包删除 | `downloaded`，删除任务后复位 `idle` |
+| 暂停 | `paused` | 保留，可「继续」断点续传 | `paused` |
+| 取消 | `aborted`（原因“用户取消下载”） | **删除**镜像与 `.parts.json` | 复位 `idle` |
+| 网络/校验失败 | `failed` | 保留半成品，便于重新开始下载时复用 | `failed` |
+| 进程被强杀 / 断电 | `failed`（原因“下载进程已退出…”） | **删除**镜像、续传文件与残留锁 | 复位 `idle` |
+
+- 任务进度按 **1 秒**节流写入，任务表百分比与顶部进度条一致。
+- 删除任务会回收任务记录与残留文件；删掉最后一个任务后状态文件回到 `idle`，不会出现“暂无任务 + 正在下载”并存。
+
+### 步骤五：固件云编译预设配置向导（Firmware Builder Preset Guide）
+
+> 这是一个**编译期集成指南**，不是界面里的独立向导。目标是把仓库、匹配规则等预设写进固件，刷入后打开页面即可直接「检查更新」。运行时的等价入口是页面里的「高级配置」。
+
+#### 5.1 生效链路
+
+```text
+编译期写入 /etc/config/online-upgrade
+        │（若用 uci-defaults：首次开机执行一次，成功后脚本自删）
+        ▼
+插件读取 online-upgrade.settings
+        ▼
+页面「高级配置」回填 → 「检查更新」按预设仓库/规则检测
+```
+
+#### 5.2 方案一：`files/` 目录直接覆盖（推荐）
+
+1. 在固件源码根目录建立目录：
+   ```bash
+   mkdir -p files/etc/config
+   ```
+2. 新建 `files/etc/config/online-upgrade`，内容示例：
+   ```uci
+   config online-upgrade 'settings'
+   	option repo 'your-username/your-firmware-repo'
+   	option tag 'latest'
+   	option firmware_pattern 'H5000M-.*-sysupgrade\.bin'
+   	option proxy 'https://gh.acg2.mom/'
+   	option keep_config '1'
+   	option min_size_mb '15'
+   	option dl_workers '6'
+   	option dl_chunk_mb '4'
+   	option dl_stall_sec '30'
+   	option dl_retries '3'
+   	option dl_min_speed_kb '32'
+   	option dl_slow_window_sec '15'
+   	option dl_slow_grace_sec '10'
+   	option api_via_proxy '0'
+   	option api_timeout '25'
+   	option ttl_actions '120'
+   	option ttl_releases '300'
+   	option ttl_artifacts '180'
+   	option ttl_compat '600'
+   	option ttl_network '60'
+   ```
+3. 字段含义：`repo` 为 `owner/repo`；`tag` 支持 `latest`、`latest@^前缀` 或具体 tag；`firmware_pattern` 是 ERE 正则，反斜杠需写成 `\.`；`proxy` 留空则直连。
+4. 打包后文件位于固件的 `/etc/config/online-upgrade`，权限应为 `644 root:root`，编码 UTF-8、行尾 LF。
+5. 不要写 `enabled`：它是内部开关，保持默认 `0`。
+
+#### 5.3 方案二：`uci-defaults` 首次开机脚本（适合多机型）
+
+1. 建立脚本：
+   ```bash
+   mkdir -p files/etc/uci-defaults
+   cat > files/etc/uci-defaults/99-default-online-upgrade <<'EOF'
+   #!/bin/sh
+   BOARD_NAME="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
+   case "$BOARD_NAME" in
+       *h5000m*) PAT='H5000M-.*-sysupgrade\.bin' ;;
+       *x86*)    PAT='.*-x86-64-.*-combined-efi\.img\.gz' ;;
+       *)        PAT='immortalwrt-.*-sysupgrade\.bin' ;;
+   esac
+   uci -q batch <<EOC
+   set online-upgrade.settings.repo='your-username/your-firmware-repo'
+   set online-upgrade.settings.tag='latest'
+   set online-upgrade.settings.firmware_pattern='$PAT'
+   set online-upgrade.settings.proxy='https://gh.acg2.mom/'
+   set online-upgrade.settings.keep_config='1'
+   commit online-upgrade
+   EOC
+   exit 0
+   EOF
+   chmod 755 files/etc/uci-defaults/99-default-online-upgrade
+   ```
+2. 注意 section 名必须是 `settings`（`online-upgrade.settings.xxx`），不是 `main`。
+3. 脚本在首次开机运行一次，成功后由系统删除；配置固化在 `/etc/config/online-upgrade`。
+4. 脚本必须 LF 行尾、`755` 权限，否则 BusyBox ash 可能拒绝执行。
+
+#### 5.4 方案三：GitHub Actions 云编译注入
+
+在云编译模板的 `diy-part1.sh` / `diy-part2.sh` 中追加写入。P3TERX 模板使用 `files/`，其他模板可能是 `package/base-files/files/`，按模板实际根目录选择：
+
+```bash
+mkdir -p files/etc/uci-defaults
+cat > files/etc/uci-defaults/99-default-online-upgrade <<'EOF'
+#!/bin/sh
+uci -q batch <<EOC
+set online-upgrade.settings.repo='your-username/your-firmware-repo'
+set online-upgrade.settings.tag='latest'
+set online-upgrade.settings.firmware_pattern='immortalwrt-.*-sysupgrade\.bin'
+set online-upgrade.settings.proxy='https://gh.acg2.mom/'
+set online-upgrade.settings.keep_config='1'
+commit online-upgrade
+EOC
+exit 0
+EOF
+chmod 755 files/etc/uci-defaults/99-default-online-upgrade
+```
+
+#### 5.5 方案四：把插件加入编译源码树
+
+1. `feeds.conf.default` 追加：
+   ```text
+   src-git onlineupgrade https://github.com/LianXia233/luci-app-online-upgrade.git;main
+   ```
+2. 更新并安装：
+   ```bash
+   ./scripts/feeds update onlineupgrade
+   ./scripts/feeds install -a -p onlineupgrade
+   ```
+3. `make menuconfig` → `LuCI` → `3. Applications` → `<*>` `luci-app-online-upgrade`；云编译可 `echo "CONFIG_PACKAGE_luci-app-online-upgrade=y" >> .config`。
+
+#### 5.6 刷入后验证
+
+```bash
+uci show online-upgrade | grep -E 'repo|tag|firmware_pattern|keep_config|api_|ttl_'
+ls -l /etc/config/online-upgrade        # 应为 644 root:root
+ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存在
+```
+
+页面「高级配置」应看到同样的值；点击「检查更新」应直接命中预设仓库与规则。若为空，先确认文件路径与 section 名是否正确。
+
+#### 5.7 常见坑
+
+- 把 `enabled` 当成“启用开关”写成 `1`：界面不提供该项，保持默认。
+- 写成 `online-upgrade.main=...`：section 必须是 `settings`。
+- 正则没有转义：`sysupgrade.bin` 中的 `.` 会匹配任意字符，建议写成 `\.bin`。
+- `uci-defaults` 只在首次启动执行一次；改脚本后需重新刷机或手动执行。
+- 预设里 `keep_config='0'` 会导致升级后配置不保留，确认需求后再改。
 
 ---
 
@@ -468,14 +634,14 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 
 | 配置项 | 类型 | 默认值 | 说明与示例 |
 | :--- | :--- | :--- | :--- |
-| `enabled` | bool | `0` | 是否启用在线升级配置：`1` 为启用，`0` 为禁用 |
+| `enabled` | bool | `0` | **内部开关**：界面不提供修改入口，保持默认 `0` 即可；不要把它当作“启用插件”的开关 |
 | `repo` | string | 空 | GitHub 仓库路径，格式为 `owner/repo`（如 `LianXia233/OpenWRT-CI`） |
 | `tag` | string | `latest` | Release 追踪策略：<br>• `latest`：追踪最新发布的 Release；<br>• `latest@^前缀`：按前缀过滤目标机型最新 Release（如 `latest@^H5000M`）；正则写错会**直接报错并中止检测**（不会退化成“不过滤”而在全部 Release 里挑）；<br>• 具体 Tag 名（如 `v2026.11`） |
 | `firmware_pattern` | string | 空 | 目标固件文件名匹配的正则表达式（如 `immortalwrt-.*-sysupgrade\.bin`） |
 | `proxy` | string | `https://gh.acg2.mom/` | GitHub 文件与 API 加速反代节点，留空则直连 GitHub |
 | `min_size_mb` | integer | `15` | **最小固件体积阈值 (MB)**：获取列表与检测匹配时自动忽略小于此体积的文件（过滤 metadata/txt/sha256），设为 `0` 则不限制 |
 | `expected_sha256` | string | 空 | 固件 SHA-256 校验和（64 位十六进制）：<br>• **留空（推荐）**：依次尝试 Release 附件 `sha256sums` / `sha256sums.txt` / `<固件>.sha256` 与 Release 说明正文；<br>• **手动填写**：强制使用该值校验，不一致则自动阻断刷写。<br>三种来源都没有哈希时界面会标注「无校验依据，仅记录本地哈希」，不假装校验通过 |
-| `keep_config` | bool | `1` | 升级时是否调用 `sysupgrade -f` 保留现有配置（`1`=保留配置，`0`=完全全新刷入） |
+| `keep_config` | bool | `1` | 升级时是否调用 `sysupgrade -f` 保留现有配置（`1`=保留配置，`0`=完全全新刷入）；界面「高级配置」可改 |
 | `dl_workers` | integer | `6` | 并发下载线程数（范围 1~16，建议 4~8；不支持 Range 的节点自动平滑降级为单线程） |
 | `dl_chunk_mb` | integer | `4` | 动态分段切片大小（MB），默认 4MB |
 | `dl_stall_sec` | integer | `30` | 分块传输停滞超时看门狗阈值（秒），分片停滞时自动重调度与故障转移 |
@@ -488,15 +654,15 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | `repo_url` | string | 空 | **v2.6** 通用仓库地址，支持 `owner/repo`、完整 GitHub URL、`/tree/<分支>`、`.git`、SSH 形式；留空时回退旧 `repo` 字段，保证历史配置兼容 |
 | `build_branch` | string | 空 | **v2.6** Actions 构建分支筛选；留空跟随仓库默认分支。仅筛选运行记录，不影响 Release 资产 |
 | `workflow_filter` | string | 空 | **v2.6** Actions Workflow 名称子串筛选；留空显示全部公开工作流 |
-| `api_via_proxy` | bool | `0` | **v2.6** 是否让 API 也走加速源。默认关闭（多数加速源不支持 API），下载链路仍保持加速源优先 |
-| `api_timeout` | integer | `25` | **v2.6** GitHub API 请求超时（秒），`0` 恢复默认 |
-| `ttl_actions` | integer | `120` | **v2.6** Actions 模型独立缓存 TTL（秒），`0` 恢复默认 |
-| `ttl_releases` | integer | `300` | **v2.6** Releases 模型独立缓存 TTL（秒），`0` 恢复默认 |
-| `ttl_artifacts` | integer | `180` | **v2.6** Artifacts 模型独立缓存 TTL（秒），`0` 恢复默认 |
-| `ttl_compat` | integer | `600` | **v2.6** 兼容性模型独立缓存 TTL（秒），`0` 恢复默认 |
-| `ttl_network` | integer | `60` | **v2.6** 网络探测结果缓存 TTL（秒），`0` 恢复默认 |
+| `api_via_proxy` | bool | `0` | **v2.6** 是否让 API 也走加速源。默认关闭（多数加速源不支持 API），下载链路仍保持加速源优先；界面可改 |
+| `api_timeout` | integer | `25` | **v2.6** GitHub API 请求超时（秒），范围 5–120；界面可改 |
+| `ttl_actions` | integer | `120` | **v2.6** Actions 模型独立缓存 TTL（秒），范围 15–86400；界面可改 |
+| `ttl_releases` | integer | `300` | **v2.6** Releases 模型独立缓存 TTL（秒），范围 15–86400；界面可改 |
+| `ttl_artifacts` | integer | `180` | **v2.6** Artifacts 模型独立缓存 TTL（秒），范围 15–86400；界面可改 |
+| `ttl_compat` | integer | `600` | **v2.6** 兼容性模型独立缓存 TTL（秒），范围 15–86400；界面可改 |
+| `ttl_network` | integer | `60` | **v2.6** 网络探测结果缓存 TTL（秒），范围 15–86400；界面可改 |
 
-> 以上 v2.6 字段**全部可选且带中性默认值**；`uci-defaults` 采用「字段缺失才补默认值」策略，升级时绝不覆盖用户已有配置。WebUI 的「高级配置」中可直接填写 `repo_url` / `build_branch` / `workflow_filter`，其余可通过 UCI 命令设置。
+> 以上字段均为可选并带默认值；`uci-defaults` 只在字段缺失时补默认值，升级不会覆盖已有配置。`repo_url` / `build_branch` / `workflow_filter` / `keep_config` / `api_via_proxy` / `api_timeout` / `ttl_*` 均可在 WebUI「高级配置」中修改；`enabled` 仅作内部开关，不提供界面入口。
 
 ### 2. 标准 UCI 配置文件示例 (`/etc/config/online-upgrade`)
 
@@ -529,151 +695,6 @@ config online-upgrade 'settings'
 	option ttl_compat '600'
 	option ttl_network '60'
 ```
-
----
-
-## 固件云编译预设配置向导 (Firmware Builder Preset Guide)
-
-在自编译 OpenWrt / ImmortalWrt 固件时，将本插件编译进固件并**预设好您的 GitHub 仓库与机型规则**，即可实现固件刷入后**开箱即用**：用户无需手动输入仓库地址，进入后台点击「检查更新」即可一键在线平滑升级。
-
-### 方案一：`files/` 目录直接覆盖（推荐，最轻量纯净）
-
-OpenWrt 编译系统原生支持 `files` 目录树自动覆盖打包进根文件系统，这是最规范、无需执行脚本的方法。
-
-1. 在固件源码根目录下创建配置目录：
-   ```bash
-   mkdir -p files/etc/config
-   ```
-2. 创建 `files/etc/config/online-upgrade` 文件并填入您的预设参数：
-   ```uci
-   config online-upgrade 'settings'
-   	option enabled '1'
-   	option repo 'your-username/your-firmware-repo'
-   	option tag 'latest'
-   	option firmware_pattern 'immortalwrt-.*-sysupgrade\.bin'
-   	option proxy 'https://gh.acg2.mom/'
-   	option keep_config '1'
-   	option min_size_mb '15'
-   	option dl_workers '6'
-   	option dl_chunk_mb '4'
-   	option dl_stall_sec '30'
-   	option dl_retries '3'
-   	option dl_min_speed_kb '32'
-   	option dl_slow_window_sec '15'
-   	option dl_slow_grace_sec '10'
-   ```
-   > [!TIP]
-   > 将 `your-username/your-firmware-repo` 替换为存放固件 Release 的 GitHub 仓库；将 `firmware_pattern` 替换为您编译生成的固件文件名正则。
-
----
-
-### 方案二：`uci-defaults` 首次开机自启脚本（适合多机型动态适配）
-
-如果您一套固件源码同时适配多种不同板型，需要根据路由器的实际机型名称（如 `/tmp/sysinfo/model`）动态匹配不同的 Release 文件，推荐使用 `uci-defaults` 脚本。
-
-1. 在固件源码根目录下创建脚本：
-   ```bash
-   mkdir -p files/etc/uci-defaults
-   touch files/etc/uci-defaults/99-default-online-upgrade
-   chmod +x files/etc/uci-defaults/99-default-online-upgrade
-   ```
-2. 编辑 `files/etc/uci-defaults/99-default-online-upgrade`：
-   ```sh
-   #!/bin/sh
-
-   # 获取当前设备板型标识（例如 mediatek,mt7981,h5000m）
-   BOARD_NAME="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
-
-   uci -q batch <<EOF
-   set online-upgrade.main=online-upgrade
-   set online-upgrade.settings.enabled='1'
-   set online-upgrade.settings.repo='your-username/your-firmware-repo'
-   set online-upgrade.settings.tag='latest'
-   set online-upgrade.settings.proxy='https://gh.acg2.mom/'
-   set online-upgrade.settings.keep_config='1'
-   set online-upgrade.settings.min_size_mb='15'
-   set online-upgrade.settings.dl_workers='6'
-   set online-upgrade.settings.dl_chunk_mb='4'
-   set online-upgrade.settings.dl_stall_sec='30'
-   set online-upgrade.settings.dl_retries='3'
-
-   # 可根据机型动态设定不同的匹配正则
-   case "\$BOARD_NAME" in
-       *"h5000m"*)
-           set online-upgrade.settings.firmware_pattern='H5000M-.*-sysupgrade\.bin'
-           ;;
-       *"x86"*)
-           set online-upgrade.settings.firmware_pattern='.*-x86-64-.*-combined-efi\.img\.gz'
-           ;;
-       *)
-           set online-upgrade.settings.firmware_pattern='immortalwrt-.*-sysupgrade\.bin'
-           ;;
-   esac
-
-   commit online-upgrade
-   EOF
-
-   exit 0
-   ```
-   > [!NOTE]
-   > `uci-defaults` 脚本会在路由器初次开机（Firstboot）阶段全自动运行一次，执行成功后系统会自动删除该脚本，配置将永久固化在 `/etc/config/online-upgrade`。
-
----
-
-### 方案三：GitHub Actions 云编译流水线脚本注入（如 P3TERX 模板）
-
-如果您使用 GitHub Actions 自动云编译（例如基于 P3TERX 等主流开源工作流），只需在工作流调用的 `diy-part2.sh`（或自定义执行脚本）末尾追加一段代码即可完成预设注入：
-
-```bash
-# === 在 diy-part2.sh 末尾追加以下内容 ===
-mkdir -p package/base-files/files/etc/uci-defaults
-
-cat << 'EOF' > package/base-files/files/etc/uci-defaults/99-default-online-upgrade
-#!/bin/sh
-uci -q batch << 'EOC'
-set online-upgrade.main=online-upgrade
-set online-upgrade.settings.enabled='1'
-set online-upgrade.settings.repo='your-username/your-firmware-repo'
-set online-upgrade.settings.tag='latest'
-set online-upgrade.settings.firmware_pattern='immortalwrt-.*-sysupgrade\.bin'
-set online-upgrade.settings.proxy='https://gh.acg2.mom/'
-set online-upgrade.settings.keep_config='1'
-set online-upgrade.settings.min_size_mb='15'
-set online-upgrade.settings.dl_workers='6'
-set online-upgrade.settings.dl_chunk_mb='4'
-commit online-upgrade
-EOC
-exit 0
-EOF
-
-chmod +x package/base-files/files/etc/uci-defaults/99-default-online-upgrade
-```
-
----
-
-### 方案四：如何将插件集成到云编译源码中
-
-在编译固件前，需要确保固件源码树中包含本插件。
-
-1. **添加到 feeds.conf.default**：
-   在源码根目录的 `feeds.conf.default`（或云编译的 `diy-part1.sh`）中追加本插件仓库源：
-   ```text
-   src-git onlineupgrade https://github.com/LianXia233/luci-app-online-upgrade.git;main
-   ```
-
-2. **更新与安装 feeds**：
-   ```bash
-   ./scripts/feeds update onlineupgrade
-   ./scripts/feeds install -a -p onlineupgrade
-   ```
-
-3. **在 menuconfig 中勾选插件**：
-   运行 `make menuconfig`，依次进入：
-   `LuCI` ➔ `3. Applications` ➔ 选择 `<*>` `luci-app-online-upgrade`。
-   若希望直接注入 `.config` 文件（适合云编译），在 `diy-part2.sh` 中追加：
-   ```bash
-   echo "CONFIG_PACKAGE_luci-app-online-upgrade=y" >> .config
-   ```
 
 ---
 
@@ -791,6 +812,26 @@ ubus call luci.online-upgrade clear_states_cache                            # �
 <details>
 <summary><b>Q4: 能检查到新版本，但一点「立即升级」就下载失败（如 HTTP 504）？</b></summary>
 这通常是 <code>github.com</code> 网页前端自身故障——Release 下载地址就由它提供。插件会先用你选择的镜像/直连地址，失败后自动回退到 GitHub API 资产直链（走 <code>release-assets.githubusercontent.com</code> 签名 CDN），两条线路都失败才报错。若回退也失败，说明 GitHub API 同时不可用，稍后重试即可。可先在 SSH 里执行 <code>online-upgrade download</code> 单独验证下载链路——它只下载与校验，<b>不会刷机</b>；状态文件里的 <code>dry_run="true"</code> 与 <code>verified</code> 字段可以确认走到了哪一步。
+</details>
+
+<details>
+<summary><b>Q5: 下载中断后怎么重试？还能不能续传？</b></summary>
+先看「下载任务管理」里的任务终态：<br>
+1. <b>网络/校验失败（<code>failed</code>）</b>：半成品会保留，重新点「开始下载」会复用已有分块并重新校验；<br>
+2. <b>进程被强杀 / 断电（<code>failed</code>）</b>：插件会清理镜像、续传文件与残留锁，无法续传，需重新开始下载；<br>
+3. <b>主动取消（<code>aborted</code>）</b>：同样会清理半成品，重新开始即可。<br>
+无论哪种情况，刷写前都必须通过 SHA256 与 <code>sysupgrade -T</code> 预检，不会把半成品写进 Flash。
+</details>
+
+<details>
+<summary><b>Q6: 「暂停」和「取消」有什么区别？</b></summary>
+<b>暂停</b>只停止传输，保留镜像与 <code>.parts.json</code>，点「继续」可从断点恢复；<b>取消</b>则放弃本次下载，任务标记为 <code>aborted</code>，镜像与续传文件会被删除。想稍后继续用「暂停」，确定不要这次下载才用「取消」。
+</details>
+
+<details>
+<summary><b>Q7: 升级后我的配置会保留吗？插件自身配置会不会被覆盖？</b></summary>
+1. 固件升级：由 <code>keep_config</code> 控制，默认 <code>1</code>，刷写时使用 <code>sysupgrade -f</code> 保留 <code>/etc/config</code> 下的配置；设为 <code>0</code> 则全新刷入。<br>
+2. 插件自更新：安装包只替换程序与静态资源，<code>/etc/config/online-upgrade</code> 不会被覆盖；包内 <code>uci-defaults</code> 只在字段缺失时补默认值，已有值保持不变。
 </details>
 
 ---
