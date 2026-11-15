@@ -478,10 +478,18 @@
 			' · 本地 ' + esc(local)));
 
 		var conf = CONFIDENCE_TEXT[ver.local_confidence] || ver.local_confidence || '未知';
+		var basisScore = (typeof ver.local_basis_score === 'number') ? ver.local_basis_score : null;
 		facts.push(factRow('本地版本依据',
 			esc(ver.local_source_text || ver.local_source || '来源未知') +
 			' · 可信度 <span class="ou-fact-strong">' + esc(conf) + '</span>' +
+			(basisScore !== null ? ' · 强度 <span class="ou-fact-strong">' + basisScore + '/100</span>' : '') +
 			(ver.state ? ' · ' + esc(STATE_TEXT[ver.state] || ver.state) : '')));
+
+		if (latest.version_evidence) {
+			facts.push(factRow('目标版本识别',
+				esc(latest.version_source || '来源未知') + ' · ' + esc(latest.version_evidence) +
+				(latest.version_fragment ? ' · 片段 <span class="ou-mono">' + esc(latest.version_fragment) + '</span>' : '')));
+		}
 
 		var hashVal;
 		if (latest.sha256) {
@@ -504,6 +512,17 @@
 		if (factsEl) factsEl.innerHTML = facts.join('');
 
 		var basis = (ci && ci.basis) || [];
+		if (ver.local_evidence) {
+			basis = basis.concat(String(ver.local_evidence).split('；').filter(Boolean).map(function (e) {
+				return '版本依据：' + e;
+			}));
+		}
+		if (ver.local_advice) basis = basis.concat(['版本建议：' + ver.local_advice]);
+		if (latest.tag_version && typeof latest.tag_version_agree === 'boolean') {
+			basis = basis.concat(['标签 ' + latest.tag_version + ' 与目标版本 ' +
+				(ver.target || latest.version || '未知') +
+				(latest.tag_version_agree ? ' 一致' : ' 不一致（以资产名为准，建议核对）')]);
+		}
 		var detail = $('evidence-detail');
 		var list = $('evidence-basis');
 		if (list) {

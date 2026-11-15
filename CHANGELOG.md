@@ -13,9 +13,15 @@
   - 修复：新增 `relax_rule()` 版本无关回退（日期段通配）并要求资产通过设备型号与架构的 `Compatible` 结构化判定；规则与回退均未命中时回退自动模式；候选清单与体积过滤计数在所有模式下统一收集并写入错误信息；`asset_size_opt()` 支持字符串体积，未知体积不再静默丢弃。
   - 结果新增 `match_mode`（`rule` / `relaxed` / `auto`）与 `rule_stale` 字段，日志同步记录实际匹配路径。
   - 前端 `applyAsset()` 改为生成版本无关规则（机型/架构/镜像类型固定，编译日期段自动通配）。
+- **本机版本判定被误判为弱依据（`confidence=weak` / `state=suspect`）**：
+  - 根因：原实现要求 UCI `last_upgrade_version` 锚点的年月日与 `/etc/openwrt_release` 的 mtime **逐日相等**才采信；overlay copy-up、配置恢复都会改动 mtime，导致插件自己写入的强依据被丢弃，退回构建时间弱依据，版本方向被抬高且所有比较都标成 `suspect`。
+  - 修复：`anchor_trust()` 改为「锚点日期不晚于构建日期且差值在 14 天窗口内」即采信并给出 0–100 依据强度；超出窗口或多源不一致时降级并给出可操作建议；明显超前于构建日期（>30 天）的残留锚点拒绝采信，退回构建时间。
 
 ### Changed
 
+- **版本识别重写为候选打分 + 证据链**：`version.rs` 从「固定取最后一个点分数字」升级为 `pick_best()`，同时识别点分版本（2–6 段）、`v`/`ver`/`version`/`release`/`fw`/`firmware`/`build` 前缀、单段版本、`rc`/`beta`/`alpha`/`pre`/`SNAPSHOT` 后缀、`-rN` 构建号、`YY-MM-DD` / `YYYY_MM_DD` / `20261115` 日期并归一化为点分版本；按前缀证据、日期型、命中位置、紧邻内核/工具链上下文等打分选最佳候选，返回证据链与命中片段。新增 `versions_agree()` 做两位/四位年份对齐与段数补零的模糊一致性核对。
+- **判定依据可观测**：`LocalVersion` 新增 `basis_score`（0–100）、`evidence`、`advice`；结果 JSON 的 `current` / `version` 与日志同步输出，界面在「本地版本依据」中显示强度。`weak` 判定由单一 `confidence` 改为 `confidence` 加 `basis_score < 60`，避免「来源标为可信但依据很薄」仍判 `decidable`。
+- **辅助特征**：目标版本改用 `pick_best()`，结果新增 `tag_version` / `tag_version_agree` / `version_evidence` / `version_fragment`，交叉核对 Release 标签与资产名是否描述同一版本；不一致时仍以资产名为准，但显式记录分歧。多源版本一致性也纳入依据强度。
 - **2026-11-12 全仓复核**：`build.yml` 中 `actions/checkout@v5` → `v7`、
   `actions/cache@v5` → `v6`（共 5 处），上方版本号已同步为当前最新大版本。GitHub 已于 2026-09-23 从托管 runner 移除 Node 20 运行时，仍声明 `node20` 的 action 会被强制跑在 Node 24 上并打印 `Node.js 20 is deprecated` 告警，属于未验证状态；本次按各 action 的 `action.yml` 逐一核对 `runs.using` 后统一升级。
 - **仅改 CI 配置**：项目源码、`node-version` / `python-version` / `go-version` 等工具链版本、产物命名与 Release 流程均未改动。告警指的是 action 自身声明的运行时，不是项目构建所用的 Node 版本。

@@ -17,7 +17,7 @@
 // 这里不做任何猜测：所有来源都解析不出版本时，调用方会得到
 // `Confidence::None`，并如实上报“无法比较”。
 
-use crate::version::{civil_from_days, pick, Version};
+use crate::version::{civil_from_days, days_from_civil, pick, Version};
 use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +50,12 @@ pub struct LocalVersion {
     pub confidence: Confidence,
     /// 构建日期（年、月、日），仅当来源为构建时间时设置。
     pub build_ymd: Option<(i64, u32, u32)>,
+    /// 判定依据强度（0~100）：由来源等级、日期窗口与多源交叉验证共同决定。
+    pub basis_score: u8,
+    /// 依据明细：每个来源解析出了什么、是否一致。
+    pub evidence: Vec<String>,
+    /// 依据不足时的可操作建议（写版本文件 / 升级一次刷新锚点）。
+    pub advice: String,
 }
 
 impl LocalVersion {
@@ -61,6 +67,9 @@ impl LocalVersion {
             source_text: String::new(),
             confidence: Confidence::None,
             build_ymd: None,
+            basis_score: 0,
+            evidence: vec!["所有版本来源均无法解析".into()],
+            advice: "在固件中写入 /etc/online-upgrade-version 可获得强依据".into(),
         }
     }
 
@@ -206,16 +215,57 @@ fn upgrade_anchor() -> Option<String> {
     Some(v)
 }
 
-/// 锚点的前三段是否与 rootfs 构建日期一致（兼容 2 位 / 4 位年份）。
-/// 不一致说明设备可能被手动刷成了别的固件，此时不得采信锚点。
-fn anchor_matches_build(anchor: &Version, y: i64, m: u32, d: u32) -> bool {
-    let nums = &anchor.nums;
-    if nums.len() < 3 {
-        return false;
+/// 锚点可信度：不再要求与构建日期逐日相等。
+///
+/// overlay copy-up、配置恢复都会改动 rootfs mtime，用这个并不可靠的
+/// 基准去否定插件自己写入的「上次成功升级版本」是逻辑倒置：设备因此
+/// 退到 build_time 弱依据，版本被抬高且所有比较都被标成 suspect。
+/// 现在改为「锚点日期不晚于构建日期且差值在 14 天窗口内」即采信，
+/// 超出窗口仍采信但降低依据强度并给出核对建议。
+fn anchor_trust(anchor: &Version, build: Option<(i64, u32, u32)>) -> (u8, String, bool) {
+    let Some((y, m, d)) = build else {
+        return (60, "锚点可用，但未能与固件构建日期核对".into(), true);
+    };
+    if anchor.nums.len() < 3 {
+        return (45, "锚点不是日期型版本，仅作参考".into(), true);
     }
-    let ay = nums[0] as i64;
-    let year_ok = if ay >= 1900 { ay == y } else { ay == y % 100 };
-    year_ok && nums[1] as u32 == m && nums[2] as u32 == d
+    let ay = anchor.nums[0] as i64;
+    let year = if ay >= 1900 { ay } else { 2000 + ay };
+    let (am, ad) = (anchor.nums[1] as u32, anchor.nums[2] as u32);
+    if !(1..=12).contains(&am) || !(1..=31).contains(&ad) {
+        return (40, "锚点日期字段越界，仅作参考".into(), true);
+    }
+    let delta = days_from_civil(y, m, d) - days_from_civil(year, am, ad);
+    let stamp = format!("{y}-{m:02}-{d:02}");
+    if delta == 0 {
+        (90, format!("锚点日期与固件构建日期 {stamp} 一致"), true)
+    } else if (0..=14).contains(&delta) {
+        (
+            75,
+            format!("锚点日期早于构建日期 {stamp} 共 {delta} 天，在合理窗口内"),
+            true,
+        )
+    } else if delta < 0 {
+        let late = -delta;
+        if late > 30 {
+            return (
+                30,
+                format!("锚点日期晚于构建日期 {stamp} 共 {late} 天，疑似残留锚点，不予采信"),
+                false,
+            );
+        }
+        (
+            45,
+            format!("锚点日期晚于构建日期 {stamp} 共 {late} 天，可能不是本机当前固件，建议核对"),
+            true,
+        )
+    } else {
+        (
+            40,
+            format!("锚点日期早于构建日期 {stamp} 共 {delta} 天，超出 14 天窗口，可能已过期"),
+            true,
+        )
+    }
 }
 
 pub fn detect() -> LocalVersion {
@@ -299,9 +349,34 @@ pub fn detect() -> LocalVersion {
         }
     }
 
+    // 多源交叉验证：记录每个来源解析出的版本，一致则提升依据强度。
+    let mut evidence: Vec<String> = Vec::new();
+    let mut parsed: Vec<(String, String)> = Vec::new();
+    for (key, _, value, _) in &cands {
+        if let Some(v) = pick(value) {
+            evidence.push(format!("{key} → {}", v.as_display()));
+            parsed.push((key.clone(), v.as_display()));
+        }
+    }
+    let distinct: std::collections::BTreeSet<&str> =
+        parsed.iter().map(|(_, v)| v.as_str()).collect();
+    let corroborated = parsed.len() >= 2 && distinct.len() == 1;
+    if corroborated {
+        evidence.push("多个独立来源版本一致，已交叉验证".into());
+    } else if distinct.len() > 1 {
+        evidence.push("不同来源版本不一致，依据强度已下调".into());
+    }
+
     if let Some(i) = select(&cands) {
         let (key, label, value, conf) = cands[i].clone();
         let version = pick(&value);
+        let mut score: u8 = if conf == Confidence::Strong { 85 } else { 55 };
+        if corroborated {
+            score = score.saturating_add(10);
+        }
+        if distinct.len() > 1 {
+            score = score.saturating_sub(20);
+        }
         return LocalVersion {
             version,
             raw: value,
@@ -309,6 +384,13 @@ pub fn detect() -> LocalVersion {
             source_text: label,
             confidence: conf,
             build_ymd: None,
+            basis_score: score.min(100),
+            evidence,
+            advice: if distinct.len() > 1 {
+                "各版本来源不一致，建议写入 /etc/online-upgrade-version 统一固件版本标记".into()
+            } else {
+                String::new()
+            },
         };
     }
 
@@ -316,27 +398,33 @@ pub fn detect() -> LocalVersion {
 
     // SNAPSHOT 镜像没有可解析的发布号时，优先采用「上次成功升级记录的版本」：
     // 它由本插件在刷写成功后写入，比 rootfs 文件 mtime 稳定（overlay copy-up、
-    // 恢复配置都会改动 mtime）。为避免手动刷机后锚点过期，要求锚点日期与
-    // rootfs 构建日期一致才按强依据采信；不一致则退回构建时间。
+    // 恢复配置都会改动 mtime）。锚点不再要求与构建日期逐日相等，而是按
+    // 14 天合理窗口与日期方向给出依据强度；明显超前于构建日期的锚点拒绝采信。
     if let Some(anchor_raw) = upgrade_anchor() {
         if let Some(anchor) = pick(&anchor_raw) {
-            let trusted = match build {
-                Some((y, m, d)) => anchor_matches_build(&anchor, y, m, d),
-                None => true,
-            };
-            if trusted {
+            let (score, note, accept) = anchor_trust(&anchor, build);
+            if accept {
+                let conf = if score >= 70 {
+                    Confidence::Strong
+                } else {
+                    Confidence::Weak
+                };
+                let mut ev = evidence.clone();
+                ev.push(format!("上次成功升级记录 {}：{}", anchor.as_display(), note));
                 return LocalVersion {
                     version: Some(anchor),
                     raw: anchor_raw,
                     source: "last_upgrade_version".into(),
-                    source_text: match build {
-                        Some((y, m, d)) => format!(
-                            "上次成功升级记录的版本（与固件构建日期 {y}-{m:02}-{d:02} 一致）"
-                        ),
-                        None => "上次成功升级记录的版本（未能与构建日期核对）".to_string(),
-                    },
-                    confidence: Confidence::Strong,
+                    source_text: format!("上次成功升级记录的版本（{note}）"),
+                    confidence: conf,
                     build_ymd: None,
+                    basis_score: score,
+                    evidence: ev,
+                    advice: if score < 70 {
+                        "锚点可能过期：成功升级一次可刷新记录，或写入 /etc/online-upgrade-version".into()
+                    } else {
+                        String::new()
+                    },
                 };
             }
         }
@@ -354,6 +442,13 @@ pub fn detect() -> LocalVersion {
             source_text: format!("固件构建时间 {y}-{m:02}-{d:02}（弱依据，仅能与日期型标签比较）"),
             confidence: Confidence::Weak,
             build_ymd: Some((y, m, d)),
+            basis_score: 30,
+            evidence: {
+                let mut e = evidence.clone();
+                e.push(format!("回退到固件构建时间 {y}-{m:02}-{d:02}（弱依据）"));
+                e
+            },
+            advice: "本机版本仅来自构建时间：成功升级一次可写入强依据，或在固件中写入 /etc/online-upgrade-version".into(),
         },
         None => LocalVersion::missing(if raw_marker.is_empty() {
             "未知"
@@ -404,6 +499,9 @@ mod tests {
             source_text: "固件构建时间".into(),
             confidence: Confidence::Weak,
             build_ymd: Some((2026, 11, 7)),
+            basis_score: 30,
+            evidence: vec![],
+            advice: String::new(),
         };
         let short = local.comparable(Some(&pick("26.11.08").unwrap())).unwrap();
         assert_eq!(short.as_display(), "26.11.07");
@@ -425,6 +523,9 @@ mod tests {
             source_text: "固件构建时间".into(),
             confidence: Confidence::Weak,
             build_ymd: Some((2026, 11, 7)),
+            basis_score: 30,
+            evidence: vec![],
+            advice: String::new(),
         };
         // 普通发布号与构建时间不可比：直接放弃比较，交给「无法比较」放行，
         // 否则 26.11.07 > 24.10.0 会被当成当前版本更高而拒绝升级。
@@ -436,12 +537,40 @@ mod tests {
     }
 
     #[test]
-    fn anchor_matches_build_date() {
-        assert!(anchor_matches_build(&pick("26.11.10").unwrap(), 2026, 11, 10));
-        assert!(anchor_matches_build(&pick("2026.11.10").unwrap(), 2026, 11, 10));
-        assert!(!anchor_matches_build(&pick("26.11.09").unwrap(), 2026, 11, 10));
-        // 段数不足时不可当作日期使用
-        assert!(!anchor_matches_build(&pick("1.2").unwrap(), 2026, 1, 2));
+    fn anchor_trust_uses_window_not_exact_date() {
+        let a = pick("26.11.10").unwrap();
+        let (exact, _, ok) = anchor_trust(&a, Some((2026, 11, 10)));
+        assert!(ok && exact >= 85);
+        let (within, note, ok) = anchor_trust(&a, Some((2026, 11, 13)));
+        assert!(ok && within >= 70, "{note}");
+        assert!(note.contains("3 天"));
+        let (stale, _, _) = anchor_trust(&a, Some((2026, 12, 20)));
+        assert!(stale < 70);
+        let (future, _, _) = anchor_trust(&a, Some((2026, 11, 1)));
+        assert!(future < 70);
+        let (nodate, _, _) = anchor_trust(&a, None);
+        assert!(nodate >= 60);
+        let short = pick("1.2").unwrap();
+        assert!(anchor_trust(&short, Some((2026, 1, 2))).0 < 70);
+    }
+
+    #[test]
+    fn anchor_trust_rejects_clearly_future_anchor() {
+        let stale = pick("26.12.30").unwrap();
+        let (score, _, accept) = anchor_trust(&stale, Some((2026, 11, 15)));
+        assert!(!accept);
+        assert!(score < 60);
+        let recent = pick("26.11.13").unwrap();
+        let (score, _, accept) = anchor_trust(&recent, Some((2026, 11, 15)));
+        assert!(accept && score >= 70);
+    }
+
+    #[test]
+    fn basis_score_is_exposed_for_weak_sources() {
+        let local = LocalVersion::missing("SNAPSHOT");
+        assert_eq!(local.basis_score, 0);
+        assert!(!local.advice.is_empty());
+        assert!(!local.evidence.is_empty());
     }
 
     #[test]

@@ -23,6 +23,20 @@
 
 成功结果携带 `match_mode`（`rule` 显式规则 / `relaxed` 规则过期后的版本无关回退 / `auto` 设备型号与架构自动识别）和 `rule_stale`，用于区分「用户规则生效」与「规则已过期但被安全回退」；`relaxed` 与 `auto` 都要求资产通过结构化 `Compatible` 判定，最高分并列时仍按歧义报错，不会退化为取第一个。
 
+### 1.2 版本判定依据不足时的诊断维度
+
+判定依据较弱（根因不止「本机是 SNAPSHOT」一种）时，必须能定位到具体环节。下表列出常见弱依据成因及当前处理：
+
+| 成因 | 旧表现 | 当前处理 |
+| :--- | :--- | :--- |
+| 规则覆盖不足：`firmware_pattern` 把编译日期写死成 `^...26\.11\.14...$` | 新版发布后零命中，报错却写「候选文件：无」 | 规则过期时自动泛化日期段回退，并列出真实候选与被体积门槛过滤的资产数 |
+| 阈值设置不合理：`min_size_mb` 单一硬门槛且 `size` 字段字符串化 | 资产被静默丢弃，无过滤计数 | 支持字符串体积；体积未知时放行交由名称/兼容判定；错误信息区分「N 个资产因小于阈值被过滤」与「规则命中但体积未达标」 |
+| 缺少辅助特征：只看资产名，不核对 Release 标签，也不记录证据链 | 版本取错无法追溯 | 输出 `tag_version` / `tag_version_agree` / `version_evidence` / `version_fragment`，并交叉核对标签与资产名版本 |
+| 锚点约束过强：要求 `last_upgrade_version` 与构建日期逐日相等 | mtime 一变就丢弃强依据，退回构建时间并全量标 `suspect` | 改为 14 天窗口分级采信，超前 >30 天的残留锚点拒绝 |
+| 版本格式覆盖不足：只认「最后一个点分数字」 | 前缀/后缀/日期/内核版本被误判 | 候选打分 + 证据链，紧邻内核/工具链上下文降权 |
+
+`state=suspect` 或 `incomparable` 时，结果必须同时给出 `version.local_source` / `version.local_confidence` / `version.local_basis_score` / `version.local_evidence` / `version.local_advice`，以及目标版本的 `latest.version_source` / `latest.version_evidence` / `latest.version_fragment` / `latest.tag_version` / `latest.tag_version_agree`。日志按 `[check] 版本依据:` / `[check] 版本建议:` / `[check] 版本辅助特征:` / `[check] 目标版本依据:` 前缀输出。禁止只给「依据较弱」结论而不列出来源与强度。
+
 ## 2. `ApiError` 分类与中文提示
 
 | code | 触发 | `user_message()` 文案（摘要） | 可重试 | 是否保留缓存 |

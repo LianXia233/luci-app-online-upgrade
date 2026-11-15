@@ -444,7 +444,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 #### 3.1 本机版本从哪来
 
-自用构建的 SNAPSHOT 固件通常没有 `DISTRIB_RELEASE=24.10.0` 这类版本号（`DISTRIB_RELEASE` 字面就是 `SNAPSHOT`）。直接放弃会让版本方向永远落到「无法比较」，所以插件按可信度从高到低依次尝试，并把命中的来源一并返回（`version.local` / `version.local_source` / `version.local_source_text` / `version.local_confidence`）：
+自用构建的 SNAPSHOT 固件通常没有 `DISTRIB_RELEASE=24.10.0` 这类版本号（`DISTRIB_RELEASE` 字面就是 `SNAPSHOT`）。直接放弃会让版本方向永远落到「无法比较」，所以插件按可信度从高到低依次尝试，并把命中的来源与依据一并返回（`version.local` / `version.local_source` / `version.local_source_text` / `version.local_confidence` / `version.local_basis_score` / `version.local_evidence` / `version.local_advice`，`current` 对象里对应 `version_*` 同名字段）：
 
 | 顺序 | 来源 | 可信度 | 典型值 |
 | :--- | :--- | :--- | :--- |
@@ -456,7 +456,9 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 `SNAPSHOT` 这类非版本文本不会被当成版本号；拿不到任何来源时，结果里明确写「无法比较」，不会伪造版本。
 
-**SNAPSHOT 设备的版本锚点**：当上面 1–4 都拿不到可解析版本时，插件会采用「上次成功升级记录的版本」（UCI `last_upgrade_version`），并要求它的年月日与 rootfs 构建日期一致；一致时按**可信**依据参与比较（`decidable`），不一致（例如手动刷过其他固件）则自动退回构建时间。这样升级过一次之后，SNAPSHOT 设备不再因为 mtime 变化而一直显示「依据较弱」。
+**SNAPSHOT 设备的版本锚点**：当上面 1–4 都拿不到可解析版本时，插件会采用「上次成功升级记录的版本」（UCI `last_upgrade_version`）。锚点不再要求与 rootfs 构建日期逐日相等（overlay copy-up、恢复配置都会改动 mtime，逐日相等会把强依据误丢）：按「不晚于构建日期且差值在 14 天窗口内」给出 75–90 分的依据强度，超出窗口仍可用但降为 40–45 分并提示核对，明显超前于构建日期（>30 天）的残留锚点直接拒绝、退回构建时间。这样升级过一次之后，SNAPSHOT 设备不再因为 mtime 变化而一直显示「依据较弱」。
+
+依据强度 `basis_score`（0–100）由来源等级、锚点日期窗口、多源交叉验证共同决定：版本文件/发行信息为 85 分起，多源一致 +10、多源冲突 −20，构建时间弱依据为 30。`basis_score < 60` 即使来源标为可信也会判为 `suspect`，结果里同时给出 `local_advice`（例如「写入 `/etc/online-upgrade-version` 统一固件版本标记」）。
 
 #### 3.2 判定状态
 
@@ -473,7 +475,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 | 只有构建时间，但目标不是日期型标签（如 `24.10.0`、`25.12.0.1`） | 任意 | `unknown` | `incomparable` | **不比较、放行**：构建时间与普通发布号不是同一坐标系（`26.11.07` 对 `24.10.0` 只会得出错误方向），按「将升级到该发布版本」处理，其余校验照旧 |
 | 任意 | 无法解析 | `unknown` | `incomparable` | 按 Release 发布时间提示 |
 
-界面上除了关系结论，还会显示「本地版本」「依据」「判定状态」三个标签，用户能看出这个结论是基于哪个来源、哪一次比较得出的（`version.confirm_required` 同时提供给 API 调用方）。
+界面上除了关系结论，还会显示「本地版本」「依据（含强度 N/100）」「判定状态」三个标签，证据链里另外列出每条版本依据、建议与「标签版本 / 资产名版本是否一致」；`version.confirm_required` 同时提供给 API 调用方。
 
 同版本（`same`）不视为「有更新」：后端给出 `has_update=false`，前端不显示「有新版本」角标、不摆出普通升级按钮，只保留手动点击的「同版本重装（强制升级）」；直接调用 `upgrade` 而未加 `--force` 也会被拒绝，重装必须显式强制。降级与无法比较两种情形的处理不受影响。
 
@@ -493,6 +495,8 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 | 规则把编译日期写死、新版固件发布后 | 规则不再命中 → 版本无关规则回退并按型号/架构确认；错误信息列出真实候选文件与被体积门槛过滤的资产数，不再误报「候选文件：无」 |
 | 同一 Release 有多个 sysupgrade 变体 | 按架构/机型/规则打分排序，只接受 Compatible 的最高分；最高分并列多个时**报歧义错误**并列出候选，要求你配置更精确的正则或手动指定，不会取第一个 |
 | tag 不是 `vX.Y.Z`（如 `自用构建`、`20261107`、`latest`） | tag 只用于定位 Release；版本优先从资产文件名解析。tag 无法解析且文件名也无版本时，判定为 `unknown`，按 Release 发布时间提示，不做降级/升级的强行判断 |
+| 资产名同时含内核版本与固件版本（`distro-24.10.0-linux-6.6.73-sysupgrade.bin`） | 候选打分对紧邻内核/工具链上下文降权，取固件版本 `24.10.0`；日期、前缀、预发布后缀与命中片段写入 `version_evidence` / `version_fragment` |
+| Release 标签与资产名解析出的版本不同（如标签 `2026.11.15`、资产名 `26.11.15`） | `versions_agree()` 按两位/四位年份对齐后判为一致；确实不同则 `tag_version_agree=false`，仍以资产名为准但显式记录分歧 |
 
 ## 并发保护与撞锁行为
 

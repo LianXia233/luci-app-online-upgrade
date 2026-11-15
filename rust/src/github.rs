@@ -318,11 +318,18 @@ fn same_version_reason(target: &crate::version::Version, rebuilt: Option<&str>) 
 
 /// 判定依据说明：把「本地版本是多少、从哪取的」写进文案，让用户知道自己在确认什么。
 fn local_basis(local: &crate::localver::LocalVersion, cur: &crate::version::Version) -> String {
-    if local.source_text.is_empty() {
+    let mut text = if local.source_text.is_empty() {
         format!("当前 {}", cur.as_display())
     } else {
         format!("当前 {}，依据：{}", cur.as_display(), local.source_text)
+    };
+    if local.basis_score > 0 {
+        text.push_str(&format!("（依据强度 {}/100）", local.basis_score));
     }
+    if !local.advice.is_empty() {
+        text.push_str(&format!("；{}", local.advice));
+    }
+    text
 }
 
 /// 版本与更新判定。
@@ -346,7 +353,8 @@ fn decide(
     local: &crate::localver::LocalVersion,
     local_ver: Option<&crate::version::Version>,
 ) -> Decision {
-    let weak = local.confidence != crate::localver::Confidence::Strong;
+    let weak = local.confidence != crate::localver::Confidence::Strong
+        || local.basis_score < 60;
     match (local_ver, target) {
         (Some(c), Some(t)) => match c.compare(t) {
             std::cmp::Ordering::Less => Decision {
@@ -759,13 +767,33 @@ pub async fn check(client: &reqwest::Client) -> Value {
         .unwrap_or("")
         .to_string();
 
-    let (fw_version, version_source) = match crate::version::pick(&file_name) {
-        Some(v) => (v.as_display(), "filename"),
-        None => match crate::version::pick(&resolved_tag) {
-            Some(v) => (v.as_display(), "tag"),
+    let name_hit = crate::version::pick_best(&file_name);
+    let tag_hit = crate::version::pick_best(&resolved_tag);
+    let (fw_version, version_source) = match name_hit.as_ref() {
+        Some(hit) => (hit.version.as_display(), "filename"),
+        None => match tag_hit.as_ref() {
+            Some(hit) => (hit.version.as_display(), "tag"),
             None => (String::new(), "none"),
         },
     };
+    // 辅助特征：Release 标签与资产名解析出的版本是否描述同一个版本。
+    // 不一致时仍以资产名为准，但把分歧显式写进结果与日志，供人工核对。
+    let tag_version = tag_hit
+        .as_ref()
+        .map(|h| h.version.as_display())
+        .unwrap_or_default();
+    let version_agreement = match (name_hit.as_ref(), tag_hit.as_ref()) {
+        (Some(a), Some(b)) => Some(crate::version::versions_agree(&a.version, &b.version)),
+        _ => None,
+    };
+    let target_evidence = name_hit
+        .as_ref()
+        .map(|h| h.evidence.join("；"))
+        .unwrap_or_default();
+    let target_fragment = name_hit
+        .as_ref()
+        .map(|h| h.fragment.clone())
+        .unwrap_or_default();
     let (cur_id, cur_release, cur_revision) = read_distrib();
     let target_ver = crate::version::pick(&fw_version);
     // 本机版本按可信度逐级探测（自用 SNAPSHOT 构建会退到构建时间）。
@@ -847,6 +875,16 @@ pub async fn check(client: &reqwest::Client) -> Value {
         ("updated_local".into(), Value::str(&utc_to_local(&updated))),
         ("version".into(), Value::str(&fw_version)),
         ("version_source".into(), Value::str(version_source)),
+        ("tag_version".into(), Value::str(&tag_version)),
+        (
+            "tag_version_agree".into(),
+            match version_agreement {
+                Some(v) => Value::Bool(v),
+                None => Value::Null,
+            },
+        ),
+        ("version_evidence".into(), Value::str(&target_evidence)),
+        ("version_fragment".into(), Value::str(&target_fragment)),
         ("url".into(), Value::str(&url)),
         ("api_url".into(), Value::str(&api_url)),
         ("sha256".into(), Value::str(&sha256_hash)),
@@ -869,7 +907,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
         compat.reason
     );
     logline!(
-        "[check] 本机版本: {} (来源 {} / {}, 判定状态 {})",
+        "[check] 本机版本: {} (来源 {} / {}, 依据强度 {}/100, 判定状态 {})",
         if local_display.is_empty() {
             "<无法比较>"
         } else {
@@ -877,8 +915,30 @@ pub async fn check(client: &reqwest::Client) -> Value {
         },
         local.source,
         local.confidence.as_str(),
+        local.basis_score,
         decision.state
     );
+    for line in &local.evidence {
+        logline!("[check] 版本依据: {line}");
+    }
+    if !local.advice.is_empty() {
+        logline!("[check] 版本建议: {}", local.advice);
+    }
+    if let Some(agree) = version_agreement {
+        logline!(
+            "[check] 版本辅助特征: 标签 {} / 资产名 {} {}",
+            tag_version,
+            fw_version,
+            if agree { "一致" } else { "不一致，建议核对" }
+        );
+    }
+    if !target_evidence.is_empty() {
+        logline!(
+            "[check] 目标版本依据: {} (命中片段 {})",
+            target_evidence,
+            target_fragment
+        );
+    }
     for line in &compat.basis {
         logline!("[check] 依据: {line}");
     }
@@ -900,6 +960,15 @@ pub async fn check(client: &reqwest::Client) -> Value {
         "version_confidence".into(),
         Value::str(local.confidence.as_str()),
     ));
+    current.push((
+        "version_basis_score".into(),
+        Value::num(local.basis_score as u64),
+    ));
+    current.push((
+        "version_evidence".into(),
+        Value::Arr(local.evidence.iter().map(|e| Value::str(e)).collect()),
+    ));
+    current.push(("version_advice".into(), Value::str(&local.advice)));
 
     Value::Obj(vec![
         ("ok".into(), Value::Bool(true)),
@@ -926,6 +995,21 @@ pub async fn check(client: &reqwest::Client) -> Value {
                     "local_confidence".into(),
                     Value::str(local.confidence.as_str()),
                 ),
+                (
+                    "local_basis_score".into(),
+                    Value::num(local.basis_score as u64),
+                ),
+                ("local_evidence".into(), Value::str(&local.evidence.join("；"))),
+                ("local_advice".into(), Value::str(&local.advice)),
+                ("tag_version".into(), Value::str(&tag_version)),
+                (
+                    "tag_version_agree".into(),
+                    match version_agreement {
+                        Some(v) => Value::Bool(v),
+                        None => Value::Null,
+                    },
+                ),
+                ("target_evidence".into(), Value::str(&target_evidence)),
                 ("target".into(), Value::str(&fw_version)),
                 ("relation".into(), Value::str(decision.relation)),
                 ("state".into(), Value::str(decision.state)),
@@ -1209,6 +1293,9 @@ mod tests {
                 crate::localver::Confidence::None
             },
             build_ymd: None,
+            basis_score: if crate::version::pick(value).is_some() { 85 } else { 0 },
+            evidence: Vec::new(),
+            advice: String::new(),
         }
     }
 
@@ -1221,6 +1308,9 @@ mod tests {
             source_text: format!("固件构建时间 {y}-{m:02}-{d:02}（弱依据，仅能与日期型标签比较）"),
             confidence: crate::localver::Confidence::Weak,
             build_ymd: Some((y, m, d)),
+            basis_score: 30,
+            evidence: Vec::new(),
+            advice: String::new(),
         }
     }
 
@@ -1239,6 +1329,16 @@ mod tests {
             local,
             local_ver.as_ref(),
         )
+    }
+
+    #[test]
+    fn low_basis_score_is_suspect_even_with_strong_source() {
+        let t = v("25.12.0");
+        let mut l = local_of("24.10.0");
+        l.basis_score = 25;
+        let d = decide_with(Some(&t), &l, Some("t"), Some("24.10.0"));
+        assert_eq!(d.state, "suspect");
+        assert!(d.reason.contains("依据强度 25/100"));
     }
 
     #[test]
