@@ -18,6 +18,7 @@
 // `Confidence::None`，并如实上报“无法比较”。
 
 use crate::version::{civil_from_days, days_from_civil, pick, Version};
+use std::cmp::Ordering;
 use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +223,38 @@ fn upgrade_anchor() -> Option<String> {
 /// 退到 build_time 弱依据，版本被抬高且所有比较都被标成 suspect。
 /// 现在改为「锚点日期不晚于构建日期且差值在 14 天窗口内」即采信，
 /// 超出窗口仍采信但降低依据强度并给出核对建议。
+///
+/// 注意：`last_upgrade_version` 记录的是「上次经本插件成功升级的版本」，
+/// 不是当前运行固件版本。用户在插件之外手动刷机后，锚点会滞留旧值；
+/// 单看日期窗口无法区分「mtime 漂移」与「固件真的换了」，因此
+/// `detect_with_target()` 在比较前先用 `anchor_is_stale()` 做交叉核对。
+/// 交叉核对：锚点是否已过期（当前固件很可能就是目标版本）。
+///
+/// 日期型标签（自用构建的 `YY.MM.DD`）与固件构建日期同名时，
+/// 「构建日期 == 目标版本」是当前固件即为目标版本的正面证据。
+/// 此时若锚点版本更旧，说明用户在插件之外刷入过新固件而
+/// `last_upgrade_version` 未更新；再拿锚点当本机版本就会把
+/// 同版本误判成 `newer` / `has_update=true`。
+/// 返回按目标年份位数对齐后的构建日期版本，供调用方作为本机版本。
+pub fn anchor_is_stale(
+    anchor: &Version,
+    build: Option<(i64, u32, u32)>,
+    target: Option<&Version>,
+) -> Option<Version> {
+    let target = target?;
+    if !target.is_date_tag() || anchor.compare(target) != Ordering::Less {
+        return None;
+    }
+    let (y, m, d) = build?;
+    let four_digit = target.nums.first().copied().unwrap_or(0) >= 1900;
+    let build_version = crate::version::from_ymd(
+        if four_digit { y as u64 } else { (y % 100) as u64 },
+        m,
+        d,
+    )?;
+    (build_version.compare(target) == Ordering::Equal).then_some(build_version)
+}
+
 fn anchor_trust(anchor: &Version, build: Option<(i64, u32, u32)>) -> (u8, String, bool) {
     let Some((y, m, d)) = build else {
         return (60, "锚点可用，但未能与固件构建日期核对".into(), true);
@@ -268,7 +301,11 @@ fn anchor_trust(anchor: &Version, build: Option<(i64, u32, u32)>) -> (u8, String
     }
 }
 
-pub fn detect() -> LocalVersion {
+/// 本机版本检测：在采用升级锚点前交叉核对锚点是否已过期。
+///
+/// `target` 是本次比较的云端目标版本；不需要比较时可传 `None`，
+/// 此时不做锚点过期交叉核对，仅按来源优先级与日期窗口判定。
+pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
     let rel = read_file("/etc/openwrt_release").unwrap_or_default();
     let osrel = read_file("/etc/os-release").unwrap_or_default();
 
@@ -395,6 +432,44 @@ pub fn detect() -> LocalVersion {
     }
 
     let build = build_ymd();
+
+    // 交叉核对优先于锚点采信：固件构建日期恰为目标版本、而锚点更旧时，
+    // 判定锚点是插件之外刷机留下的过期记录，改以构建日期作为本机版本。
+    // 若这里不拦截，anchor_trust() 会把「早于构建日期 N 天」当成 mtime
+    // 漂移而给 75 分强依据，把同版本误报成「发现新版本」。
+    if let (Some(t), Some((y, m, d)), Some(anchor_raw)) = (target, build, upgrade_anchor()) {
+        if let Some(anchor) = pick(&anchor_raw) {
+            if let Some(build_version) =
+                anchor_is_stale(&anchor, Some((y, m, d)), Some(t))
+            {
+                let stamp = format!("{y}-{m:02}-{d:02}");
+                let mut ev = evidence.clone();
+                ev.push(format!("固件构建日期 {stamp} 与目标版本 {} 一致", t.as_display()));
+                ev.push(format!(
+                    "升级锚点 {} 早于固件构建日期，判定为插件之外刷机留下的过期记录",
+                    anchor.as_display()
+                ));
+                return LocalVersion {
+                    version: Some(build_version.clone()),
+                    raw: build_version.as_display(),
+                    source: "build_date_matches_target".into(),
+                    source_text: format!(
+                        "固件构建日期 {stamp} 与目标版本 {} 一致（升级锚点已过期）",
+                        t.as_display()
+                    ),
+                    confidence: Confidence::Weak,
+                    build_ymd: None,
+                    basis_score: 55,
+                    evidence: ev,
+                    advice: format!(
+                        "锚点 {} 疑似过期：当前固件很可能已是 {}。通过插件升级一次可刷新锚点，或在固件中写入 /etc/online-upgrade-version",
+                        anchor.as_display(),
+                        build_version.as_display()
+                    ),
+                };
+            }
+        }
+    }
 
     // SNAPSHOT 镜像没有可解析的发布号时，优先采用「上次成功升级记录的版本」：
     // 它由本插件在刷写成功后写入，比 rootfs 文件 mtime 稳定（overlay copy-up、
@@ -552,6 +627,56 @@ mod tests {
         assert!(nodate >= 60);
         let short = pick("1.2").unwrap();
         assert!(anchor_trust(&short, Some((2026, 1, 2))).0 < 70);
+    }
+
+    #[test]
+    fn anchor_is_stale_detects_out_of_band_flash() {
+        // 设备锚点 26.11.10、固件构建于 2026-11-15、目标版本 26.11.15
+        let stale = anchor_is_stale(
+            &pick("26.11.10").unwrap(),
+            Some((2026, 11, 15)),
+            Some(&pick("26.11.15").unwrap()),
+        );
+        assert_eq!(stale.unwrap().as_display(), "26.11.15");
+        // 四位年份标签同样对齐
+        assert_eq!(
+            anchor_is_stale(
+                &pick("26.11.10").unwrap(),
+                Some((2026, 11, 15)),
+                Some(&pick("2026.11.15").unwrap()),
+            )
+            .unwrap()
+            .as_display(),
+            "2026.11.15"
+        );
+        // 锚点不比目标旧时无需判定过期
+        assert!(anchor_is_stale(
+            &pick("26.11.15").unwrap(),
+            Some((2026, 11, 15)),
+            Some(&pick("26.11.15").unwrap()),
+        )
+        .is_none());
+        // 目标不是日期型标签、构建日期与目标不同、无构建日期：均不触发
+        assert!(anchor_is_stale(
+            &pick("26.11.10").unwrap(),
+            Some((2026, 11, 15)),
+            Some(&pick("24.10.0").unwrap()),
+        )
+        .is_none());
+        assert!(anchor_is_stale(
+            &pick("26.11.10").unwrap(),
+            Some((2026, 11, 14)),
+            Some(&pick("26.11.15").unwrap()),
+        )
+        .is_none());
+        assert!(anchor_is_stale(
+            &pick("26.11.10").unwrap(),
+            None,
+            Some(&pick("26.11.15").unwrap()),
+        )
+        .is_none());
+        // 无目标版本（detect() 兼容入口）时不做判定
+        assert!(anchor_is_stale(&pick("26.11.10").unwrap(), Some((2026, 11, 15)), None).is_none());
     }
 
     #[test]

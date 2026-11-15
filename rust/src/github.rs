@@ -335,7 +335,7 @@ fn local_basis(local: &crate::localver::LocalVersion, cur: &crate::version::Vers
 /// 版本与更新判定。
 ///
 /// `target` 是从资产名解析出的版本（解析失败时回退到标签）；
-/// `local_ver` 是 `localver::detect()` 解析出的本地固件版本
+/// `local_ver` 是 `localver::detect_with_target()` 解析出的本地固件版本
 /// （SNAPSHOT 镜像没有发布号时会回退到构建日期）。
 /// 这里区分三种结果，而不是全部归入一个
 /// “无法比较”分类：
@@ -397,9 +397,27 @@ fn decide(
                 let recorded = last_version == Some(t.as_display().as_str());
                 let rebuilt =
                     recorded && !asset_updated.is_empty() && last_ts != Some(asset_updated);
+                let base = same_version_reason(t, rebuilt.then_some(asset_updated));
+                // 依据较弱的同版本必须写清依据与可操作建议，
+                // 否则「已是最新」看起来像是凭空得出的结论。
+                let reason = if weak {
+                    format!(
+                        "{}；依据：{}（依据强度 {}/100）{}",
+                        base,
+                        local.source_text,
+                        local.basis_score,
+                        if local.advice.is_empty() {
+                            String::new()
+                        } else {
+                            format!("；{}", local.advice)
+                        }
+                    )
+                } else {
+                    base
+                };
                 Decision {
                     has_update: false,
-                    reason: same_version_reason(t, rebuilt.then_some(asset_updated)),
+                    reason,
                     relation: "same",
                     state: if weak { "suspect" } else { "decidable" },
                     confirm_required: false,
@@ -797,7 +815,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
     let (cur_id, cur_release, cur_revision) = read_distrib();
     let target_ver = crate::version::pick(&fw_version);
     // 本机版本按可信度逐级探测（自用 SNAPSHOT 构建会退到构建时间）。
-    let local = crate::localver::detect();
+    let local = crate::localver::detect_with_target(target_ver.as_ref());
     let local_ver = local.comparable(target_ver.as_ref());
     let local_display = match &local_ver {
         Some(v) => v.as_display(),
@@ -1329,6 +1347,24 @@ mod tests {
             local,
             local_ver.as_ref(),
         )
+    }
+
+    #[test]
+    fn same_version_with_stale_anchor_reports_basis() {
+        let t = v("26.11.15");
+        let mut l = local_of("26.11.15");
+        l.confidence = crate::localver::Confidence::Weak;
+        l.basis_score = 55;
+        l.source = "build_date_matches_target".into();
+        l.source_text = "固件构建日期 2026-11-15 与目标版本 26.11.15 一致（升级锚点已过期）".into();
+        l.advice = "锚点 26.11.10 疑似过期".into();
+        let d = decide_with(Some(&t), &l, Some("t"), Some("26.11.15"));
+        assert!(!d.has_update);
+        assert_eq!(d.relation, "same");
+        assert_eq!(d.state, "suspect");
+        assert!(d.reason.contains("已是最新"));
+        assert!(d.reason.contains("升级锚点已过期"));
+        assert!(d.reason.contains("锚点 26.11.10 疑似过期"));
     }
 
     #[test]

@@ -460,6 +460,8 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 依据强度 `basis_score`（0–100）由来源等级、锚点日期窗口、多源交叉验证共同决定：版本文件/发行信息为 85 分起，多源一致 +10、多源冲突 −20，构建时间弱依据为 30。`basis_score < 60` 即使来源标为可信也会判为 `suspect`，结果里同时给出 `local_advice`（例如「写入 `/etc/online-upgrade-version` 统一固件版本标记」）。
 
+**锚点何时会被判为过期**：`last_upgrade_version` 是「上次经本插件成功升级的版本」，不是当前运行固件版本。用户在插件之外手动刷机后，锚点会滞留旧值。检测时若同时满足 ① 固件构建日期按目标年份位数对齐后**等于**目标版本、② 锚点版本**旧于**目标版本，则判定锚点过期，改以构建日期作为本机版本（`source=build_date_matches_target`、`confidence=weak`、`basis_score=55`），并在 `local_evidence` / `local_advice` 中写明冲突与刷新方法。这样同版本会得出 `same` / `has_update=false`，不会误报「发现新版本」。该判断只在日期型标签且构建日期与目标一致时生效，普通发布号（如 `24.10.0`）不受影响；同版本时仍保留显式「强制升级」入口。
+
 #### 3.2 判定状态
 
 版本判定分三种状态，只有降级才需要用户二次确认，不确定本身不构成阻断：
