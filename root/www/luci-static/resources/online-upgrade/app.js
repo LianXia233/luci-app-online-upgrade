@@ -1574,11 +1574,17 @@
 		return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	}
 
+	function generalizeAssetName(name) {
+		var escaped = escapeRegex(name);
+		return escaped.replace(/[0-9]{1,4}(\\\.[0-9]{1,4}){2,}/g, '[0-9][0-9.]*')
+			.replace(/[0-9]{4}(?:-[0-9]{1,2}){2}/g, '[0-9][0-9.-]*');
+	}
+
 	function applyAsset() {
 		var name = $('cfg-asset').value;
 		if (!name) return;
-		$('cfg-pattern').value = '^' + escapeRegex(name) + '$';
-		hint('config-hint', ' 已按所选文件生成匹配规则(文件名固定匹配;如文件名会变化可在高级配置放宽)', 'ok');
+		$('cfg-pattern').value = '^' + generalizeAssetName(name) + '$';
+		hint('config-hint', ' 已生成版本无关匹配规则(编译日期自动通配;新版固件无需重新生成)', 'ok');
 		updateSummary();
 	}
 

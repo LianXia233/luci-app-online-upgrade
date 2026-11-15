@@ -239,8 +239,54 @@ fn asset_name(a: &Value) -> String {
         .to_string()
 }
 
+/// 资产体积（字节）。GitHub API 返回数值，部分代理/缓存会返回字符串；
+/// 无法解析或字段缺失时返回 None，调用方不得静默当作 0 字节丢弃。
+fn asset_size_opt(a: &Value) -> Option<u64> {
+    match a.get("size") {
+        Some(Value::Num(n)) if *n >= 0.0 => Some(*n as u64),
+        Some(Value::Str(s)) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
 fn asset_size(a: &Value) -> u64 {
-    a.get("size").and_then(|s| s.as_u64()).unwrap_or(0)
+    asset_size_opt(a).unwrap_or(0)
+}
+
+/// 体积门槛：只有明确小于阈值才过滤；体积未知时放行，交由名称/兼容判定，
+/// 避免 API 结构变化或代理改写后全部资产被静默丢弃而无从诊断。
+fn size_ok(a: &Value, min_bytes: u64) -> bool {
+    match asset_size_opt(a) {
+        Some(sz) => sz >= min_bytes,
+        None => true,
+    }
+}
+
+/// 「使用此文件 → 生成规则」会把完整文件名（含编译日期）锚定为 ^...$，
+/// 新版固件一发布规则即过期。这里把其中的点分版本/日期段泛化为通配，
+/// 得到版本无关规则；机型、架构、镜像类型等其余部分保持原样。
+/// 例如 ^H5000M-SelfUse-aarch64-26\.11\.14-sysupgrade\.bin$
+///   → ^H5000M-SelfUse-aarch64-[0-9][0-9.]*-sysupgrade\.bin$
+fn relax_rule(pattern: &str) -> Option<Regex> {
+    if !(pattern.starts_with('^') && pattern.ends_with('$')) || pattern.len() < 3 {
+        return None;
+    }
+    let inner = &pattern[1..pattern.len() - 1];
+    // 只识别「数字 + 可选转义点 + 数字」组成的版本/日期段，且该段
+    // 前后必须是连字符或字符串边界，避免误吞 aarch64 之类的机型词。
+    let date_re = Regex::new(r"(^|-)([0-9]{1,4}(?:\\?\.[0-9]{1,4}){2,})(-|$)").ok()?;
+    let caps = date_re.captures(inner)?;
+    let seg = caps.get(2)?;
+    let mut relaxed = String::with_capacity(pattern.len() + 16);
+    relaxed.push('^');
+    relaxed.push_str(&inner[..seg.start()]);
+    relaxed.push_str("[0-9][0-9.]*");
+    relaxed.push_str(&inner[seg.end()..]);
+    relaxed.push('$');
+    if relaxed == pattern {
+        return None;
+    }
+    Regex::new(&relaxed).ok()
 }
 
 struct Decision {
@@ -490,12 +536,18 @@ pub async fn check(client: &reqwest::Client) -> Value {
         }
     };
 
+    let relaxed_re = rule_re.as_ref().and_then(|_| relax_rule(&cfg.pattern));
+
     let mut resolved_tag = String::new();
     let mut chosen: Option<(Value, crate::compat::CompatResult, Option<String>)> = None;
     let mut matched_rel: Option<&Value> = None;
     let mut ambiguous: Vec<String> = Vec::new();
     let mut candidate_names: Vec<String> = Vec::new();
     let mut arch_conflicts: Vec<String> = Vec::new();
+    let mut size_filtered: usize = 0;
+    let mut rule_hit_small: Vec<String> = Vec::new();
+    let mut candidates_collected = false;
+    let mut match_mode = "auto";
 
     for (tag_name, release) in release_candidates(&parsed, use_latest, &cfg.tag, &tag_filter) {
         let assets = match release.get("assets").and_then(|a| a.as_arr()) {
@@ -503,73 +555,125 @@ pub async fn check(client: &reqwest::Client) -> Value {
             _ => continue,
         };
 
-        let pick: Option<(Value, crate::compat::CompatResult, Option<String>)> =
-            if let Some(re) = &rule_re {
-                // 显式规则：取第一个体积达标且声明架构
-                // 不冲突的名称匹配项。
-                let mut found = None;
-                for a in assets {
-                    if !name_matches(a, re, min_bytes) {
-                        continue;
-                    }
-                    let name = asset_name(a);
-                    let eval = crate::compat::evaluate_with_rule(&device, &name, &cfg.pattern);
-                    if eval.level == crate::compat::CompatLevel::Incompatible {
-                        arch_conflicts.push(name);
-                        continue;
-                    }
-                    found = Some((a.clone(), eval, Some(cfg.pattern.clone())));
-                    break;
+        // 诊断数据与匹配模式解耦：无论是否配置规则都统计真实候选与
+        // 被体积门槛过滤的资产，避免报「候选文件：无」这种假信息。
+        for a in assets {
+            let name = asset_name(a);
+            if !size_ok(a, min_bytes) {
+                size_filtered += 1;
+                continue;
+            }
+            if !candidates_collected && candidate_names.len() < 8 {
+                candidate_names.push(format!("{} [{}]", name, human_size(asset_size(a))));
+            }
+        }
+        candidates_collected = true;
+
+        let mut picked: Option<(Value, crate::compat::CompatResult, Option<String>)> = None;
+        let mut used_relaxed = false;
+
+        // 1) 显式规则：命中即视为用户声明可用，架构冲突仍需拒绝。
+        if let Some(re) = &rule_re {
+            for a in assets {
+                let name = asset_name(a);
+                if !re.is_match(&name) {
+                    continue;
                 }
-                found
-            } else {
-                // 自动模式：只接受机型与架构都得到确认的资产。
-                // 不做“先打分、然后随便取一个”的兜底。
+                if !size_ok(a, min_bytes) {
+                    rule_hit_small.push(name);
+                    continue;
+                }
+                let eval = crate::compat::evaluate_with_rule(&device, &name, &cfg.pattern);
+                if eval.level == crate::compat::CompatLevel::Incompatible {
+                    arch_conflicts.push(name);
+                    continue;
+                }
+                picked = Some((a.clone(), eval, Some(cfg.pattern.clone())));
+                break;
+            }
+        }
+
+        // 2) 规则过期（常见原因：把编译日期写死）时的版本无关回退。
+        //    仍要求资产通过设备型号 + 架构的结构化兼容判定；
+        //    并列多个最高分时报歧义，不退化成「取第一个」。
+        if picked.is_none() {
+            if let Some(re) = &relaxed_re {
                 let mut scored: Vec<(i32, String, &Value, crate::compat::CompatResult)> = assets
                     .iter()
                     .filter_map(|a| {
                         let name = asset_name(a);
-                        if asset_size(a) < min_bytes {
+                        if !re.is_match(&name) || !size_ok(a, min_bytes) {
                             return None;
-                        }
-                        if candidate_names.len() < 6 {
-                            candidate_names.push(format!("{} [{}]", name, "候选"));
                         }
                         let eval = crate::compat::evaluate_asset(&device, &name);
                         if eval.level == crate::compat::CompatLevel::Compatible {
-                            Some((eval.score, name.clone(), a, eval))
+                            Some((eval.score, name, a, eval))
                         } else {
                             None
                         }
                     })
                     .collect();
                 scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-                match scored.len() {
-                    0 => None,
-                    1 => {
-                        let (_, _, a, eval) = scored.remove(0);
-                        Some((a.clone(), eval, None))
-                    }
-                    _ => {
-                        let top = scored[0].0;
-                        let tied: Vec<String> = scored
-                            .iter()
-                            .filter(|c| c.0 == top)
-                            .map(|c| c.1.clone())
-                            .collect();
-                        if tied.len() > 1 {
-                            ambiguous = tied;
-                            None
-                        } else {
-                            let (_, _, a, eval) = scored.remove(0);
-                            Some((a.clone(), eval, None))
-                        }
-                    }
+                let top = scored.first().map(|c| c.0);
+                let tied: Vec<String> = scored
+                    .iter()
+                    .filter(|c| Some(c.0) == top)
+                    .map(|c| c.1.clone())
+                    .collect();
+                if tied.len() > 1 {
+                    ambiguous = tied;
+                    resolved_tag = tag_name;
+                    break;
+                } else if let Some((_, _, a, eval)) = scored.into_iter().next() {
+                    picked = Some((a.clone(), eval, Some(cfg.pattern.clone())));
+                    used_relaxed = true;
                 }
-            };
+            }
+        }
 
-        if let Some((asset, eval, rule)) = pick {
+        // 3) 自动模式（无规则，或规则与回退均未命中）：
+        //    只接受机型与架构都得到确认的资产，不做兜底取第一个。
+        if picked.is_none() {
+            let mut scored: Vec<(i32, String, &Value, crate::compat::CompatResult)> = assets
+                .iter()
+                .filter_map(|a| {
+                    let name = asset_name(a);
+                    if !size_ok(a, min_bytes) {
+                        return None;
+                    }
+                    let eval = crate::compat::evaluate_asset(&device, &name);
+                    if eval.level == crate::compat::CompatLevel::Compatible {
+                        Some((eval.score, name, a, eval))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let top = scored.first().map(|c| c.0);
+            let tied: Vec<String> = scored
+                .iter()
+                .filter(|c| Some(c.0) == top)
+                .map(|c| c.1.clone())
+                .collect();
+            if tied.len() > 1 {
+                ambiguous = tied;
+                resolved_tag = tag_name;
+                break;
+            } else if let Some((_, _, a, eval)) = scored.into_iter().next() {
+                picked = Some((a.clone(), eval, None));
+            }
+        }
+
+        if let Some((asset, eval, rule)) = picked {
             resolved_tag = tag_name;
+            match_mode = if used_relaxed {
+                "relaxed"
+            } else if rule.is_some() {
+                "rule"
+            } else {
+                "auto"
+            };
             chosen = Some((asset, eval, rule));
             matched_rel = Some(release);
             break;
@@ -596,25 +700,45 @@ pub async fn check(client: &reqwest::Client) -> Value {
                 ),
             );
         }
-        candidate_names.retain(|_| true);
+        let mut hints: Vec<String> = Vec::new();
+        if size_filtered > 0 {
+            hints.push(format!(
+                "另有 {} 个资产因小于 {} MB 被过滤",
+                size_filtered, min_size_mb
+            ));
+        }
+        if !rule_hit_small.is_empty() {
+            hints.push(format!(
+                "规则命中但体积未达标：{}",
+                rule_hit_small.join(", ")
+            ));
+        }
+        if !cfg.pattern.is_empty() {
+            hints.push("当前 firmware_pattern 未命中任何可确认固件（常见原因是规则把编译日期写死）；建议在「固件列表」中重新生成版本无关规则，或清空规则由设备型号/架构自动识别".into());
+        } else {
+            hints.push("请配置 firmware_pattern 或在「固件列表」中选择文件后生成规则".into());
+        }
+        let candidates = if candidate_names.is_empty() {
+            "无（资产可能全部被体积门槛过滤，或 API 未提供 size 字段）".to_string()
+        } else {
+            candidate_names.join("; ")
+        };
         return check_error(
             &cfg,
             &format!(
-                "未找到可确认匹配的固件（本机 {}/{}/{}，大小≥{} MB）。候选文件：{}。请配置 firmware_pattern 或在「固件列表」中选择文件后生成规则",
+                "未找到可确认匹配的固件（本机 {}/{}/{}，大小≥{} MB）。候选文件：{}。{}",
                 device.model,
                 device.board_name,
                 device.arch,
                 min_size_mb,
-                if candidate_names.is_empty() {
-                    "无".to_string()
-                } else {
-                    candidate_names.join("; ")
-                }
+                candidates,
+                hints.join("；")
             ),
         );
     }
 
     let (asset, compat, chosen_rule) = chosen.unwrap();
+    let rule_stale = !cfg.pattern.is_empty() && match_mode != "rule";
     let file_name = asset_name(&asset);
     let size = asset_size(&asset);
     let updated = asset
@@ -730,7 +854,7 @@ pub async fn check(client: &reqwest::Client) -> Value {
     ];
 
     logline!(
-        "[check] 选定资产: {} | 版本 {} (来源 {}) | 识别: {} ({}) | {}",
+        "[check] 选定资产: {} | 版本 {} (来源 {}) | 匹配模式 {} (规则过期 {}) | 识别: {} ({}) | {}",
         file_name,
         if fw_version.is_empty() {
             "<无法解析>"
@@ -738,6 +862,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
             &fw_version
         },
         version_source,
+        match_mode,
+        rule_stale,
         compat.badge,
         compat.model_check,
         compat.reason
@@ -820,6 +946,8 @@ pub async fn check(client: &reqwest::Client) -> Value {
                 None => Value::Null,
             },
         ),
+        ("match_mode".into(), Value::str(match_mode)),
+        ("rule_stale".into(), Value::Bool(rule_stale)),
         ("device".into(), device.to_json()),
     ])
 }
@@ -942,8 +1070,11 @@ fn check_error(cfg: &Cfg, msg: &str) -> Value {
     ])
 }
 
+// 规则匹配的统一入口保留给单元测试与后续复用；check 主循环已内联
+// 同等判定（需要区分体积未达标与名称未命中两种诊断）。
+#[allow(dead_code)]
 fn name_matches(a: &Value, re: &Regex, min_bytes: u64) -> bool {
-    asset_size(a) >= min_bytes
+    size_ok(a, min_bytes)
         && a.get("name")
             .and_then(|n| n.as_str())
             .map(|n| re.is_match(n))
@@ -1347,6 +1478,32 @@ mod tests {
 
         let all = release_candidates(&parsed, true, "latest", &None);
         assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn relaxed_rule_tracks_new_build_date() {
+        let p = r"^H5000M-SelfUse-aarch64-26\.11\.14-sysupgrade\.bin$";
+        let re = relax_rule(p).expect("应当生成版本无关规则");
+        assert!(re.is_match("H5000M-SelfUse-aarch64-26.11.15-sysupgrade.bin"));
+        assert!(!re.is_match("H5000M-NetWiz-MT5700-aarch64-26.11.15-sysupgrade.bin"));
+        assert!(relax_rule(r"^H5000M-.*-sysupgrade\.bin$").is_none());
+        assert!(relax_rule("H5000M-.*").is_none());
+    }
+
+    #[test]
+    fn unknown_or_string_size_is_handled() {
+        let v = parse(
+            r#"[{"name":"H5000M-sysupgrade.bin"},
+                {"name":"sha256sums","size":113},
+                {"name":"H5000M-str.bin","size":"77189386"}]"#,
+        )
+        .unwrap();
+        let assets = v.as_arr().unwrap();
+        let floor = 15 * 1024 * 1024;
+        assert!(size_ok(&assets[0], floor), "体积未知不应被静默丢弃");
+        assert!(!size_ok(&assets[1], floor));
+        assert!(size_ok(&assets[2], floor), "字符串体积也应能解析");
+        assert_eq!(asset_size(&assets[2]), 77189386);
     }
 
     #[test]

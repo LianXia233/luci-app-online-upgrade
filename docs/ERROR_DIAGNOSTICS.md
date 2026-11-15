@@ -17,6 +17,12 @@
 
 **绝不输出**：GitHub Token、敏感请求头、用户隐私。Token 仅在 `host == api.github.com` 时作为 `Authorization` 请求头发送；`ghapi::redact()` 对任何日志/错误文本做兜底脱敏。
 
+### 1.1 固件检测未匹配时的诊断维度
+
+`check` 返回「未找到可确认匹配的固件」时，错误信息必须同时给出：本机 `model / board_name / arch`、`min_size_mb` 门槛、**真实候选文件清单（含体积）**、被体积门槛过滤的资产数、规则命中但体积未达标的文件、以及规则是否疑似写死编译日期。候选清单与体积过滤计数由 `github.rs` 在统一位置收集，与是否配置 `firmware_pattern` 无关，禁止再出现「候选文件：无」而实际上存在可用资产的情况。
+
+成功结果携带 `match_mode`（`rule` 显式规则 / `relaxed` 规则过期后的版本无关回退 / `auto` 设备型号与架构自动识别）和 `rule_stale`，用于区分「用户规则生效」与「规则已过期但被安全回退」；`relaxed` 与 `auto` 都要求资产通过结构化 `Compatible` 判定，最高分并列时仍按歧义报错，不会退化为取第一个。
+
 ## 2. `ApiError` 分类与中文提示
 
 | code | 触发 | `user_message()` 文案（摘要） | 可重试 | 是否保留缓存 |

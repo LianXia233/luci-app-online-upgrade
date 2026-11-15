@@ -233,7 +233,7 @@
 
 1. 点击「获取固件列表」，插件读取目标 Release 的资产列表。
 2. 默认过滤小于 **15 MB** 的文件（`min_size_mb`，可设为 0 关闭），避免把 `sha256sums`、说明文本当成固件。
-3. 在下拉框选择本机固件，点击「使用此文件 → 生成规则」，`firmware_pattern` 会被写成该文件名的正则。
+3. 在下拉框选择本机固件，点击「使用此文件 → 生成规则」，`firmware_pattern` 会写入**版本无关**规则：机型、架构、镜像类型固定，编译日期段自动通配（如 `^H5000M-SelfUse-aarch64-[0-9][0-9.]*-sysupgrade\.bin$`），后续新版固件无需重新生成。
 4. 再次「保存配置」。规则保存在 `online-upgrade.settings.firmware_pattern`，检测与下载都以它为准。
 
 ### 步骤三：选择加速代理与高级配置
@@ -481,6 +481,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 1. 先用架构比对：资产名声明了与本机冲突的架构 → 直接 Incompatible（有正面证据，不能被规则覆盖）。
 2. 再看配置规则：`firmware_pattern` 命中 → 命中即视为适配，`matched_rule` 与 `basis` 同时写入日志和界面（含「资产名未声明架构」这类前提）。
+   - 规则未命中时（常见于把编译日期写死的旧规则），后端自动生成版本无关回退规则，并要求资产同时通过设备型号与架构的结构化 `Compatible` 判定；仍无法确认才回退自动模式。检测结果中的 `match_mode`（`rule` / `relaxed` / `auto`）与 `rule_stale` 标明实际采用的路径。
 3. 再看结构化机型比对：命中完整标识或专属（字母+数字）令牌 → 匹配；只命中厂商/通用词 → 部分匹配。
 4. 都判定不了 → `unknown`，界面显示「无法确认是否适配」，**不会**自动当成可升级；用户需要显式使用强制模式。自动选择也**不会**退化成「取第一个」。
 
@@ -489,6 +490,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 | 情况 | 表现 |
 | :--- | :--- |
 | 资产名不含机型 | 有匹配正则时按规则命中（视为配置声明）；无规则时结构化比对为 `unmatched`/`partial` → 报「无法确认」并列出候选文件名，不自动选择 |
+| 规则把编译日期写死、新版固件发布后 | 规则不再命中 → 版本无关规则回退并按型号/架构确认；错误信息列出真实候选文件与被体积门槛过滤的资产数，不再误报「候选文件：无」 |
 | 同一 Release 有多个 sysupgrade 变体 | 按架构/机型/规则打分排序，只接受 Compatible 的最高分；最高分并列多个时**报歧义错误**并列出候选，要求你配置更精确的正则或手动指定，不会取第一个 |
 | tag 不是 `vX.Y.Z`（如 `自用构建`、`20261107`、`latest`） | tag 只用于定位 Release；版本优先从资产文件名解析。tag 无法解析且文件名也无版本时，判定为 `unknown`，按 Release 发布时间提示，不做降级/升级的强行判断 |
 
@@ -641,7 +643,7 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | `enabled` | bool | `0` | **内部开关**：界面不提供修改入口，保持默认 `0` 即可；不要把它当作“启用插件”的开关 |
 | `repo` | string | 空 | GitHub 仓库路径，格式为 `owner/repo`（如 `LianXia233/OpenWRT-CI`） |
 | `tag` | string | `latest` | Release 追踪策略：<br>• `latest`：追踪最新发布的 Release；<br>• `latest@^前缀`：按前缀过滤目标机型最新 Release（如 `latest@^H5000M`）；正则写错会**直接报错并中止检测**（不会退化成“不过滤”而在全部 Release 里挑）；<br>• 具体 Tag 名（如 `v2026.11`） |
-| `firmware_pattern` | string | 空 | 目标固件文件名匹配的正则表达式（如 `immortalwrt-.*-sysupgrade\.bin`） |
+| `firmware_pattern` | string | 空 | 目标固件文件名匹配的正则表达式（如 `immortalwrt-.*-sysupgrade\.bin`）；界面「生成规则」会产出版本无关规则，避免写死编译日期 |
 | `proxy` | string | `https://gh.acg2.mom/` | GitHub 文件与 API 加速反代节点，留空则直连 GitHub |
 | `min_size_mb` | integer | `15` | **最小固件体积阈值 (MB)**：获取列表与检测匹配时自动忽略小于此体积的文件（过滤 metadata/txt/sha256），设为 `0` 则不限制 |
 | `expected_sha256` | string | 空 | 固件 SHA-256 校验和（64 位十六进制）：<br>• **留空（推荐）**：依次尝试 Release 附件 `sha256sums` / `sha256sums.txt` / `<固件>.sha256` 与 Release 说明正文；<br>• **手动填写**：强制使用该值校验，不一致则自动阻断刷写。<br>三种来源都没有哈希时界面会标注「无校验依据，仅记录本地哈希」，不假装校验通过 |
