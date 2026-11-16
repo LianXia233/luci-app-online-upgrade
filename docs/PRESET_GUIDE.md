@@ -1,7 +1,7 @@
 # 固件云编译预设配置向导（Firmware Builder Preset Guide）
 
-> 适用版本：**luci-app-online-upgrade 2.6.7**
-> PDF 版：[PRESET_GUIDE.pdf](PRESET_GUIDE.pdf)（排版版，便于直接分发）
+> 适用版本：**luci-app-online-upgrade 2.6.11**
+> PDF 版：[PRESET_GUIDE.pdf](PRESET_GUIDE.pdf)（排版版，便于直接分发；**该 PDF 为 2.6.7 时期的历史快照，未包含 `tag_rule` 独立选项，最新配置请以本 Markdown 为准**）
 > 本文是编译期集成指南，不是 LuCI 界面里的独立向导。目标是把仓库地址、固件匹配规则等预设写进固件，刷入后打开页面即可直接「检查更新」。
 
 ---
@@ -55,6 +55,7 @@ mkdir -p files/etc/config
 config online-upgrade 'settings'
 	option repo 'your-username/your-firmware-repo'
 	option tag 'latest'
+	option tag_rule '^H5000M-'
 	option firmware_pattern 'H5000M-.*-sysupgrade\.bin'
 	option proxy 'https://gh.acg2.mom/'
 	option keep_config '1'
@@ -80,7 +81,8 @@ config online-upgrade 'settings'
 | 键 | 默认 | 说明 |
 | :--- | :--- | :--- |
 | `repo` | 空 | `owner/repo`，例如 `LianXia233/OpenWRT-CI` |
-| `tag` | `latest` | `latest`、`latest@^前缀` 或具体 tag |
+| `tag` | `latest` | `latest` 追踪最新 Release；或具体 tag 固定版本 |
+| `tag_rule` | 空 | **独立 TAG 规则**，仅 `tag=latest` 生效；如 `^自用-`、`^H5000M-`，只跟随匹配的标签通道。留空不过滤 |
 | `firmware_pattern` | 空 | 固件文件名 ERE 正则，反斜杠写成 `\.` |
 | `proxy` | `https://gh.acg2.mom/` | 下载加速前缀，留空直连 |
 | `keep_config` | `1` | `1` 升级保留配置（`sysupgrade -f`），`0` 全新刷入 |
@@ -124,6 +126,7 @@ esac
 uci -q batch <<EOC
 set online-upgrade.settings.repo='your-username/your-firmware-repo'
 set online-upgrade.settings.tag='latest'
+set online-upgrade.settings.tag_rule='^H5000M-'
 set online-upgrade.settings.firmware_pattern='$PAT'
 set online-upgrade.settings.proxy='https://gh.acg2.mom/'
 set online-upgrade.settings.keep_config='1'
@@ -154,6 +157,8 @@ cat > files/etc/uci-defaults/99-default-online-upgrade <<'EOF'
 uci -q batch <<EOC
 set online-upgrade.settings.repo='your-username/your-firmware-repo'
 set online-upgrade.settings.tag='latest'
+# tag_rule 可选：按编译通道过滤标签，留空表示追踪全部 Release
+set online-upgrade.settings.tag_rule=''
 set online-upgrade.settings.firmware_pattern='immortalwrt-.*-sysupgrade\.bin'
 set online-upgrade.settings.proxy='https://gh.acg2.mom/'
 set online-upgrade.settings.keep_config='1'
@@ -198,7 +203,7 @@ echo "CONFIG_PACKAGE_luci-app-online-upgrade=y" >> .config
 ## 6. 刷入后验证
 
 ```bash
-uci show online-upgrade | grep -E 'repo|tag|firmware_pattern|keep_config|api_|ttl_'
+uci show online-upgrade | grep -E 'repo|tag|tag_rule|firmware_pattern|keep_config|api_|ttl_'
 ls -l /etc/config/online-upgrade                       # 应为 644 root:root
 ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null   # 已执行则不存在
 ```
@@ -214,6 +219,8 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null   # 已执行则不�
 | 页面配置为空 | 文件路径不是 `/etc/config/online-upgrade` | 确认 `files/etc/config/` 层级 |
 | `uci show` 报错 | section 写成了 `main` | 改为 `online-upgrade.settings.*` |
 | 规则匹配不到固件 | 正则未转义 | `sysupgrade.bin` 写成 `sysupgrade\.bin` |
+| 跨编译通道取错固件 | 未设 `tag_rule` 隔离通道 | 用 `tag_rule='^自用-'`（或对应通道前缀）只跟随该通道 |
+| TAG 规则写错导致检测中止 | 正则语法错误 | 后端会明确报错而非默默忽略；修正 `tag_rule` 后重试 |
 | uci-defaults 没生效 | 脚本无执行权限或非首次启动 | `chmod 755`；重新刷机或手动执行 |
 | 升级后配置丢了 | `keep_config='0'` | 改回 `1` |
 | API 一直失败 | `api_via_proxy='1'` 但镜像不支持 API | 改回 `0` 直连 |
@@ -234,6 +241,6 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null   # 已执行则不�
 
 ## 9. 与界面/文档的关系
 
-- 本文件是 README「使用向导 → 步骤五」的独立版，内容与 2.6.7 代码一致。
+- 本文件是 README「使用向导 → 步骤五」的独立版，内容与 2.6.11 代码一致。
 - 界面行为、任务清理规则见 README「使用向导」与 FAQ。
 - 字段默认值以 `/etc/config/online-upgrade` 与 `luci.online-upgrade` 的 `set_config` 校验范围为准。

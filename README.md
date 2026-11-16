@@ -8,8 +8,8 @@
 [![LuCI Version](https://img.shields.io/badge/LuCI-25.12%2B-0052cc.svg)](https://github.com/openwrt/luci)
 [![OpenWrt/ImmortalWrt](https://img.shields.io/badge/OpenWrt%20%2F%20ImmortalWrt-25.x%2B-brightgreen.svg)](https://immortalwrt.org/)
 [![Rust Tokio](https://img.shields.io/badge/Rust-Tokio%20Async-orange.svg?logo=rust)](https://www.rust-lang.org/)
-[![UI Style](https://img.shields.io/badge/UI-Modern%20Pure%20White-6366f1.svg)](#-界面美学与设计)
-[![Architecture](https://img.shields.io/badge/Arch-aarch64%20%7C%20x86__64-success.svg)](#-支持架构)
+[![UI Style](https://img.shields.io/badge/UI-Modern%20Pure%20White-6366f1.svg)](#1-极简纯白现代视觉设计)
+[![Architecture](https://img.shields.io/badge/Arch-aarch64%20%7C%20x86__64-success.svg)](#支持架构)
 
 <p align="center">
   <b>极简纯白现代美学 · 原生 SVG 科技矢量插画 · 全端响应式适配 · Rust Tokio 多线程分段加速 · 零 Lua 轻量架构</b>
@@ -23,7 +23,7 @@
 
 ---
 
-> 本文档对应插件版本 **2.6.7**。
+> 本文档对应插件版本 **2.6.11**。
 
 ## 简介
 
@@ -62,7 +62,7 @@
 ### 4. 智能仓库识别与固件自动过滤
 - **一键智能解析**：支持直接粘贴 GitHub Release 页面链接、仓库主页链接或简单的 `owner/repo`，全自动提取仓库与标签。
 - **智能过滤小文件（≥15MB）**：点击「获取固件列表」时，自动探查目标 Release 附件产物，**全自动剔除小于 15MB 的非固件文件**（如 `.txt` 配置单、`.manifest` 清单、`.sha256` 校验和），仅保留真正可刷写的固件包供用户点选，一键自动生成固件匹配正则。
-- **版本解析与升级方向判定**：版本号优先取自资产文件名，其次取自 Release tag；支持多段版本（`25.12.0.1`）、`-rc`/`-beta`/`-alpha` 后缀、有无 `v` 前缀、版本号不在首段的命名（如 `vendor-2.1.0-immortalwrt-24.10.0-...`），也不会把 SoC/架构里的数字当版本。比较结果分为「目标更高 / 同版本 / 目标更低 / 无法比较」四种，目标更低时默认拒绝降级（需强制模式）；目标版本与当前固件相同时不算「有更新」，界面不摆普通升级入口，重装只能手动点「强制升级」。
+- **版本解析与升级方向判定**：版本号优先取自资产文件名，其次取自 Release tag；支持多段版本（`25.12.0.1`）、`-rc`/`-beta`/`-alpha` 后缀、有无 `v` 前缀、版本号不在首段的命名（如 `vendor-2.1.0-immortalwrt-24.10.0-...`），也不会把 SoC/架构里的数字当版本。日期型版本比较前按两位年份归一化（`26.11.16` 与 `2026.11.16` 视为同版本）。比较结果分为「目标更高 / 同版本 / 目标更低 / 无法比较」四种，目标更低时默认拒绝降级（需强制模式）；目标版本与当前固件相同时不算「有更新」，界面不摆普通升级入口，重装只能手动点「强制升级」。
 
 ### 5. 多线程分段加速下载与任务管理
 - **动态切片与 Work-Stealing**：自动探测 HTTP Range 支持，按 4MB 动态切片并分派给多达 6 个 Tokio 异步 Worker 并发拉取，快连接自动偷取慢连接分块，拉满带宽潜能。
@@ -221,13 +221,14 @@
 
 ## 使用向导
 
-> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.7 实际界面为准。
+> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.11 实际界面为准。
 
 ### 步骤一：填写固件仓库
 
 1. 打开「在线升级」页面，在仓库输入框中粘贴 GitHub Release 链接、仓库链接或 `owner/repo`（例如 `LianXia233/OpenWRT-CI`）。
 2. 点击「识别」，插件会解析出 `repo` 与 `tag`；也可以直接填写高级配置里的 `repo_url`。
-3. 点击「保存配置」，写入 `/etc/config/online-upgrade` 的 `settings` 段。
+3. 「Release 标签追踪策略」保持 `latest`，在下方独立的「TAG 规则」输入框填通道正则（如 `^自用-`、`^NetWiz-`），只跟随对应编译通道的最新发布；留空则跟随全部 Release。
+4. 点击「保存配置」，写入 `/etc/config/online-upgrade` 的 `settings` 段（`tag` 与 `tag_rule` 分开保存）。
 
 ### 步骤二：获取固件列表并生成匹配规则
 
@@ -282,7 +283,7 @@
 
 > 这是一个**编译期集成指南**，不是界面里的独立向导。目标是把仓库、匹配规则等预设写进固件，刷入后打开页面即可直接「检查更新」。运行时的等价入口是页面里的「高级配置」。
 >
-> 独立文档（可直接复制到云编译仓库）：[`docs/PRESET_GUIDE.md`](docs/PRESET_GUIDE.md)；PDF 版：[`docs/PRESET_GUIDE.pdf`](docs/PRESET_GUIDE.pdf)
+> 独立文档（可直接复制到云编译仓库）：[`docs/PRESET_GUIDE.md`](docs/PRESET_GUIDE.md)；PDF 版：[`docs/PRESET_GUIDE.pdf`](docs/PRESET_GUIDE.pdf)（2.6.7 历史快照，以 Markdown 版为准）
 
 #### 5.1 生效链路
 
@@ -325,7 +326,7 @@
    	option ttl_compat '600'
    	option ttl_network '60'
    ```
-3. 字段含义：`repo` 为 `owner/repo`；`tag` 支持 `latest`、`latest@^前缀` 或具体 tag；`firmware_pattern` 是 ERE 正则，反斜杠需写成 `\.`；`proxy` 留空则直连。
+3. 字段含义：`repo` 为 `owner/repo`；`tag` 用 `latest` 追踪最新 Release，具体 tag 则固定版本；`tag_rule` 是独立的标签过滤正则（如 `^自用-`，仅 `latest` 模式生效）；`firmware_pattern` 是 ERE 正则，反斜杠需写成 `\.`；`proxy` 留空则直连。
 4. 打包后文件位于固件的 `/etc/config/online-upgrade`，权限应为 `644 root:root`，编码 UTF-8、行尾 LF。
 5. 不要写 `enabled`：它是内部开关，保持默认 `0`。
 
@@ -479,6 +480,8 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 界面上除了关系结论，还会显示「本地版本」「依据（含强度 N/100）」「判定状态」三个标签，证据链里另外列出每条版本依据、建议与「标签版本 / 资产名版本是否一致」；`version.confirm_required` 同时提供给 API 调用方。
 
+**日期型版本的年份宽度归一化**：当本机版本与 Release 标签都是日期型（`YY.MM.DD` / `YYYY.MM.DD`）时，比较前统一按两位年份对齐。`26.11.16`（本机 SNAPSHOT 构建日期）与 `2026.11.16`（Release 标签）判为**同版本**，不会因 `26 < 2026` 误判为降级。普通版本号（如 `2.6.10` / `25.12.0.1`）不受影响，仍按数值逐段比较。结果直接给出 `relation`（`newer` / `same` / `older` / `unknown`）与 `has_update`，升级流程据此判定，无需人工判断。
+
 同版本（`same`）不视为「有更新」：后端给出 `has_update=false`，前端不显示「有新版本」角标、不摆出普通升级按钮，只保留手动点击的「同版本重装（强制升级）」；直接调用 `upgrade` 而未加 `--force` 也会被拒绝，重装必须显式强制。降级与无法比较两种情形的处理不受影响。
 
 ### 4. 「自用构建」兜底路径
@@ -524,7 +527,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 apk add --allow-untrusted luci-app-online-upgrade_*.apk
 ```
 
-> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.5.0`），安装包文件名为 `luci-app-online-upgrade_<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`，并附带固定名称的 `online-upgrade-manifest.json` 与 `SHA256SUMS`。标签、产物版本、清单内容与更新日志均由 `Makefile` 的 `PKG_VERSION` / `PKG_RELEASE` 统一派生；`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定，发布前 CI 会校验安装包名与版本相符。
+> **版本号与标签规则**：Release 标签固定为 `v<PKG_VERSION>`（如 `v2.6.11`），安装包文件名为 `luci-app-online-upgrade_<PKG_VERSION>-r<PKG_RELEASE>_<arch>.apk`，并附带固定名称的 `online-upgrade-manifest.json` 与 `SHA256SUMS`。标签、产物版本、清单内容与更新日志均由 `Makefile` 的 `PKG_VERSION` / `PKG_RELEASE` 统一派生；`rust/Cargo.toml` 与模板中的 `app.js?v=` / `style.css?v=` 由 CI 一致性校验锁定，发布前 CI 会校验安装包名与版本相符。
 
 ### 方式 B：从源码编译打包
 
@@ -588,9 +591,9 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 
 | 对象 | 固定格式 | 示例 |
 | :--- | :--- | :--- |
-| Release 标签 | `v<MAJOR>.<MINOR>.<PATCH>` | `v2.5.0` |
-| Release 标题 | `v<MAJOR>.<MINOR>.<PATCH>` | `v2.5.0` |
-| 安装包 | `luci-app-online-upgrade_<版本>-r<发布号>_<架构>.apk` | `luci-app-online-upgrade_2.5.0-r1_aarch64_cortex-a53.apk` |
+| Release 标签 | `v<MAJOR>.<MINOR>.<PATCH>` | `v2.6.11` |
+| Release 标题 | `v<MAJOR>.<MINOR>.<PATCH>` | `v2.6.11` |
+| 安装包 | `luci-app-online-upgrade_<版本>-r<发布号>_<架构>.apk` | `luci-app-online-upgrade_2.6.11-r1_aarch64_cortex-a53.apk` |
 | 机器清单 | `online-upgrade-manifest.json`（固定名称） | 含 `schema`、`version`、`pkg_release`、`tag` 与每个架构的 `file` / `sha256` / `size` |
 | 校验单 | `SHA256SUMS`（固定名称） | 每行 `<sha256>  <文件名>`，含 manifest 自身 |
 
@@ -648,7 +651,8 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | :--- | :--- | :--- | :--- |
 | `enabled` | bool | `0` | **内部开关**：界面不提供修改入口，保持默认 `0` 即可；不要把它当作“启用插件”的开关 |
 | `repo` | string | 空 | GitHub 仓库路径，格式为 `owner/repo`（如 `LianXia233/OpenWRT-CI`） |
-| `tag` | string | `latest` | Release 追踪策略：<br>• `latest`：追踪最新发布的 Release；<br>• `latest@^前缀`：按前缀过滤目标机型最新 Release（如 `latest@^H5000M`）；正则写错会**直接报错并中止检测**（不会退化成“不过滤”而在全部 Release 里挑）；<br>• 具体 Tag 名（如 `v2026.11`） |
+| `tag` | string | `latest` | Release 追踪模式：<br>• `latest`：追踪最新发布的 Release；<br>• 具体 Tag 名（如 `自用-26.11.16`，中文会自动 URL 编码）；<br>过滤通道请用下方的 `tag_rule`，不要把正则写在 `tag` 里 |
+| `tag_rule` | string | 空 | **v2.6.11 独立 TAG 规则**：Release 标签过滤正则，仅 `tag=latest` 时生效。`tag=latest` + `tag_rule=^自用-` 等价于旧写法 `tag=latest@^自用-`；优先级高于写在 `tag` 里的旧内联规则。留空表示不过滤、追踪全部 Release。正则写错会**直接报错并中止检测**（不会退化成“不过滤”） |
 | `firmware_pattern` | string | 空 | 目标固件文件名匹配的正则表达式（如 `immortalwrt-.*-sysupgrade\.bin`）；界面「生成规则」会产出版本无关规则，避免写死编译日期 |
 | `proxy` | string | `https://gh.acg2.mom/` | GitHub 文件与 API 加速反代节点，留空则直连 GitHub |
 | `min_size_mb` | integer | `15` | **最小固件体积阈值 (MB)**：获取列表与检测匹配时自动忽略小于此体积的文件（过滤 metadata/txt/sha256），设为 `0` 则不限制 |
@@ -674,15 +678,15 @@ GitHub Actions 将构建拆成两段，避免在 OpenWrt SDK 内重复编译 Rus
 | `ttl_compat` | integer | `600` | **v2.6** 兼容性模型独立缓存 TTL（秒），范围 15–86400；界面可改 |
 | `ttl_network` | integer | `60` | **v2.6** 网络探测结果缓存 TTL（秒），范围 15–86400；界面可改 |
 
-> 以上字段均为可选并带默认值；`uci-defaults` 只在字段缺失时补默认值，升级不会覆盖已有配置。`repo_url` / `build_branch` / `workflow_filter` / `keep_config` / `api_via_proxy` / `api_timeout` / `ttl_*` 均可在 WebUI「高级配置」中修改；`enabled` 仅作内部开关，不提供界面入口。
+> 以上字段均为可选并带默认值；`uci-defaults` 只在字段缺失时补默认值，升级不会覆盖已有配置。`tag_rule` / `repo_url` / `build_branch` / `workflow_filter` / `keep_config` / `api_via_proxy` / `api_timeout` / `ttl_*` 均可在 WebUI「高级配置」中修改；`enabled` 仅作内部开关，不提供界面入口。
 
 ### 2. 标准 UCI 配置文件示例 (`/etc/config/online-upgrade`)
 
 ```uci
 config online-upgrade 'settings'
-	option enabled '1'
 	option repo 'your-username/your-firmware-repo'
 	option tag 'latest'
+	option tag_rule '^H5000M-'
 	option firmware_pattern 'immortalwrt-.*-sysupgrade\.bin'
 	option proxy 'https://gh.acg2.mom/'
 	option keep_config '1'
@@ -817,7 +821,7 @@ ubus call luci.online-upgrade clear_states_cache                            # �
 <details>
 <summary><b>Q3: 国内网络访问 GitHub Releases API 偶尔超时怎么办？</b></summary>
 1. 可以在插件的「第 3 步」选用已实测可用的反代加速节点（<code>gh.acg2.mom</code>、<code>ghfast.top</code>、<code>ghproxy.net</code>、<code>gh-proxy.com</code> 等共 7 个）或直连；<br>
-2. 如果提示 API 限速（403 Rate Limit），可在「高级配置」中填入您自己的 GitHub Token（仅需 <code>public_repo</code> 只读权限）；<br>
+2. 如果提示 API 限速（403 Rate Limit），公开的 GitHub 仓库默认匿名调用即可；若因局域网共享公网 IP 触发限流，可在「高级配置」中填入 GitHub Personal Access Token。读取公开仓库无需任何 scope：经典 PAT 的 <code>public_repo</code> 或 finer-grained PAT 的公开仓库只读权限均可。Token 只会发给 <code>api.github.com</code>，不会经加速镜像转发；<br>
 3. 下载持续过慢时插件会<b>自动停止并输出原因</b>（实测速度、阈值、观测窗口、当前线路），可换一个节点后点「开始下载」从断点继续；阈值与窗口在「高级配置」中可调，<code>dl_min_speed_kb=0</code> 可关闭该保护。
 </details>
 

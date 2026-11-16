@@ -14,7 +14,12 @@
 - **版本比较误判**：`version::compare()` 补上日期年份宽度归一化——`26.11.16`（本机构建日期）与 `2026.11.16`（Release 标签）此前因首位 26 < 2026 被误判为「降级」，现按同版本处理；普通版本号（4 段）按原数值比较，不受影响。
 - **X86 架构段冲突**：`compat::asset_arch()` 与 `firmware::infer_arch_hints()` 增加「机型段优先」——文件名首段为 `X86` 时直接判 x86-64，忽略历史产物误标的 `aarch64`，避免 x86 设备被拒绝升级。
 - **中文 tag 404**：`probe` 与 check 的固定 tag 查询路径改用 `url_path_encode()` percent-encode，`自用-26.11.16` 可正常查询；不新增依赖。
-- `released_url` 中的中文 tag 同样编码。
+- `release_url` 中的中文 tag 同样编码。
+
+### Documentation
+
+- README 更新至 2.6.11：补 `tag_rule` 独立选项、日期年份宽度归一化说明，修正两个失效锚点（`界面美学与设计` / `支持架构`），统一示例版本与 `enabled` 内部开关表述，明确 Token 只需公开仓库只读权限。
+- `docs/PRESET_GUIDE.md` / `docs/RPC_AND_CONFIG.md` 补 `tag_rule` 字段与 check 结果字段说明；`docs/TEST_REPORT.md` / `IMPLEMENTATION_REPORT.md` 标注为历史快照，避免旧版本号被误认为当前值。
 
 ## [2.6.10] - 2026-11-16
 

@@ -74,6 +74,16 @@ ubus call luci.online-upgrade clear_states_cache
 | `refresh [--only X] [--force]` | 并发刷新四套模型 + 网络，最后只读汇总诊断 | 是 | 否 |
 | `clear-cache` | 清空状态缓存 | 否 | 否 |
 
+`check` 结果（`check` / `check_start` 的 `result`）中与 TAG 规则、版本判定和发布信息相关的字段：
+
+| 字段 | 含义 |
+| :--- | :--- |
+| `tag` / `tag_rule` / `effective_tag` | 配置的追踪模式、独立 TAG 规则，以及二者合并后的有效值（`latest@<rule>` 或固定 tag） |
+| `resolved_tag` | 实际命中的 Release 标签；`release_url` 中的中文 tag 已做 URL 编码 |
+| `latest.published_at` / `published_at_local` | Release 发布日期（UTC 原文 / 本地时间），区别于 `latest.updated`（资产上传时间，CI 分批上传时可能晚约 1 小时） |
+| `latest.created_at` / `created_at_local` | Release 创建时间（UTC 原文 / 本地时间） |
+| `version.relation` / `version.state` / `has_update` / `version.confirm_required` | 版本关系（`newer`/`same`/`older`/`unknown`）、依据状态（`decidable`/`suspect`/`incomparable`）、是否有更新、是否需二次确认；升级流程据此判定，无需人工判断 |
+
 ## 5. UCI 配置：v2.6 新增字段
 
 配置文件：`/etc/config/online-upgrade`，section `settings`。
@@ -119,7 +129,8 @@ _set_default() {
 
 ### 5.3 `set_config` 校验
 
-- 字符串类：`repo_url`（≤512）、`build_branch`（≤128）、`workflow_filter`（≤256）；空串表示清空该可选值；含引号/空白会被拒绝。
+- 字符串类：`repo_url`（≤512）、`build_branch`（≤128）、`workflow_filter`（≤256）、`tag_rule`（≤200）；空串表示清空该可选值；含引号/空白会被拒绝。
+- `tag_rule` 允许正则元字符与中文（如 `^自用-`），仅 `tag=latest` 时由后端 `effective_tag()` 生效；固定 tag 与内联 `latest@...` 写法仍兼容。
 - 整数类：`api_timeout` 与五套 `ttl_*`；传 `0` 表示恢复内置默认值。实现用 `ctx.set(..., '')` 而非依赖某些 ucode 版本不一定提供的 `ctx.delete()`，后端 `ttl_from_uci()` 解析失败即回落默认值。
 
 ## 6. 版本一致性
