@@ -166,6 +166,72 @@ fn kv(text: &str, key: &str) -> Option<String> {
     None
 }
 
+/// 结构化固件版本标记：CI 构建期写入的 `firmware-version` 文件。
+///
+/// 推荐格式（shell 风格 key=value，字段名稳定）：
+///   DEVICE='H5000M'
+///   ARCH='aarch64'
+///   BUILD_TIME='2026-11-17T01:35:20+08:00'
+///   BUILD_SEQ='3'
+///   VERSION='26.11.17'
+///
+/// 兼容处理：任何字段缺失都不影响版本判定；完全没有 VERSION 字段时，
+/// 退化为「把整个文件当纯版本号」（历史单行格式 `26.11.17`）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FirmwareMarker {
+    pub device: Option<String>,
+    pub arch: Option<String>,
+    pub build_time: Option<String>,
+    pub build_seq: Option<String>,
+    pub version: Option<String>,
+    /// 是否解析到了结构化字段（而非纯版本号单行）。
+    pub structured: bool,
+}
+
+impl FirmwareMarker {
+    pub fn parse(text: &str) -> FirmwareMarker {
+        let mut m = FirmwareMarker::default();
+        m.device = kv(text, "DEVICE");
+        m.arch = kv(text, "ARCH");
+        m.build_time = kv(text, "BUILD_TIME");
+        m.build_seq = kv(text, "BUILD_SEQ");
+        m.version = kv(text, "VERSION");
+        m.structured = m.device.is_some()
+            || m.arch.is_some()
+            || m.build_time.is_some()
+            || m.build_seq.is_some()
+            || m.version.is_some();
+        m
+    }
+
+    /// 返回应当交给 `pick()` 的版本文本：结构化时只取 VERSION 字段，
+    /// 否则返回原始文本（兼容单行纯版本号）。
+    pub fn version_text<'a>(&'a self, raw: &'a str) -> &'a str {
+        match (&self.version, self.structured) {
+            (Some(v), true) => v.as_str(),
+            _ => raw.trim(),
+        }
+    }
+
+    /// 供界面/日志展示的附加信息（机型、架构、构建时间、当日构建序号）。
+    pub fn evidence_lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(v) = &self.device {
+            out.push(format!("标记机型 {v}"));
+        }
+        if let Some(v) = &self.arch {
+            out.push(format!("标记架构 {v}"));
+        }
+        if let Some(v) = &self.build_time {
+            out.push(format!("标记构建时间 {v}"));
+        }
+        if let Some(v) = &self.build_seq {
+            out.push(format!("当日第 {v} 次编译"));
+        }
+        out
+    }
+}
+
 /// 镜像构建时间，取自发行标记文件的 mtime。
 ///
 /// rootfs 文件的 mtime 来自构建过程而非刷机时刻，
@@ -331,15 +397,25 @@ pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
 
     // (来源标识, 来源说明, 原始值, 可信度)
     let mut cands: Vec<(String, String, String, Confidence)> = Vec::new();
+    // 结构化固件版本标记的附加信息（机型/架构/构建时间/构建序号），
+    // 命中时并入结果 evidence，供界面与日志展示。
+    let mut marker_evidence: Vec<String> = Vec::new();
 
     for (path, label) in VERSION_FILES {
         if let Some(v) = read_file(path) {
             let v = v.trim().to_string();
             if !v.is_empty() {
+                // 固件版本标记可能是结构化多行格式。结构化时只把 VERSION 字段
+                // 交给 pick()，否则 BUILD_TIME / BUILD_SEQ 里的数字会被误当版本。
+                let marker = FirmwareMarker::parse(&v);
+                let value = marker.version_text(&v).to_string();
+                if marker.structured {
+                    marker_evidence.extend(marker.evidence_lines());
+                }
                 cands.push((
                     format!("version_file:{path}"),
                     label.to_string(),
-                    v,
+                    value,
                     Confidence::Strong,
                 ));
             }
@@ -408,6 +484,7 @@ pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
 
     // 多源交叉验证：记录每个来源解析出的版本，一致则提升依据强度。
     let mut evidence: Vec<String> = Vec::new();
+    evidence.extend(marker_evidence.iter().cloned());
     let mut parsed: Vec<(String, String)> = Vec::new();
     for (key, _, value, _) in &cands {
         if let Some(v) = pick(value) {
@@ -747,5 +824,72 @@ mod tests {
                 .all(|p| !p.contains("/usr/share/online-upgrade/")),
             "插件自身版本文件不得作为固件版本来源"
         );
+    }
+
+    #[test]
+    fn structured_marker_parses_all_fields() {
+        let text = "DEVICE='H5000M'\nARCH='aarch64'\nBUILD_TIME='2026-11-17T01:35:20+08:00'\nBUILD_SEQ='3'\nVERSION='26.11.17'\n";
+        let m = FirmwareMarker::parse(text);
+        assert!(m.structured);
+        assert_eq!(m.device.as_deref(), Some("H5000M"));
+        assert_eq!(m.arch.as_deref(), Some("aarch64"));
+        assert_eq!(m.build_time.as_deref(), Some("2026-11-17T01:35:20+08:00"));
+        assert_eq!(m.build_seq.as_deref(), Some("3"));
+        assert_eq!(m.version.as_deref(), Some("26.11.17"));
+        // 版本文本只取 VERSION 字段，避免 BUILD_TIME/BUILD_SEQ 的数字干扰。
+        assert_eq!(m.version_text(text), "26.11.17");
+        assert_eq!(pick(m.version_text(text)).unwrap().as_display(), "26.11.17");
+        assert_eq!(m.evidence_lines().len(), 4);
+    }
+
+    #[test]
+    fn legacy_single_line_version_still_parses() {
+        let text = "26.11.17\n";
+        let m = FirmwareMarker::parse(text);
+        assert!(!m.structured);
+        assert_eq!(m.version, None);
+        // 无结构化字段时退化为整段文本，旧格式不受影响。
+        assert_eq!(m.version_text(text), "26.11.17");
+        assert_eq!(pick(m.version_text(text)).unwrap().as_display(), "26.11.17");
+    }
+
+    #[test]
+    fn structured_marker_tolerates_missing_fields() {
+        // 只有 VERSION：仍能定版本，附加信息为空也不panic。
+        let only_ver = "VERSION='26.11.17'\n";
+        let m = FirmwareMarker::parse(only_ver);
+        assert!(m.structured);
+        assert_eq!(m.version_text(only_ver), "26.11.17");
+        assert!(m.evidence_lines().is_empty());
+
+        // 只有机型/时间，缺 VERSION：版本文本回退整段，pick 仍能取到日期，
+        // 不会因为缺字段而崩溃或把机型数字误当版本（机型无点分数字）。
+        let partial = "DEVICE='H5000M'\nBUILD_TIME='2026-11-17T01:35:20+08:00'\n";
+        let m2 = FirmwareMarker::parse(partial);
+        assert!(m2.structured);
+        assert_eq!(m2.version, None);
+        assert_eq!(m2.version_text(partial).trim(), partial.trim());
+        assert_eq!(m2.evidence_lines().len(), 2);
+
+        // 空文件：全默认，不结构化。
+        let empty = FirmwareMarker::parse("");
+        assert!(!empty.structured);
+        assert_eq!(empty.version_text(""), "");
+    }
+
+    #[test]
+    fn structured_marker_avoids_build_number_misread() {
+        // 回归防护：结构化后只认 VERSION 字段，结果确定，不依赖 pick() 的打分。
+        let text = "DEVICE='X86'\nARCH='x86-64'\nBUILD_TIME='2026-11-17T23.59.58+08:00'\nBUILD_SEQ='12'\nVERSION='26.11.17'\n";
+        let m = FirmwareMarker::parse(text);
+        let picked = pick(m.version_text(text)).unwrap();
+        assert_eq!(picked.as_display(), "26.11.17", "必须取 VERSION 而非时间戳");
+
+        // 即便某天 pick() 的打分规则变化（如时间戳日期得分更高），
+        // version_text() 直接返回字段值，判定仍锁定在 VERSION 上。
+        assert_eq!(m.version_text(text), "26.11.17");
+        // BUILD_TIME 里的点分时间不能泄漏进版本文本。
+        assert!(!m.version_text(text).contains("23.59.58"));
+        assert!(!m.version_text(text).contains("12"));
     }
 }

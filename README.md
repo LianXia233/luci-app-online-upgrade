@@ -23,7 +23,7 @@
 
 ---
 
-> 本文档对应插件版本 **2.6.12**。
+> 本文档对应插件版本 **2.6.13**。
 
 ## 简介
 
@@ -221,7 +221,7 @@
 
 ## 使用向导
 
-> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.12 实际界面为准。
+> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.13 实际界面为准。
 
 ### 步骤一：填写固件仓库
 
@@ -463,12 +463,24 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 **固件版本标记（`firmware-version`）的使用方法**：这是让 SNAPSHOT 固件拿到强依据（85 分起、消除「判定依据较弱」）的推荐方式喵。
 
-- **位置与内容**：在固件的 `/etc/online-upgrade/firmware-version` 写入一行**日期型版本号**，如 `26.11.16`（`YY.MM.DD`，与 Release tag、资产名版本同源）；文件内容只有这一行版本号，不要写 `KEY=value`，也不要写插件版本喵。
-- **由 CI 自动注入**：本项目的三个云编译仓库（OpenWRT-CI / H5000M-CI-Qmodem / OpenWRT-CI-H5000M）已在构建期由 `Scripts/OnlineUpgradePreset.sh` 自动写入，内容取本次编译日期，每天构建自动升版，无需人工干预喵。
-- **兼容文件名**：插件 additionally 识别 `/etc/online-upgrade/online-upgrade-version` 与旧路径 `/etc/online-upgrade-version`；自行构建时写这三处任一即可，但**只写一处**——多处版本不一致会触发多源冲突降分喵。
-- **不要写插件目录**：插件自身版本文件是 `/usr/share/online-upgrade/version`（形如 `2.6.11-r1`），由插件包维护、会在插件自更新时被替换，**不是**固件版本来源，插件也不会从那里读固件版本喵。
+- **位置**：固件的 `/etc/online-upgrade/firmware-version`。
+- **格式**：shell 风格 `KEY='value'` 多行（与 `/etc/os-release` 一致），字段命名稳定；三个 CI 仓库构建期自动写入如下五字段喵：
+
+  | 字段 | 含义 | 示例 |
+  | :--- | :--- | :--- |
+  | `DEVICE` | 机型 | `H5000M` |
+  | `ARCH` | 目标架构 | `aarch64` |
+  | `BUILD_TIME` | 完整编译时间，精确到秒并带时区 | `2026-11-17T01:35:20+08:00` |
+  | `BUILD_SEQ` | 当天编译序号令牌 | `seq-9876543210`（GitHub `run_id`） |
+  | `VERSION` | 固件版本（`YY.MM.DD`，与 tag/资产同源） | `26.11.17` |
+
+- **版本判定**：插件**只从 `VERSION` 字段取版本**用于升级比较，`DEVICE` / `ARCH` / `BUILD_TIME` / `BUILD_SEQ` 只进入判定依据展示（`version.local_evidence`），不影响比较结果——避免编译时间/序号里的数字被误当版本喵。
+- **BUILD_SEQ 规则**：用 GitHub Actions 的 `run_id`（全局唯一、单调递增），同一 run 重跑序号不变（可重复），不同 run 永不撞号（并发不冲突）；本地手跑无 `GITHUB_RUN_ID` 时回退 `seq-<UTC+8 秒级时间戳>`喵。
+- **兼容处理**：任何字段缺失都不影响版本判定；缺 `VERSION` 时插件退化为「把整段文本当纯版本号解析」；缺 `DEVICE` / `ARCH` / `BUILD_TIME` / `BUILD_SEQ` 时对应展示项省略，不报错喵。旧的单行纯版本号格式（仅一行 `26.11.17`）继续识别喵。
+- **兼容文件名与路径**：插件 additionally 识别 `/etc/online-upgrade/online-upgrade-version` 与旧路径 `/etc/online-upgrade-version`；自行构建时写这三处任一即可，但**只写一处**——多处版本不一致会触发多源冲突降分喵。
+- **不要写插件目录**：插件自身版本文件是 `/usr/share/online-upgrade/version`（形如 `2.6.13-r1`），由插件包维护、会在插件自更新时被替换，**不是**固件版本来源，插件也不会从那里读固件版本喵。
 - **刷机后自动刷新**：该路径不在 `/lib/upgrade/keep.d` 保留清单内，sysupgrade 后随新固件更新为新版本，不会残留旧标记喵。
-- **手动验证**：刷机后执行 `cat /etc/online-upgrade/firmware-version` 应为当天日期；再在线升级插件页执行一次检测，`version.local_source` 应显示 `version_file:/etc/online-upgrade/firmware-version`、`version.local_confidence=strong`、`version.local_basis_score≥85` 喵。
+- **手动验证**：刷机后执行 `cat /etc/online-upgrade/firmware-version` 应看到上述五字段；再在在线升级插件页执行一次检测，`version.local_source` 应显示 `version_file:/etc/online-upgrade/firmware-version`、`version.local_confidence=strong`、`version.local_basis_score≥85`，且依据里列出机型/架构/构建时间/构建序号喵。
 
 **锚点何时会被判为过期**：`last_upgrade_version` 是「上次经本插件成功升级的版本」，不是当前运行固件版本。用户在插件之外手动刷机后，锚点会滞留旧值。检测时若同时满足 ① 固件构建日期按目标年份位数对齐后**等于**目标版本、② 锚点版本**旧于**目标版本，则判定锚点过期，改以构建日期作为本机版本（`source=build_date_matches_target`、`confidence=weak`、`basis_score=55`），并在 `local_evidence` / `local_advice` 中写明冲突与刷新方法。这样同版本会得出 `same` / `has_update=false`，不会误报「发现新版本」。该判断只在日期型标签且构建日期与目标一致时生效，普通发布号（如 `24.10.0`）不受影响；同版本时仍保留显式「强制升级」入口。
 

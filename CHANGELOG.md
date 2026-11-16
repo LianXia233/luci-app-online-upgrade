@@ -2,6 +2,12 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.6.13] - 2026-11-17
+
+### Changed
+
+- **固件版本标记升级为结构化多字段**：`FirmwareMarker` 解析 `/etc/online-upgrade/firmware-version` 的 shell 风格字段 `DEVICE` / `ARCH` / `BUILD_TIME` / `BUILD_SEQ` / `VERSION`。版本判定只取 `VERSION` 字段（避免构建时间/序号数字被误当版本），其余字段进入判定依据展示；任一字段缺失自动降级，缺 `VERSION` 时回退整段文本兼容旧单行格式。新增 4 个单测覆盖结构化/兼容/降级/防误读。
+
 ## [2.6.12] - 2026-11-17
 
 ### Fixed
