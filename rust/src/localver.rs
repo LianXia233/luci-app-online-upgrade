@@ -70,7 +70,7 @@ impl LocalVersion {
             build_ymd: None,
             basis_score: 0,
             evidence: vec!["所有版本来源均无法解析".into()],
-            advice: "在固件中写入 /etc/online-upgrade-version 可获得强依据".into(),
+            advice: "在固件中写入 /etc/online-upgrade/firmware-version 可获得强依据".into(),
         }
     }
 
@@ -104,11 +104,31 @@ impl LocalVersion {
     }
 }
 
-/// 构建流水线可能写入 rootfs 的版本文件。
-const VERSION_FILES: [(&str, &str); 4] = [
+/// 构建流水线可能写入的固件版本标记文件。
+///
+/// 首选路径放在插件自己的配置目录 `/etc/online-upgrade/`，文件名 `firmware-version`
+/// 语义明确（固件版本），与同目录下的其他用途文件互不冲突，也不同于
+/// 插件自身版本文件 `/usr/share/online-upgrade/version`（那是插件版本，不是固件版本）。
+/// 该路径不在 /lib/upgrade/keep.d 保留清单内，因此 sysupgrade 后随新固件刷新，
+/// 不会出现旧固件版本标记残留。
+///
+/// 出于兼容，同一专用目录下也识别 `online-upgrade-version` 这个文件名，
+/// 以及早期文档建议的旧路径 `/etc/online-upgrade-version`。三者任选其一即可，
+/// 插件按下面的数组顺序取第一个可解析的来源；若多处同时存在且版本不一致，
+/// 多源交叉验证会判为冲突并下调依据强度，因此固件只需注入其中一处。
+/// 其余为通用构建版本文件。
+const VERSION_FILES: [(&str, &str); 6] = [
+    (
+        "/etc/online-upgrade/firmware-version",
+        "构建写入的固件版本标记 /etc/online-upgrade/firmware-version",
+    ),
+    (
+        "/etc/online-upgrade/online-upgrade-version",
+        "固件版本标记（兼容文件名）/etc/online-upgrade/online-upgrade-version",
+    ),
     (
         "/etc/online-upgrade-version",
-        "构建写入的版本文件 /etc/online-upgrade-version",
+        "旧版固件版本标记 /etc/online-upgrade-version（兼容读取）",
     ),
     (
         "/etc/build-version",
@@ -424,7 +444,7 @@ pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
             basis_score: score.min(100),
             evidence,
             advice: if distinct.len() > 1 {
-                "各版本来源不一致，建议写入 /etc/online-upgrade-version 统一固件版本标记".into()
+                "各版本来源不一致，建议写入 /etc/online-upgrade/firmware-version 统一固件版本标记".into()
             } else {
                 String::new()
             },
@@ -462,7 +482,7 @@ pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
                     basis_score: 55,
                     evidence: ev,
                     advice: format!(
-                        "锚点 {} 疑似过期：当前固件很可能已是 {}。通过插件升级一次可刷新锚点，或在固件中写入 /etc/online-upgrade-version",
+                        "锚点 {} 疑似过期：当前固件很可能已是 {}。通过插件升级一次可刷新锚点，或在固件中写入 /etc/online-upgrade/firmware-version",
                         anchor.as_display(),
                         build_version.as_display()
                     ),
@@ -496,7 +516,7 @@ pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
                     basis_score: score,
                     evidence: ev,
                     advice: if score < 70 {
-                        "锚点可能过期：成功升级一次可刷新记录，或写入 /etc/online-upgrade-version".into()
+                        "锚点可能过期：成功升级一次可刷新记录，或写入 /etc/online-upgrade/firmware-version".into()
                     } else {
                         String::new()
                     },
@@ -523,7 +543,7 @@ pub fn detect_with_target(target: Option<&Version>) -> LocalVersion {
                 e.push(format!("回退到固件构建时间 {y}-{m:02}-{d:02}（弱依据）"));
                 e
             },
-            advice: "本机版本仅来自构建时间：成功升级一次可写入强依据，或在固件中写入 /etc/online-upgrade-version".into(),
+            advice: "本机版本仅来自构建时间：成功升级一次可写入强依据，或在固件中写入 /etc/online-upgrade/firmware-version".into(),
         },
         None => LocalVersion::missing(if raw_marker.is_empty() {
             "未知"
@@ -703,5 +723,29 @@ mod tests {
         // 2000 年以前的时间戳不可能来自固件构建
         let (y, _, _) = civil_from_days((1_000_000i64 + 8 * 3600).div_euclid(86400));
         assert!(y < 2015);
+    }
+
+    #[test]
+    fn firmware_version_marker_paths_are_ordered_and_distinct() {
+        // 固件版本标记首选专用目录，旧路径保留兼容但排在后面；
+        // 插件自身版本文件（/usr/share/.../version）绝不能混入这里，
+        // 否则会把插件版本当成固件版本。
+        assert_eq!(
+            VERSION_FILES[0].0,
+            "/etc/online-upgrade/firmware-version",
+            "专用固件版本标记必须是首选来源"
+        );
+        // 兼容：新目录下的旧文件名 + 历史旧路径，都要能被识别
+        let recognized: Vec<&str> = VERSION_FILES.iter().map(|(p, _)| *p).collect();
+        assert!(recognized.contains(&"/etc/online-upgrade/online-upgrade-version"));
+        assert!(recognized.contains(&"/etc/online-upgrade-version"));
+        let unique: std::collections::BTreeSet<&str> = recognized.iter().copied().collect();
+        assert_eq!(unique.len(), recognized.len(), "版本标记路径不能重复");
+        assert!(
+            recognized
+                .iter()
+                .all(|p| !p.contains("/usr/share/online-upgrade/")),
+            "插件自身版本文件不得作为固件版本来源"
+        );
     }
 }

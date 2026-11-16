@@ -35,6 +35,7 @@
 | 锚点约束过强：要求 `last_upgrade_version` 与构建日期逐日相等 | mtime 一变就丢弃强依据，退回构建时间并全量标 `suspect` | 改为 14 天窗口分级采信，超前 >30 天的残留锚点拒绝 |
 | 锚点过期未识别：在插件之外手动刷机后 `last_upgrade_version` 滞留旧值 | 旧锚点被当作本机版本，同版本误报 `newer` / `has_update=true` | `anchor_is_stale()` 交叉核对「构建日期 == 目标版本且锚点更旧」，命中时改用构建日期并给出刷新锚点建议 |
 | 版本格式覆盖不足：只认「最后一个点分数字」 | 前缀/后缀/日期/内核版本被误判 | 候选打分 + 证据链，紧邻内核/工具链上下文降权 |
+| 固件未注入版本标记 | SNAPSHOT 固件只有构建时间弱依据，恒显「判定依据较弱」 | CI 构建期自动写 `/etc/online-upgrade/firmware-version`（YY.MM.DD，与 tag/资产同源），插件读为强依据（85 分起）；兼容 `/etc/online-upgrade/online-upgrade-version` 与旧路径 `/etc/online-upgrade-version`，只写一处 |
 
 `state=suspect` 或 `incomparable` 时，结果必须同时给出 `version.local_source` / `version.local_confidence` / `version.local_basis_score` / `version.local_evidence` / `version.local_advice`，以及目标版本的 `latest.version_source` / `latest.version_evidence` / `latest.version_fragment` / `latest.tag_version` / `latest.tag_version_agree`。日志按 `[check] 版本依据:` / `[check] 版本建议:` / `[check] 版本辅助特征:` / `[check] 目标版本依据:` 前缀输出。禁止只给「依据较弱」结论而不列出来源与强度。
 

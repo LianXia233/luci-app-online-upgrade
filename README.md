@@ -23,7 +23,7 @@
 
 ---
 
-> 本文档对应插件版本 **2.6.11**。
+> 本文档对应插件版本 **2.6.12**。
 
 ## 简介
 
@@ -221,7 +221,7 @@
 
 ## 使用向导
 
-> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.11 实际界面为准。
+> 界面入口：LuCI → **系统 → 在线升级**（`/cgi-bin/luci/admin/system/online_upgrade`）。下文按钮名称与默认值均以 2.6.12 实际界面为准。
 
 ### 步骤一：填写固件仓库
 
@@ -423,7 +423,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 | :--- | :--- | :--- |
 | 机型 | `/tmp/sysinfo/board_name`、`/tmp/sysinfo/model`、`/etc/board.json` 的 `model.id`，缺失时才执行 `ubus call system board` | 文件名里的机型令牌，与上面这些标识逐段比对（归一化后比较；平台词、SoC 词、架构词、发行版词、镜像类型词一律**不**作为机型证据） |
 | 架构 | `DISTRIB_ARCH`（`/etc/openwrt_release`）→ `apk --print-arch` → `opkg print-architecture` → `uname -m` | 文件名里的架构/SoC 词表（`aarch64/arm64/cortex-a53/mt7981/rk3568`…、`x86/x86-64/x86_64/amd64`、`mipsel/mt7621`…、`armv7/armhf`…） |
-| 版本 | 按可信度依次尝试：构建写入的版本文件（`/etc/online-upgrade-version`、`/etc/build-version`、`/etc/firmware-version`、`/etc/version`）→ `DISTRIB_VERSION` / `DISTRIB_RELEASE` / os-release 的 `VERSION_ID` → `DISTRIB_DESCRIPTION` / `DISTRIB_REVISION` / `BUILD_ID` / `/etc/openwrt_version` → `base-files` 包版本 → 固件构建时间（`/etc/openwrt_release` 的修改时间）。命中的来源会随结果一起返回并在界面显示，详见「3.1 本机版本从哪来」 | 文件名版本（优先）或 Release tag；通用解析：多段数字 + 可选 `-rc/-beta/-alpha` 后缀 + 可选 `v` 前缀，取最后一个候选避免把厂商/SOC 数字当版本 |
+| 版本 | 按可信度依次尝试：构建写入的固件版本标记（`/etc/online-upgrade/firmware-version` 首选，另兼容 `/etc/online-upgrade/online-upgrade-version` 与旧路径 `/etc/online-upgrade-version`）→ `DISTRIB_VERSION` / `DISTRIB_RELEASE` / os-release 的 `VERSION_ID` → `DISTRIB_DESCRIPTION` / `DISTRIB_REVISION` / `BUILD_ID` / `/etc/openwrt_version` → `base-files` 包版本 → 固件构建时间（`/etc/openwrt_release` 的修改时间）。命中的来源会随结果一起返回并在界面显示，详见「3.1 本机版本从哪来」 | 文件名版本（优先）或 Release tag；通用解析：多段数字 + 可选 `-rc/-beta/-alpha` 后缀 + 可选 `v` 前缀，取最后一个候选避免把厂商/SOC 数字当版本 |
 
 ### 2. 机型 × 架构判定矩阵
 
@@ -449,7 +449,7 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 | 顺序 | 来源 | 可信度 | 典型值 |
 | :--- | :--- | :--- | :--- |
-| 1 | 构建写入的版本文件：`/etc/online-upgrade-version`、`/etc/build-version`、`/etc/firmware-version`、`/etc/version` | 可信 | CI 打进去的自用 tag，如 `26.11.08` |
+| 1 | 构建写入的固件版本标记：`/etc/online-upgrade/firmware-version`（首选）；兼容读取 `/etc/online-upgrade/online-upgrade-version`、`/etc/online-upgrade-version`、`/etc/build-version`、`/etc/firmware-version`、`/etc/version` | 可信 | CI 打进去的自用 tag，如 `26.11.08` |
 | 2 | `/etc/openwrt_release` 的 `DISTRIB_VERSION`、`DISTRIB_RELEASE`；`/etc/os-release` 的 `VERSION_ID` | 可信 | `24.10.0` |
 | 3 | `DISTRIB_DESCRIPTION`（内嵌版本号时） | 可信 | `ImmortalWrt 24.10.0 r28000-…` |
 | 4 | `DISTRIB_REVISION`、`BUILD_ID`、`/etc/openwrt_version`、`base-files` 包版本 | 弱 | `r0-23a1cd3`、`0~23a1cd3` |
@@ -459,7 +459,16 @@ ls /etc/uci-defaults/99-default-online-upgrade 2>/dev/null  # 已执行则不存
 
 **SNAPSHOT 设备的版本锚点**：当上面 1–4 都拿不到可解析版本时，插件会采用「上次成功升级记录的版本」（UCI `last_upgrade_version`）。锚点不再要求与 rootfs 构建日期逐日相等（overlay copy-up、恢复配置都会改动 mtime，逐日相等会把强依据误丢）：按「不晚于构建日期且差值在 14 天窗口内」给出 75–90 分的依据强度，超出窗口仍可用但降为 40–45 分并提示核对，明显超前于构建日期（>30 天）的残留锚点直接拒绝、退回构建时间。这样升级过一次之后，SNAPSHOT 设备不再因为 mtime 变化而一直显示「依据较弱」。
 
-依据强度 `basis_score`（0–100）由来源等级、锚点日期窗口、多源交叉验证共同决定：版本文件/发行信息为 85 分起，多源一致 +10、多源冲突 −20，构建时间弱依据为 30。`basis_score < 60` 即使来源标为可信也会判为 `suspect`，结果里同时给出 `local_advice`（例如「写入 `/etc/online-upgrade-version` 统一固件版本标记」）。
+依据强度 `basis_score`（0–100）由来源等级、锚点日期窗口、多源交叉验证共同决定：版本文件/发行信息为 85 分起，多源一致 +10、多源冲突 −20，构建时间弱依据为 30。`basis_score < 60` 即使来源标为可信也会判为 `suspect`，结果里同时给出 `local_advice`（例如「写入 `/etc/online-upgrade/firmware-version` 统一固件版本标记」）。
+
+**固件版本标记（`firmware-version`）的使用方法**：这是让 SNAPSHOT 固件拿到强依据（85 分起、消除「判定依据较弱」）的推荐方式喵。
+
+- **位置与内容**：在固件的 `/etc/online-upgrade/firmware-version` 写入一行**日期型版本号**，如 `26.11.16`（`YY.MM.DD`，与 Release tag、资产名版本同源）；文件内容只有这一行版本号，不要写 `KEY=value`，也不要写插件版本喵。
+- **由 CI 自动注入**：本项目的三个云编译仓库（OpenWRT-CI / H5000M-CI-Qmodem / OpenWRT-CI-H5000M）已在构建期由 `Scripts/OnlineUpgradePreset.sh` 自动写入，内容取本次编译日期，每天构建自动升版，无需人工干预喵。
+- **兼容文件名**：插件 additionally 识别 `/etc/online-upgrade/online-upgrade-version` 与旧路径 `/etc/online-upgrade-version`；自行构建时写这三处任一即可，但**只写一处**——多处版本不一致会触发多源冲突降分喵。
+- **不要写插件目录**：插件自身版本文件是 `/usr/share/online-upgrade/version`（形如 `2.6.11-r1`），由插件包维护、会在插件自更新时被替换，**不是**固件版本来源，插件也不会从那里读固件版本喵。
+- **刷机后自动刷新**：该路径不在 `/lib/upgrade/keep.d` 保留清单内，sysupgrade 后随新固件更新为新版本，不会残留旧标记喵。
+- **手动验证**：刷机后执行 `cat /etc/online-upgrade/firmware-version` 应为当天日期；再在线升级插件页执行一次检测，`version.local_source` 应显示 `version_file:/etc/online-upgrade/firmware-version`、`version.local_confidence=strong`、`version.local_basis_score≥85` 喵。
 
 **锚点何时会被判为过期**：`last_upgrade_version` 是「上次经本插件成功升级的版本」，不是当前运行固件版本。用户在插件之外手动刷机后，锚点会滞留旧值。检测时若同时满足 ① 固件构建日期按目标年份位数对齐后**等于**目标版本、② 锚点版本**旧于**目标版本，则判定锚点过期，改以构建日期作为本机版本（`source=build_date_matches_target`、`confidence=weak`、`basis_score=55`），并在 `local_evidence` / `local_advice` 中写明冲突与刷新方法。这样同版本会得出 `same` / `has_update=false`，不会误报「发现新版本」。该判断只在日期型标签且构建日期与目标一致时生效，普通发布号（如 `24.10.0`）不受影响；同版本时仍保留显式「强制升级」入口。
 

@@ -2,7 +2,11 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [2.6.11] - 2026-11-17
+## [2.6.12] - 2026-11-17
+
+### Fixed
+
+- **固件版本标记路径与识别**：新增专用固件版本标记 `/etc/online-upgrade/firmware-version`（由 CI 构建期自动注入 `YY.MM.DD`，与 tag/资产同源），插件读为强依据消除「判定依据较弱」。兼容识别 `/etc/online-upgrade/online-upgrade-version` 与旧路径 `/etc/online-upgrade-version`；三处任选其一，多处不一致触发多源冲突降分。插件自身版本文件 `/usr/share/online-upgrade/version` 不作为固件版本来源。
 
 ### Added
 
