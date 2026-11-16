@@ -2,6 +2,20 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.6.11] - 2026-11-17
+
+### Added
+
+- **独立 TAG 规则选项 `tag_rule`**：Release 追踪模式（`tag`）与标签过滤正则解耦，UI 新增独立输入框；`tag=latest` + `tag_rule=^自用-` 等价于旧 `latest@^自用-`。后端 `effective_tag()` 兼容旧内联写法与固定标签，老配置无需迁移。
+- 升级结果新增 `published_at` / `published_at_local` / `created_at` / `created_at_local`，前端「发布时间」不再为空；顶层输出 `tag_rule` / `effective_tag`。
+
+### Fixed
+
+- **版本比较误判**：`version::compare()` 补上日期年份宽度归一化——`26.11.16`（本机构建日期）与 `2026.11.16`（Release 标签）此前因首位 26 < 2026 被误判为「降级」，现按同版本处理；普通版本号（4 段）按原数值比较，不受影响。
+- **X86 架构段冲突**：`compat::asset_arch()` 与 `firmware::infer_arch_hints()` 增加「机型段优先」——文件名首段为 `X86` 时直接判 x86-64，忽略历史产物误标的 `aarch64`，避免 x86 设备被拒绝升级。
+- **中文 tag 404**：`probe` 与 check 的固定 tag 查询路径改用 `url_path_encode()` percent-encode，`自用-26.11.16` 可正常查询；不新增依赖。
+- `released_url` 中的中文 tag 同样编码。
+
 ## [2.6.10] - 2026-11-16
 
 ### Fixed

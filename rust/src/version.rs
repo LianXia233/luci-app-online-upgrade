@@ -182,10 +182,20 @@ impl Version {
     }
 
     pub fn compare(&self, other: &Version) -> Ordering {
+        // 年份宽度归一化：当两个版本都是日期型（YY.MM.DD / YYYY.MM.DD）时，
+        // 把 4 位年份折成 2 位再比较。否则 `26.11.16`（本机构建日期）与
+        // `2026.11.16`（Release 标签）会因首位 26 < 2026 被误判为「降级」，
+        // 触发错误的 confirm_required 或漏报更新。versions_agree() 早已做
+        // 同样归一化，这里让实际判定与之一致。
+        let both_dates = self.is_date_tag() && other.is_date_tag();
         let n = self.nums.len().max(other.nums.len());
         for i in 0..n {
-            let a = self.nums.get(i).copied().unwrap_or(0);
-            let b = other.nums.get(i).copied().unwrap_or(0);
+            let mut a = self.nums.get(i).copied().unwrap_or(0);
+            let mut b = other.nums.get(i).copied().unwrap_or(0);
+            if i == 0 && both_dates {
+                a %= 100;
+                b %= 100;
+            }
             if a != b {
                 return a.cmp(&b);
             }
@@ -543,6 +553,35 @@ mod tests {
         assert_eq!(a.compare(&b), Ordering::Less);
         assert_eq!(b.compare(&a), Ordering::Greater);
         assert_eq!(a.compare(&pick("25.12.0").unwrap()), Ordering::Equal);
+    }
+
+    #[test]
+    fn date_year_width_compares_correctly() {
+        // 核心回归：本机构建日期 2 位年 vs Release 标签 4 位年。
+        let short = pick("26.11.16").unwrap();
+        let long = pick("2026.11.16").unwrap();
+        assert_eq!(short.compare(&long), Ordering::Equal);
+        assert_eq!(long.compare(&short), Ordering::Equal);
+        // 4 位年跨年同样正确
+        assert_eq!(pick("2026.01.05").unwrap().compare(&pick("26.01.05").unwrap()), Ordering::Equal);
+        // 日期型版本之间的先后不被年份宽度干扰
+        assert_eq!(pick("26.11.16").unwrap().compare(&pick("2026.11.15").unwrap()), Ordering::Greater);
+        assert_eq!(pick("2026.11.14").unwrap().compare(&pick("26.11.16").unwrap()), Ordering::Less);
+        // 普通版本号（非日期）不受影响：4 位数值仍按数值比较
+        assert_eq!(pick("2026.11.16.1").unwrap().compare(&pick("26.11.16.1").unwrap()), Ordering::Greater);
+    }
+
+    #[test]
+    fn common_version_formats_compare() {
+        // 预发布 < 正式版；rc < beta 的反向（rc 更接近正式）
+        assert_eq!(pick("25.12.0-rc1").unwrap().compare(&pick("25.12.0").unwrap()), Ordering::Less);
+        assert_eq!(pick("25.12.0-beta2").unwrap().compare(&pick("25.12.0-rc1").unwrap()), Ordering::Less);
+        // 构建号 -rN：同版本可比较
+        assert_eq!(pick("2.6.10-r1").unwrap().compare(&pick("2.6.10-r2").unwrap()), Ordering::Less);
+        // SNAPSHOT 低于正式发布
+        assert_eq!(pick("25.12.0-SNAPSHOT").unwrap().compare(&pick("25.12.0").unwrap()), Ordering::Less);
+        // v 前缀不影响
+        assert_eq!(pick("v26.11.16").unwrap().compare(&pick("26.11.16").unwrap()), Ordering::Equal);
     }
 
     #[test]

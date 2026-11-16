@@ -318,6 +318,12 @@ impl FirmwareFile {
 /// 从文件名 token 中提取可识别的架构/ABI 线索（只做初筛，不做兼容判定）。
 pub fn infer_arch_hints(name: &str) -> (String, String) {
     let n = name.to_ascii_lowercase().replace('_', "-");
+    // 机型段优先：首段为 X86 时直接判 x86-64，忽略历史产物里误标的
+    // aarch64 架构段（与 compat::asset_arch 的策略保持一致）。
+    let head = n.split('-').next().unwrap_or("");
+    if head == "x86" || head.starts_with("x86_") {
+        return ("x86-64".to_string(), String::new());
+    }
     let arch_markers = [
         "aarch64", "arm64", "x86-64", "x86_64", "amd64", "mipsel", "mips64",
         "armv7", "armhf", "cortex-a53", "cortex-a7", "cortex-a9", "24kc", "74kc",

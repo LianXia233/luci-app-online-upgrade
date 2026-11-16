@@ -782,6 +782,7 @@ async fn check(client: &reqwest::Client) -> Outcome {
     let cfg = Cfg {
         repo: repo.clone(),
         tag: "latest".into(),
+        tag_rule: String::new(),
         proxy: fw.proxy,
         pattern: String::new(),
         token: fw.token,
@@ -1499,6 +1500,7 @@ fn cfg_for_download() -> Cfg {
     Cfg {
         repo: plugin_repo(),
         tag: "latest".into(),
+        tag_rule: String::new(),
         proxy: fw.proxy,
         pattern: String::new(),
         token: fw.token,

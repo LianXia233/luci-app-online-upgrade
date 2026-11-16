@@ -80,6 +80,7 @@ ubus call luci.online-upgrade clear_states_cache
 
 | 字段 | 类型 | 默认值 | 作用 |
 | :--- | :--- | :--- | :--- |
+| `tag_rule` | string | 空 | **v2.7 独立 TAG 规则**：Release 标签过滤正则，仅 `tag=latest` 时生效。`tag=latest` + `tag_rule=^自用-` 等价于旧 `latest@^自用-`；优先级高于内联写法。老配置无需迁移 |
 | `repo_url` | string | 空 | 通用仓库地址；支持 `owner/repo`、完整 URL、`/tree/<分支>`、`.git`、SSH 形式。**优先级高于旧 `repo`；留空则回退旧 `repo`，保证历史配置兼容** |
 | `build_branch` | string | 空 | Actions 运行记录分支筛选；留空跟随仓库默认分支。不影响 Release 资产检测 |
 | `workflow_filter` | string | 空 | Actions Workflow 名称子串筛选；留空显示全部公开工作流 |
@@ -123,13 +124,13 @@ _set_default() {
 
 ## 6. 版本一致性
 
-CI `verify` 作业要求以下四处版本严格一致，当前均为 `2.6.3`（v2.6.1 修 `-32002`，v2.6.2 修 `rpcd` 停服回归，v2.6.3 修自更新卡「安装中」）：
+CI `verify` 作业要求以下四处版本严格一致，当前均为 `2.6.11`：
 
 | 位置 | 值 |
 | :--- | :--- |
-| `Makefile` `PKG_VERSION` | `2.6.3` |
-| `rust/Cargo.toml` `version` | `2.6.3` |
-| `rust/Cargo.lock` `online-upgrade` | `2.6.3` |
-| `main.ut` 的 `app.js?v=` / `style.css?v=` | `2.6.3` |
+| `Makefile` `PKG_VERSION` | `2.6.11` |
+| `rust/Cargo.toml` `version` | `2.6.11` |
+| `rust/Cargo.lock` `online-upgrade` | `2.6.11` |
+| `main.ut` 的 `app.js?v=` / `style.css?v=` | `2.6.11` |
 
 浏览器缓存戳随版本升级，避免升级后仍执行旧脚本。**修复前端问题时必须 bump 版本**：若 `app.js?v=` 不变，浏览器会继续使用缓存的旧脚本，代码修复不会生效；插件自我更新也依赖 `PKG_VERSION` 判断是否有新版本。

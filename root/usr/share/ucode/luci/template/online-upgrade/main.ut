@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.10">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.11">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -606,7 +606,12 @@
 				<div class="ou-form-field">
 					<label for="cfg-tag">Release 标签追踪策略</label>
 					<input type="text" id="cfg-tag" class="ou-input-text" placeholder="latest / latest@^前缀 / 指定 tag" spellcheck="false">
-					<p class="ou-field-help">支持 <code>latest</code> 追最新，或 <code>latest@^前缀</code> 过滤特定分支标签</p>
+					<p class="ou-field-help">支持 <code>latest</code> 追最新，或填写固定 tag（如 <code>自用-26.11.16</code>，中文自动编码）</p>
+				</div>
+				<div class="ou-form-field">
+					<label for="cfg-tag-rule">TAG 规则（Release 标签正则，可选）</label>
+					<input type="text" id="cfg-tag-rule" class="ou-input-text font-mono" placeholder="例: ^自用-  /  ^NetWiz-" spellcheck="false">
+					<p class="ou-field-help">独立选项：仅 <code>latest</code> 模式生效，用于过滤要跟随的发布通道（自用 / NetWiz / FM350 / MT5700）。优先级高于写在追踪策略里的 <code>latest@前缀</code></p>
 				</div>
 				<div class="ou-form-field ou-field-full">
 					<label for="cfg-pattern">固件文件名匹配正则</label>
@@ -892,6 +897,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.10"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.11"></script>
 
 {% include('footer') %}

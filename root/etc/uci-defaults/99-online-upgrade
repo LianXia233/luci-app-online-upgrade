@@ -10,6 +10,7 @@ if [ -z "$(uci -q get online-upgrade.settings)" ]; then
 	uci -q batch <<-EOF
 		set online-upgrade.settings.enabled='0'
 		set online-upgrade.settings.tag='latest'
+		set online-upgrade.settings.tag_rule=''
 		set online-upgrade.settings.proxy='https://gh.acg2.mom/'
 		set online-upgrade.settings.keep_config='1'
 		set online-upgrade.settings.last_upgrade_version='0'
@@ -31,6 +32,8 @@ _set_default() {
 _set_default repo_url ''
 _set_default build_branch ''
 _set_default workflow_filter ''
+# v2.7：TAG 规则独立选项，老用户升级后补齐为空值（不改变原有行为）
+_set_default tag_rule ''
 _set_default api_via_proxy '0'
 _set_default api_timeout '25'
 _set_default ttl_actions '120'

@@ -1406,6 +1406,7 @@
 	function fillConfig(settings) {
 		$('cfg-repo').value = settings.repo || '';
 		$('cfg-tag').value = settings.tag || '';
+		if ($('cfg-tag-rule')) $('cfg-tag-rule').value = settings.tag_rule || '';
 		$('cfg-pattern').value = settings.firmware_pattern || '';
 		$('cfg-minsize').value = (settings.min_size_mb == null || settings.min_size_mb === '')
 			? '15' : settings.min_size_mb;
@@ -1610,13 +1611,15 @@
 	function updateSummary() {
 		var repo = $('cfg-repo').value.trim();
 		var tag = $('cfg-tag').value.trim() || 'latest';
+		var rule = $('cfg-tag-rule') ? $('cfg-tag-rule').value.trim() : '';
 		var pattern = $('cfg-pattern').value.trim();
 		var el = $('config-summary');
 		if (!el) return;
 		if (!repo) { el.textContent = '尚未配置固件源'; return; }
-		var tagText = tag === 'latest' ? '自动追踪最新 Release'
-			: tag.indexOf('latest@') === 0 ? '追踪最新 Release (仅取标签匹配 ' + tag.slice(7) + ' 的)'
-			: '固定标签 ' + tag;
+		var effective = tag === 'latest' && rule ? ('latest@' + rule) : tag;
+		var tagText = effective === 'latest' ? '自动追踪最新 Release'
+			: effective.indexOf('latest@') === 0 ? '追踪最新 Release (标签匹配 ' + effective.slice(7) + ')'
+			: '固定标签 ' + effective;
 		el.textContent = '当前: ' + repo + '  ·  ' + tagText +
 			(pattern ? '  ·  固件匹配 ' + pattern : '  ·  未设匹配规则');
 	}
@@ -1626,6 +1629,7 @@
 		var cfg = {
 			repo: $('cfg-repo').value.trim(),
 			tag: $('cfg-tag').value.trim(),
+			tag_rule: $('cfg-tag-rule') ? $('cfg-tag-rule').value.trim() : '',
 			pattern: $('cfg-pattern').value.trim(),
 			proxy: $('cfg-proxy').value.trim(),
 			github_token: $('cfg-token').value,

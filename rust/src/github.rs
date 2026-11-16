@@ -34,6 +34,9 @@ pub const MIRRORS: &[&str] = &[
 pub struct Cfg {
     pub repo: String,
     pub tag: String,
+    /// 独立的 TAG 规则（标签过滤正则）。与 `tag` 解耦：
+    /// `tag=latest` + `tag_rule=^自用-` 等价于旧写法 `tag=latest@^自用-`。
+    pub tag_rule: String,
     pub proxy: String,
     pub pattern: String,
     pub token: Option<String>,
@@ -91,10 +94,54 @@ pub fn load_cfg() -> Cfg {
     Cfg {
         repo: uci::get_or("repo", ""),
         tag: uci::get_or("tag", DEFAULT_TAG),
+        tag_rule: uci::get_or("tag_rule", ""),
         proxy,
         pattern: uci::get_or("firmware_pattern", ""),
         token: uci::get("github_token"),
     }
+}
+
+/// 把 TAG 追踪策略与独立的 TAG 规则合并为「有效 tag 值」。
+///
+/// 兼容性与优先级（v2.7 起 TAG 规则独立成项）：
+///   - `tag_rule` 非空且 `tag` 为 latest（或空）→ `latest@<tag_rule>`；
+///   - `tag_rule` 非空但 `tag` 是固定标签 → 忽略规则并记日志（固定标签无需过滤）；
+///   - `tag_rule` 为空 → 原样返回 `tag`，继续支持历史 `latest@<正则>` 内联写法。
+/// 这样老配置不迁移也能工作，新配置把规则放到单独选项里。
+pub fn effective_tag(tag: &str, tag_rule: &str) -> String {
+    let t = tag.trim();
+    let rule = tag_rule.trim();
+    if rule.is_empty() {
+        return if t.is_empty() { DEFAULT_TAG.to_string() } else { t.to_string() };
+    }
+    if t.is_empty() || t.eq_ignore_ascii_case(DEFAULT_TAG) {
+        return format!("latest@{rule}");
+    }
+    if t.starts_with("latest@") {
+        // 内联规则与独立规则同时存在时，以独立选项为准，避免两处规则打架。
+        return format!("latest@{rule}");
+    }
+    // 固定标签 + 独立规则：固定标签语义明确，规则不再生效。
+    t.to_string()
+}
+
+/// 对 URL 路径段做 percent-encoding（RFC 3986 unreserved 字符保留，
+/// 其余字节按 UTF-8 逐字节编码）。用于中文 tag（如 `自用-26.11.16`）
+/// 拼进 `/releases/tags/{tag}` 与 release 页面 URL，避免 404。
+/// 不引入新依赖，保持交叉编译依赖树不变。
+pub fn url_path_encode(s: &str) -> String {
+    fn unreserved(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~')
+    }
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if unreserved(b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 fn host_of(url: &str) -> &str {
@@ -508,22 +555,33 @@ pub async fn check(client: &reqwest::Client) -> Value {
             "未配置 GitHub 仓库,请先在「仓库配置」中填写(owner/repo)",
         );
     }
+    // TAG 追踪策略与独立 TAG 规则合并（兼容旧 latest@<正则> 内联写法）。
+    let effective = effective_tag(&cfg.tag, &cfg.tag_rule);
     // `latest` 追踪最新 Release；`latest@<正则>` 将候选限制为
-    // 标签名匹配该正则的 Release（例如 `latest@^自用`）。
-    let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
-    let tag_filter = match parse_tag_filter(&cfg.tag) {
+    // 标签名匹配该正则的 Release（例如 `latest@^自用-`）。
+    let use_latest = effective.eq_ignore_ascii_case("latest") || effective.starts_with("latest@");
+    let tag_filter = match parse_tag_filter(&effective) {
         Ok(f) => f,
         Err(e) => return check_error(&cfg, &e),
     };
+    if !cfg.tag_rule.trim().is_empty() && !use_latest {
+        logline!(
+            "[check] 固定标签 [{}] 忽略独立 TAG 规则 [{}]",
+            effective,
+            cfg.tag_rule.trim()
+        );
+    }
     let api = if use_latest {
         format!(
             "https://api.github.com/repos/{}/releases?per_page=30",
             cfg.repo
         )
     } else {
+        // 固定 tag 可能是中文（如 `自用-26.11.16`），必须 percent-encode。
         format!(
             "https://api.github.com/repos/{}/releases/tags/{}",
-            cfg.repo, cfg.tag
+            cfg.repo,
+            url_path_encode(&effective)
         )
     };
 
@@ -785,6 +843,16 @@ pub async fn check(client: &reqwest::Client) -> Value {
         .unwrap_or("")
         .to_string();
 
+    // Release 级发布日期（区别于资产 updated_at）：CI 分批上传时
+    // published_at 可能早于资产 updated_at 约 1 小时，前端两处分别展示。
+    let (published, created) = match matched_rel {
+        Some(rel) => (
+            rel.get("published_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            rel.get("created_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        ),
+        None => (String::new(), String::new()),
+    };
+
     let name_hit = crate::version::pick_best(&file_name);
     let tag_hit = crate::version::pick_best(&resolved_tag);
     let (fw_version, version_source) = match name_hit.as_ref() {
@@ -891,6 +959,10 @@ pub async fn check(client: &reqwest::Client) -> Value {
         ("size_human".into(), Value::str(&human_size(size))),
         ("updated".into(), Value::str(&updated)),
         ("updated_local".into(), Value::str(&utc_to_local(&updated))),
+        ("published_at".into(), Value::str(&published)),
+        ("published_at_local".into(), Value::str(&utc_to_local(&published))),
+        ("created_at".into(), Value::str(&created)),
+        ("created_at_local".into(), Value::str(&utc_to_local(&created))),
         ("version".into(), Value::str(&fw_version)),
         ("version_source".into(), Value::str(version_source)),
         ("tag_version".into(), Value::str(&tag_version)),
@@ -992,12 +1064,15 @@ pub async fn check(client: &reqwest::Client) -> Value {
         ("ok".into(), Value::Bool(true)),
         ("repo".into(), Value::str(&cfg.repo)),
         ("tag".into(), Value::str(&cfg.tag)),
+        ("tag_rule".into(), Value::str(&cfg.tag_rule)),
+        ("effective_tag".into(), Value::str(&effective)),
         ("resolved_tag".into(), Value::str(&resolved_tag)),
         (
             "release_url".into(),
             Value::str(&format!(
                 "https://github.com/{}/releases/tag/{}",
-                cfg.repo, resolved_tag
+                cfg.repo,
+                url_path_encode(&resolved_tag)
             )),
         ),
         ("current".into(), Value::Obj(current)),
@@ -1059,17 +1134,27 @@ pub async fn check(client: &reqwest::Client) -> Value {
 /// repo/tag 从参数读取，不读取 UCI —— 完全不绑定来源。
 pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
     let cur = load_cfg();
+    let raw_tag = if tag.is_empty() {
+        DEFAULT_TAG.to_string()
+    } else {
+        tag.to_string()
+    };
+    // 前端传入的 tag 若已是 latest（或含内联 latest@规则）则直接用；
+    // 否则套用 UCI 中配置的独立 tag_rule。
+    let tag_rule = if raw_tag.eq_ignore_ascii_case(DEFAULT_TAG) {
+        cur.tag_rule.clone()
+    } else {
+        String::new()
+    };
     let cfg = Cfg {
         repo: repo.to_string(),
-        tag: if tag.is_empty() {
-            "latest".into()
-        } else {
-            tag.to_string()
-        },
+        tag: raw_tag,
+        tag_rule,
         proxy: cur.proxy,
         pattern: String::new(),
         token: cur.token,
     };
+    let effective = effective_tag(&cfg.tag, &cfg.tag_rule);
     if cfg.repo.is_empty() || !cfg.repo.contains('/') {
         return Value::Obj(vec![
             ("ok".into(), Value::Bool(false)),
@@ -1079,8 +1164,8 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
             ),
         ]);
     }
-    let use_latest = cfg.tag.eq_ignore_ascii_case("latest") || cfg.tag.starts_with("latest@");
-    let tag_filter = match parse_tag_filter(&cfg.tag) {
+    let use_latest = effective.eq_ignore_ascii_case("latest") || effective.starts_with("latest@");
+    let tag_filter = match parse_tag_filter(&effective) {
         Ok(f) => f,
         Err(e) => {
             return Value::Obj(vec![
@@ -1097,7 +1182,8 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
     } else {
         format!(
             "https://api.github.com/repos/{}/releases/tags/{}",
-            cfg.repo, cfg.tag
+            cfg.repo,
+            url_path_encode(&effective)
         )
     };
 
@@ -1121,7 +1207,7 @@ pub async fn probe(client: &reqwest::Client, repo: &str, tag: &str) -> Value {
     };
 
     let device = crate::compat::DeviceProfile::current();
-    for (tag_name, release) in release_candidates(&parsed, use_latest, &cfg.tag, &tag_filter) {
+    for (tag_name, release) in release_candidates(&parsed, use_latest, &effective, &tag_filter) {
         if let Some(assets) = release.get("assets").and_then(|a| a.as_arr()) {
             if assets.is_empty() {
                 continue;
@@ -1646,5 +1732,28 @@ mod tests {
     fn human() {
         assert_eq!(human_size(52_428_800), "50.0 MB");
         assert_eq!(human_size(512), "512 B");
+    }
+
+    #[test]
+    fn effective_tag_merges_standalone_rule() {
+        // 独立 TAG 规则：latest + tag_rule → latest@<rule>
+        assert_eq!(effective_tag("latest", "^自用-"), "latest@^自用-");
+        assert_eq!(effective_tag("", "^NetWiz-"), "latest@^NetWiz-");
+        // 无独立规则：原样兼容旧内联写法与固定标签
+        assert_eq!(effective_tag("latest@^FM350-", ""), "latest@^FM350-");
+        assert_eq!(effective_tag("自用-26.11.16", ""), "自用-26.11.16");
+        // 固定标签 + 独立规则：规则忽略，固定标签优先
+        assert_eq!(effective_tag("自用-26.11.16", "^FM350-"), "自用-26.11.16");
+        // 内联 + 独立规则并存：以独立规则为准
+        assert_eq!(effective_tag("latest@^OLD-", "^NEW-"), "latest@^NEW-");
+    }
+
+    #[test]
+    fn url_path_encode_handles_chinese_tag() {
+        assert_eq!(url_path_encode("自用-26.11.16"),
+                   "%E8%87%AA%E7%94%A8-26.11.16");
+        assert_eq!(url_path_encode("MT5700-26.11.16"), "MT5700-26.11.16");
+        // unreserved 字符保持不变
+        assert_eq!(url_path_encode("aZ09-._~"), "aZ09-._~");
     }
 }

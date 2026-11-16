@@ -476,6 +476,7 @@ const methods = {
 		args: {
 			repo: '',
 			tag: '',
+			tag_rule: '',
 			pattern: '',
 			proxy: '',
 			github_token: '',
@@ -565,6 +566,14 @@ const methods = {
 				if (length(a.tag) > 160 || bad_field(a.tag))
 					return { ok: false, error: '标签格式不正确(不能含引号或空白)' };
 				ctx.set('online-upgrade', 'settings', 'tag', a.tag);
+				touched++;
+			}
+			// v2.7：独立 TAG 规则。空字符串表示清空规则（追踪全部 Release）。
+			// 允许正则元字符与中文（如 ^自用-），禁止引号与空白。
+			if (type(a.tag_rule) == 'string') {
+				if (length(a.tag_rule) > 200 || bad_field(a.tag_rule))
+					return { ok: false, error: 'TAG 规则不合法(不能含引号或空白)' };
+				ctx.set('online-upgrade', 'settings', 'tag_rule', a.tag_rule);
 				touched++;
 			}
 			// 空字符串表示显式清空匹配规则（此时后端只接受结构化比对判定为

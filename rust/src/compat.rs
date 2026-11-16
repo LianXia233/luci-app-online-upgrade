@@ -527,6 +527,18 @@ fn asset_arch(fname_norm: &str) -> (Arch, Vec<String>) {
 
     let mut evidence = Vec::new();
     let mut found: Option<Arch> = None;
+
+    // 机型段优先（CI 历史产物兼容）：三个 CI 仓库统一命名中，
+    // 固件首段是机型（H5000M / AP3000M / X86）。历史 X86 产物曾把
+    // 架构段误标为 aarch64，若按 token 遍历会先命中 Aarch64 而与
+    // x86 设备判为冲突。故首段明确为 X86 时直接判 X86，忽略后续
+    // 架构段 token；机型段缺失时再回退到通用 token 扫描。
+    let first_token = fname_norm.split('-').next().unwrap_or("");
+    let head = first_token.to_ascii_lowercase();
+    if head == "x86" || head.starts_with("x86_") || head == "x86-64" {
+        return (Arch::X86, vec![format!("{first_token}(机型段优先)")]);
+    }
+
     for (arch, list) in [
         (Arch::Aarch64, AARCH64),
         (Arch::X86, X86),
@@ -1110,5 +1122,19 @@ mod tests {
         // hiveton 是身份标识但不够具体（不含数字）→ 部分匹配
         assert_eq!(r.model_check, "partial");
         assert!(!r.can_upgrade);
+    }
+
+    #[test]
+    fn x86_head_token_overrides_mislabeled_aarch64() {
+        // CI 历史 X86 资产架构段误标 aarch64，机型段优先应判 X86。
+        let (a, e) = asset_arch("x86-netwiz-fm350-aarch64-26.11.16-efi.img.gz");
+        assert_eq!(a, Arch::X86);
+        assert!(e.iter().any(|x| x.contains("机型段优先")));
+        // 新命名 x86-64 同样判 X86
+        let (a2, _) = asset_arch("x86-netwiz-fm350-x86-64-26.11.16-efi.img.gz");
+        assert_eq!(a2, Arch::X86);
+        // 无 X86 机型段时仍按 token 扫描
+        let (a3, _) = asset_arch("h5000m-seluse-aarch64-26.11.16-sysupgrade.bin");
+        assert_eq!(a3, Arch::Aarch64);
     }
 }
