@@ -170,7 +170,7 @@
 			confirm.className = 'btn ou-btn ' + (tone === 'danger' ? 'ou-btn-danger' :
 				tone === 'warning' ? 'ou-btn-warning' : 'ou-btn-primary');
 
-			document.body.classList.add('ou-modal-open');
+			syncBodyLock();
 			// 先强制提交初始 transform，再同步添加 is-open；
 			// 不依赖 requestAnimationFrame（部分 WebView/无头环境不会触发）。
 			void root.offsetWidth;
@@ -191,7 +191,7 @@
 		dialogOnClose = null;
 		root.classList.remove('is-open');
 		root.setAttribute('aria-hidden', 'true');
-		document.body.classList.remove('ou-modal-open');
+		syncBodyLock();
 		if (dialogPrevFocus && dialogPrevFocus.focus) {
 			try { dialogPrevFocus.focus(); } catch (e) { /* ignore */ }
 		}
@@ -237,6 +237,163 @@
 			var visible = [];
 			for (var i = 0; i < buttons.length; i++) {
 				if (buttons[i].offsetParent !== null) visible.push(buttons[i]);
+			}
+			if (!visible.length) return;
+			var first = visible[0];
+			var last = visible[visible.length - 1];
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		});
+	}
+
+	/* ---------------- 模块抽屉 / 底部面板 ---------------- */
+
+	// 四个功能模块统一走同一套控制器：桌面端右侧抽屉，移动端底部面板。
+	// 遮罩层与 ESC 均不关闭面板，只能点「关闭」按钮，避免误触丢失配置。
+	var activeDrawer = null;
+	var drawerLastFocus = null;
+	var configBaseline = null;
+
+	function syncBodyLock() {
+		var need = !!dialogResolve || !!activeDrawer;
+		document.body.classList.toggle('ou-modal-open', need);
+	}
+
+	function drawerRoot(name) {
+		return $('drawer-' + name);
+	}
+
+	function configFormValues() {
+		var card = $('card-config');
+		if (!card) return null;
+		var out = {};
+		card.querySelectorAll('input, select, textarea').forEach(function (el) {
+			if (!el.id || el.type === 'file') return;
+			out[el.id] = el.value;
+		});
+		return out;
+	}
+
+	function configDirty() {
+		if (!configBaseline) return false;
+		var now = configFormValues();
+		if (!now) return false;
+		for (var k in configBaseline) {
+			if (Object.prototype.hasOwnProperty.call(configBaseline, k) &&
+				String(now[k]) !== String(configBaseline[k])) return true;
+		}
+		return false;
+	}
+
+	function setConfigBaseline() {
+		configBaseline = configFormValues();
+		updateDrawerDirty('config');
+	}
+
+	function isDrawerDirty(name) {
+		return name === 'config' && configDirty();
+	}
+
+	function updateDrawerDirty(name) {
+		var pill = $(name + '-dirty');
+		if (!pill) return;
+		pill.hidden = !isDrawerDirty(name);
+	}
+
+	function openDrawer(name) {
+		var root = drawerRoot(name);
+		if (!root || activeDrawer) return;
+		drawerLastFocus = document.activeElement;
+		activeDrawer = name;
+		root.classList.add('is-open');
+		root.setAttribute('aria-hidden', 'false');
+		syncBodyLock();
+		if (name === 'config') updateDrawerDirty('config');
+		if (name === 'states') loadStates();
+		if (name === 'backup') refreshBackups();
+		if (name === 'plugin') loadPluginInfo();
+		setTimeout(function () {
+			var btn = root.querySelector('[data-ou-drawer-close]');
+			if (btn && activeDrawer === name) btn.focus();
+		}, 60);
+	}
+
+	function closeDrawerNow(name) {
+		var root = drawerRoot(name);
+		if (!root) return;
+		root.classList.remove('is-open');
+		root.setAttribute('aria-hidden', 'true');
+		if (activeDrawer === name) activeDrawer = null;
+		syncBodyLock();
+		if (drawerLastFocus && drawerLastFocus.focus) {
+			try { drawerLastFocus.focus(); } catch (e) { /* ignore */ }
+		}
+		drawerLastFocus = null;
+	}
+
+	function requestCloseDrawer(name) {
+		if (activeDrawer !== name) return;
+		if (!isDrawerDirty(name)) {
+			closeDrawerNow(name);
+			return;
+		}
+		ouConfirm({
+			tone: 'warning',
+			eyebrow: '未保存的修改',
+			title: '放弃本次修改？',
+			message: '「仓库与更新源配置」还有未保存的修改。\n关闭面板会丢弃这些修改，且无法撤销。',
+			confirmText: '放弃并关闭',
+			cancelText: '继续编辑'
+		}).then(function (ok) {
+			if (ok) {
+				closeDrawerNow(name);
+				return;
+			}
+			var root = drawerRoot(name);
+			var btn = root && root.querySelector('[data-ou-drawer-close]');
+			if (btn) btn.focus();
+		});
+	}
+
+	function bindDrawers() {
+		document.querySelectorAll('[data-ou-drawer-open]').forEach(function (btn) {
+			btn.addEventListener('click', function () {
+				openDrawer(btn.getAttribute('data-ou-drawer-open'));
+			});
+		});
+		document.querySelectorAll('[data-ou-drawer-close]').forEach(function (btn) {
+			btn.addEventListener('click', function () {
+				requestCloseDrawer(btn.getAttribute('data-ou-drawer-close'));
+			});
+		});
+		// 配置表单变化时点亮「未保存」标记；程序化填入的字段在对应操作里手动刷新。
+		var configCard = $('card-config');
+		if (configCard) {
+			configCard.addEventListener('input', function () { updateDrawerDirty('config'); });
+			configCard.addEventListener('change', function () { updateDrawerDirty('config'); });
+		}
+		// 抽屉内焦点循环；ESC 不关闭（与遮罩一致，只认明确的关闭按钮）。
+		document.addEventListener('keydown', function (e) {
+			if (!activeDrawer || dialogResolve) return;
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				return;
+			}
+			if (e.key !== 'Tab') return;
+			var root = drawerRoot(activeDrawer);
+			if (!root) return;
+			var nodes = root.querySelectorAll('.ou-drawer-panel button:not([disabled]), ' +
+				'.ou-drawer-panel input:not([disabled]), .ou-drawer-panel select:not([disabled]), ' +
+				'.ou-drawer-panel textarea:not([disabled]), .ou-drawer-panel summary, ' +
+				'.ou-drawer-panel a[href]');
+			var visible = [];
+			for (var i = 0; i < nodes.length; i++) {
+				if (nodes[i].offsetParent !== null) visible.push(nodes[i]);
 			}
 			if (!visible.length) return;
 			var first = visible[0];
@@ -1478,6 +1635,7 @@
 		$('cfg-tag').value = tag || 'latest';
 		hint('config-hint', ' 已识别:仓库 ' + repo + ',标签 ' + (tag || 'latest') + '(可点「获取固件列表」选择固件文件)', 'ok');
 		updateSummary();
+		updateDrawerDirty('config');
 	}
 
 	function getAssetSizeMB(a) {
@@ -1606,6 +1764,7 @@
 		$('cfg-pattern').value = '^' + generalizeAssetName(name) + '$';
 		hint('config-hint', ' 已生成版本无关匹配规则(编译日期自动通配;新版固件无需重新生成)', 'ok');
 		updateSummary();
+		updateDrawerDirty('config');
 	}
 
 	function updateSummary() {
@@ -1659,6 +1818,7 @@
 			if (r && r.ok) {
 				hint('config-hint', ' 配置已保存', 'ok');
 				updateSummary();
+				setConfigBaseline();
 			} else {
 				hint('config-hint', ' ' + (r && r.error ? r.error : '保存失败'), 'err');
 			}
@@ -2502,7 +2662,6 @@
 					if (tries >= 4) {
 						statesRefreshing = false;
 						setBusy('btn-states-refresh', false, '刷新状态');
-						applyMobileSections();
 						return;
 					}
 					setTimeout(tick, 2000);
@@ -2581,69 +2740,6 @@
 
 	/* ---------------- 手机端信息密度 ---------------- */
 
-	// 手机端默认收起下载任务、备份、仓库配置与运行日志，只保留标题和展开入口。
-	// 桌面端完全不受影响；按钮由 JS 动态插入，模板里不增加额外结构。
-	var MOBILE_MQ = window.matchMedia('(max-width: 760px)');
-	var MOBILE_SECTIONS = [
-		['card-states', '远程状态与诊断'],
-		['card-backup', '备份与恢复'],
-		['card-config', '仓库配置'],
-		['card-log', '运行日志']
-	];
-
-	function applyMobileSections() {
-		MOBILE_SECTIONS.forEach(function (item) {
-			var card = $(item[0]);
-			if (!card) return;
-			var head = card.querySelector('.ou-card-head');
-			var btn = card.querySelector('.ou-mobile-toggle');
-			if (!btn && head) {
-				btn = document.createElement('button');
-				btn.type = 'button';
-				btn.className = 'ou-mobile-toggle';
-				card.insertBefore(btn, head.nextSibling);
-				btn.addEventListener('click', function () {
-					var collapsed = card.classList.toggle('ou-mobile-collapsed');
-					card.setAttribute('data-mobile-expanded', collapsed ? '0' : '1');
-					btn.textContent = (collapsed ? '展开' : '收起') + item[1];
-				});
-			}
-			if (!btn) return;
-			if (!MOBILE_MQ.matches) {
-				card.classList.remove('ou-mobile-collapsed');
-				btn.style.display = 'none';
-				return;
-			}
-			btn.style.display = '';
-			var expanded = card.getAttribute('data-mobile-expanded') === '1';
-			card.classList.toggle('ou-mobile-collapsed', !expanded);
-			btn.textContent = (expanded ? '收起' : '展开') + item[1];
-		});
-	}
-
-	if (MOBILE_MQ.addEventListener) {
-		MOBILE_MQ.addEventListener('change', applyMobileSections);
-	} else if (MOBILE_MQ.addListener) {
-		MOBILE_MQ.addListener(applyMobileSections);
-	}
-
-	// 插件更新卡在 PC 与手机都默认折叠；展开后显示操作按钮、版本元信息与更新规范。
-	function setupPluginCollapse() {
-		var card = $('card-plugin');
-		var btn = $('plugin-toggle');
-		if (!card || !btn) return;
-		var label = btn.querySelector('span');
-		var apply = function (collapsed) {
-			card.classList.toggle('ou-card-collapsed', collapsed);
-			btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-			if (label) label.textContent = collapsed ? '展开插件更新' : '收起插件更新';
-		};
-		apply(true);
-		btn.addEventListener('click', function () {
-			apply(!card.classList.contains('ou-card-collapsed'));
-		});
-	}
-
 	/* ---------------- 初始化 ---------------- */
 
 	function boot() {
@@ -2691,29 +2787,29 @@
 		$('btn-netcheck') && $('btn-netcheck').addEventListener('click', runNetcheck);
 		$('btn-clear-states') && $('btn-clear-states').addEventListener('click', clearStatesCache);
 		bindDialog();
-		applyMobileSections();
-		setupPluginCollapse();
+		bindDrawers();
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {
 			pill.addEventListener('click', function () {
 				var p = this.getAttribute('data-proxy');
 				$('cfg-proxy').value = p;
 				hint('config-hint', p ? ('已填入代理节点: ' + p) : '已切换为 GitHub 直连模式', 'ok');
+				updateDrawerDirty('config');
 			});
 		});
 
 		refreshLog();
-		// 只读取缓存，不发起 GitHub 请求；避免与其它初始化请求叠加触发限流
-		loadStates();
-		loadPluginInfo();
+		// 模块数据按需加载：打开对应抽屉时才读取，避免首屏叠加无关请求。
 		ubus('get_plugin_status').then(function (st) {
 			if (renderPluginStatus(st)) startPluginPoll();
 		}).catch(function () {});
 		ubus('get_sysinfo').then(renderSysinfo).catch(function () { setText('cur-ver', '读取失败'); });
-		ubus('get_config').then(function (r) { fillConfig(r.settings || {}); }).catch(function (e) {
+		ubus('get_config').then(function (r) {
+			fillConfig(r.settings || {});
+			setConfigBaseline();
+		}).catch(function (e) {
 			hint('config-hint', ' 读取配置失败: ' + e.message, 'err');
 		});
-		refreshBackups();
 		refreshTasks();
 
 		// 若已有任务在运行（例如升级途中刷新了页面），恢复对应的界面状态

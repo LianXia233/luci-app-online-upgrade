@@ -3037,6 +3037,250 @@ details[open] > .ou-plugin-convention-summary .ou-evidence-chevron {
 	}
 }
 /* ==========================================================================
+   功能模块入口 + 响应式面板：桌面右侧 Drawer / 手机底部 Bottom Sheet
+   ========================================================================== */
+
+.ou-module-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+	gap: 14px;
+}
+
+.ou-module-tile {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	width: 100%;
+	padding: 16px;
+	border: 1px solid #e2e8f0;
+	border-radius: 14px;
+	background: #ffffff;
+	text-align: left;
+	cursor: pointer;
+	font: inherit;
+	color: inherit;
+	transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.ou-module-tile:hover {
+	border-color: #bfdbfe;
+	box-shadow: 0 6px 18px -6px rgba(37, 99, 235, 0.18);
+	transform: translateY(-1px);
+}
+
+.ou-module-tile:focus-visible {
+	outline: 2px solid #2563eb;
+	outline-offset: 2px;
+}
+
+.ou-module-icon {
+	width: 42px;
+	height: 42px;
+	border-radius: 12px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	background: #eff6ff;
+	border: 1px solid #dbeafe;
+	color: #2563eb;
+}
+
+.ou-module-icon.violet { background: #f5f3ff; border-color: #ede9fe; color: #7c3aed; }
+.ou-module-icon.amber { background: #fffbeb; border-color: #fef3c7; color: #d97706; }
+.ou-module-icon.indigo { background: #eef2ff; border-color: #e0e7ff; color: #4f46e5; }
+.ou-module-icon svg { width: 20px; height: 20px; }
+
+.ou-module-text {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	flex: 1;
+}
+
+.ou-module-name {
+	font-size: 14px;
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.ou-module-desc {
+	font-size: 12px;
+	line-height: 1.5;
+	color: #64748b;
+}
+
+.ou-module-arrow {
+	width: 18px;
+	height: 18px;
+	flex-shrink: 0;
+	color: #94a3b8;
+	transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.ou-module-tile:hover .ou-module-arrow {
+	color: #2563eb;
+	transform: translateX(3px);
+}
+
+/* ---- Drawer shell ---- */
+.ou-drawer {
+	position: fixed;
+	inset: 0;
+	z-index: 18000;
+	display: flex;
+	justify-content: flex-end;
+	pointer-events: none;
+	visibility: hidden;
+	transition: visibility 0s linear 0.32s;
+}
+
+.ou-drawer.is-open {
+	pointer-events: auto;
+	visibility: visible;
+	transition-delay: 0s;
+}
+
+.ou-drawer-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(15, 23, 42, 0.45);
+	-webkit-backdrop-filter: blur(3px);
+	backdrop-filter: blur(3px);
+	opacity: 0;
+	transition: opacity 0.25s ease;
+}
+
+.ou-drawer.is-open .ou-drawer-backdrop { opacity: 1; }
+
+.ou-drawer-panel {
+	position: relative;
+	z-index: 1;
+	width: min(620px, 100%);
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	background: #ffffff;
+	box-shadow: -24px 0 64px rgba(15, 23, 42, 0.18);
+	transform: translateX(100%);
+	transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ou-drawer.is-open .ou-drawer-panel { transform: none; }
+
+.ou-drawer-grip { display: none; }
+
+.ou-drawer-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+
+/* 抽屉内的卡片退化为面板内容，不再叠加外框与阴影 */
+.ou-drawer-panel .ou-card {
+	margin: 0 !important;
+	padding: 0 24px 28px !important;
+	border: 0 !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	background: transparent !important;
+	/* LuCI 主题给 .cbi-section 设了 overflow:hidden，会阻断 sticky 吸顶头部 */
+	overflow: visible !important;
+}
+
+.ou-drawer-panel .ou-card:hover {
+	border: 0 !important;
+	box-shadow: none !important;
+}
+
+/* 卡片头部吸顶：关闭按钮与模块操作始终可见 */
+.ou-drawer-panel .ou-card .ou-card-head {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	margin: 0 -24px 18px !important;
+	padding: 18px 24px 14px !important;
+	background: #ffffff !important;
+	border-bottom: 1px solid #f1f5f9 !important;
+}
+
+/* #card-states 原本用 overflow:hidden 防横向溢出；抽屉内需放开，否则 sticky 失效 */
+.ou-container .ou-drawer-panel #card-states {
+	overflow: visible !important;
+}
+
+.ou-drawer-close { margin-left: 2px; }
+
+.ou-drawer-dirty {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 10px;
+	border-radius: 999px;
+	background: #fffbeb;
+	border: 1px solid #fde68a;
+	font-size: 12px;
+	font-weight: 600;
+	color: #b45309;
+	white-space: nowrap;
+}
+
+.ou-drawer-dirty[hidden] { display: none !important; }
+
+/* ---- 手机端：底部弹出面板 ---- */
+@media (max-width: 760px) {
+	.ou-drawer {
+		align-items: flex-end;
+		justify-content: center;
+	}
+
+	.ou-drawer-panel {
+		width: 100%;
+		height: auto;
+		max-height: 90vh;
+		min-height: 45vh;
+		border-radius: 20px 20px 0 0;
+		box-shadow: 0 -16px 48px rgba(15, 23, 42, 0.2);
+		transform: translateY(100%);
+	}
+
+	.ou-drawer.is-open .ou-drawer-panel { transform: none; }
+
+	.ou-drawer-grip {
+		display: block;
+		flex: 0 0 auto;
+		width: 44px;
+		height: 4px;
+		margin: 8px auto 6px;
+		border-radius: 999px;
+		background: #cbd5e1;
+	}
+
+	.ou-drawer-scroll { padding-bottom: env(safe-area-inset-bottom); }
+
+	.ou-drawer-panel .ou-card { padding: 0 16px 22px !important; }
+
+	.ou-drawer-panel .ou-card .ou-card-head {
+		margin: 0 -16px 14px !important;
+		padding: 12px 16px !important;
+	}
+
+	.ou-drawer-close { margin-left: 0; }
+
+	.ou-module-grid { grid-template-columns: 1fr; gap: 10px; }
+	.ou-module-tile { padding: 13px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ou-drawer-panel,
+	.ou-drawer-backdrop,
+	.ou-drawer { transition-duration: 0.01ms !important; }
+}
+
+/* ==========================================================================
    通用弹窗：桌面居中 Dialog，手机底部 Bottom Sheet
    ========================================================================== */
 
