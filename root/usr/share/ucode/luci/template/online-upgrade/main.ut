@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.16">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.17">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -439,7 +439,7 @@
 						<div class="ou-head-actions">
 							<button id="btn-states-refresh" class="btn ou-btn ou-btn-primary" type="button" title="刷新四套状态模型（重新查询 GitHub）">刷新状态</button>
 							<button id="btn-states-reload" class="btn ou-btn ou-btn-default" type="button" title="仅读取缓存，不发起网络请求">读取缓存</button>
-							<button type="button" class="btn ou-btn ou-btn-default ou-drawer-close" data-ou-drawer-close="states" title="关闭面板（不会自动保存）">
+							<button type="button" class="btn ou-btn ou-btn-danger ou-drawer-close" data-ou-drawer-close="states" title="关闭面板（不会自动保存）">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 								<span class="btn-label">关闭</span>
 							</button>
@@ -537,7 +537,7 @@
 								<span class="btn-label">手动恢复</span>
 							</button>
 							<input type="file" id="manual-backup-file" accept=".tar.gz,.tgz,.gz" style="display:none">
-							<button type="button" class="btn ou-btn ou-btn-default ou-drawer-close" data-ou-drawer-close="backup" title="关闭面板（不会自动保存）">
+							<button type="button" class="btn ou-btn ou-btn-danger ou-drawer-close" data-ou-drawer-close="backup" title="关闭面板（不会自动保存）">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 								<span class="btn-label">关闭</span>
 							</button>
@@ -587,7 +587,7 @@
 						</div>
 						<div class="ou-btn-row">
 							<span class="ou-drawer-dirty" id="config-dirty" hidden>未保存的修改</span>
-							<button type="button" class="btn ou-btn ou-btn-default ou-drawer-close" data-ou-drawer-close="config" title="关闭面板（不会自动保存）">
+							<button type="button" class="btn ou-btn ou-btn-danger ou-drawer-close" data-ou-drawer-close="config" title="关闭面板（不会自动保存）">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 								<span class="btn-label">关闭</span>
 							</button>
@@ -848,7 +848,7 @@
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
 								<span class="btn-label">刷新页面</span>
 							</button>
-							<button type="button" class="btn ou-btn ou-btn-default ou-drawer-close" data-ou-drawer-close="plugin" title="关闭面板（不会自动保存）">
+							<button type="button" class="btn ou-btn ou-btn-danger ou-drawer-close" data-ou-drawer-close="plugin" title="关闭面板（不会自动保存）">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-btn-svg"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 								<span class="btn-label">关闭</span>
 							</button>
@@ -1007,6 +1007,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.16"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.17"></script>
 
 {% include('footer') %}

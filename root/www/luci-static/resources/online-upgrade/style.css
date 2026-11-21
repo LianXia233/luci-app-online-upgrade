@@ -3383,6 +3383,26 @@ details[open] > .ou-plugin-convention-summary .ou-evidence-chevron {
 
 .ou-drawer-close { margin-left: 2px; }
 
+/* 关闭按钮：红色实心高亮；尺寸/圆角/字距沿用 .ou-btn，与其它按钮保持同一规格 */
+.ou-container .ou-btn.ou-drawer-close {
+	background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%) !important;
+	border-color: #b91c1c !important;
+	color: #ffffff !important;
+	box-shadow: 0 2px 8px rgba(220, 38, 38, 0.24) !important;
+}
+
+.ou-container .ou-btn.ou-drawer-close:hover:not(:disabled) {
+	background: linear-gradient(180deg, #b91c1c 0%, #991b1b 100%) !important;
+	border-color: #991b1b !important;
+	color: #ffffff !important;
+	box-shadow: 0 3px 10px rgba(220, 38, 38, 0.3) !important;
+}
+
+.ou-container .ou-btn.ou-drawer-close:focus-visible {
+	outline: 2px solid #ef4444 !important;
+	outline-offset: 2px !important;
+}
+
 .ou-drawer-dirty {
 	display: inline-flex;
 	align-items: center;
