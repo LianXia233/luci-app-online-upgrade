@@ -1330,6 +1330,25 @@
 	.ou-container .ou-ttl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 }
 
+/* 升级进度卡：嵌在固件状态卡内、下载任务正上方，弱化嵌套外框 */
+.ou-container .ou-card .ou-card-progress {
+	margin: 18px 0 0 !important;
+	padding: 18px !important;
+	border-radius: 14px !important;
+	border-color: #dbeafe !important;
+	background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%) !important;
+	box-shadow: none !important;
+}
+.ou-container .ou-card .ou-card-progress:hover {
+	border-color: #bfdbfe !important;
+	box-shadow: none !important;
+}
+.ou-container .ou-card .ou-card-progress .ou-card-head {
+	margin-bottom: 16px !important;
+	padding-bottom: 12px !important;
+	border-bottom-color: #e8f0fb !important;
+}
+
 /* 固件状态卡内的下载任务子区块 */
 .ou-container .ou-subsection {
 	margin-top: 18px !important;

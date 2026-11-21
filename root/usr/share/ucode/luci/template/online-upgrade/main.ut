@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.13">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.14">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -253,6 +253,63 @@
 			<p class="ou-hint" id="check-result">点击「检查更新」检测 GitHub 是否有新固件</p>
 		</div>
 
+		<!-- 1c. 升级进度（置于下载任务上方，随任务显示） -->
+		<div class="cbi-section ou-card ou-card-progress" id="card-progress" style="display:none">
+			<div class="ou-card-head">
+				<div class="ou-head-title-wrap">
+					<div class="ou-icon-badge cyan">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-head-icon"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+					</div>
+					<div>
+						<div class="ou-head-title-row">
+							<h3>固件升级进行中</h3>
+							<span class="ou-status-pill update">
+								<span class="ou-dot update"></span> 执行中
+							</span>
+						</div>
+						<p class="ou-head-sub">系统正在安全调度中，请保持路由器电源稳定连接，切勿断电</p>
+					</div>
+				</div>
+			</div>
+
+			<!-- 升级流程步骤条 -->
+			<div class="ou-step-pipeline">
+				<div class="ou-step-node" id="step-env">
+					<div class="ou-step-circle">1</div>
+					<span class="ou-step-text">环境预检</span>
+				</div>
+				<div class="ou-step-line"></div>
+				<div class="ou-step-node" id="step-dl">
+					<div class="ou-step-circle">2</div>
+					<span class="ou-step-text">分段下载</span>
+				</div>
+				<div class="ou-step-line"></div>
+				<div class="ou-step-node" id="step-backup">
+					<div class="ou-step-circle">3</div>
+					<span class="ou-step-text">配置备份</span>
+				</div>
+				<div class="ou-step-line"></div>
+				<div class="ou-step-node" id="step-flash">
+					<div class="ou-step-circle">4</div>
+					<span class="ou-step-text">刷写重启</span>
+				</div>
+			</div>
+
+			<!-- 进度条轨道 -->
+			<div class="ou-progress-wrap">
+				<div class="ou-progress-track">
+					<div class="ou-progress-bar" id="progress-bar" style="width:0%">
+						<div class="ou-progress-shimmer"></div>
+					</div>
+					<div class="ou-progress-label" id="progress-pct">0%</div>
+				</div>
+			</div>
+			<div class="ou-progress-info">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-info-icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
+				<span class="ou-hint" id="progress-text">正在启动升级流程...</span>
+			</div>
+		</div>
+
 		<!-- 下载任务（与固件状态合并） -->
 		<div class="ou-subsection">
 			<div class="ou-subsection-head">
@@ -368,63 +425,6 @@
 		</div>
 
 		<p class="ou-hint" id="states-hint">四套状态各自独立缓存与刷新；API 故障不会覆盖已获取的真实状态。</p>
-	</div>
-
-	<!-- 2. 升级进度 -->
-	<div class="cbi-section ou-card ou-card-progress" id="card-progress" style="display:none">
-		<div class="ou-card-head">
-			<div class="ou-head-title-wrap">
-				<div class="ou-icon-badge cyan">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-head-icon"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-				</div>
-				<div>
-					<div class="ou-head-title-row">
-						<h3>固件升级进行中</h3>
-						<span class="ou-status-pill update">
-							<span class="ou-dot update"></span> 执行中
-						</span>
-					</div>
-					<p class="ou-head-sub">系统正在安全调度中，请保持路由器电源稳定连接，切勿断电</p>
-				</div>
-			</div>
-		</div>
-
-		<!-- 升级流程步骤条 -->
-		<div class="ou-step-pipeline">
-			<div class="ou-step-node" id="step-env">
-				<div class="ou-step-circle">1</div>
-				<span class="ou-step-text">环境预检</span>
-			</div>
-			<div class="ou-step-line"></div>
-			<div class="ou-step-node" id="step-dl">
-				<div class="ou-step-circle">2</div>
-				<span class="ou-step-text">分段下载</span>
-			</div>
-			<div class="ou-step-line"></div>
-			<div class="ou-step-node" id="step-backup">
-				<div class="ou-step-circle">3</div>
-				<span class="ou-step-text">配置备份</span>
-			</div>
-			<div class="ou-step-line"></div>
-			<div class="ou-step-node" id="step-flash">
-				<div class="ou-step-circle">4</div>
-				<span class="ou-step-text">刷写重启</span>
-			</div>
-		</div>
-
-		<!-- 进度条轨道 -->
-		<div class="ou-progress-wrap">
-			<div class="ou-progress-track">
-				<div class="ou-progress-bar" id="progress-bar" style="width:0%">
-					<div class="ou-progress-shimmer"></div>
-				</div>
-				<div class="ou-progress-label" id="progress-pct">0%</div>
-			</div>
-		</div>
-		<div class="ou-progress-info">
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ou-info-icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
-			<span class="ou-hint" id="progress-text">正在启动升级流程...</span>
-		</div>
 	</div>
 
 	<!-- 3. 备份与恢复 -->
@@ -897,6 +897,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.13"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.14"></script>
 
 {% include('footer') %}
