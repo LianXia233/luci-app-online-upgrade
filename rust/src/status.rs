@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const STATUS_FILE: &str = "/tmp/online-upgrade-status.json";
 pub const LOG_FILE: &str = "/tmp/online-upgrade.log";
-pub const MAX_LOG_SIZE: u64 = 2 * 1024 * 1024; // tmpfs 中日志占用的内存上限为 2MB
-pub const KEEP_LOG_SIZE: usize = 1024 * 1024; // 超过 2MB 触发裁剪时仅保留最近 1MB
+pub const MAX_LOG_SIZE: u64 = 512 * 1024; // tmpfs 中日志占用的内存上限为 512KB
+pub const KEEP_LOG_SIZE: usize = 256 * 1024; // 超过 512KB 触发裁剪时仅保留最近 256KB
 
 fn now() -> u64 {
     SystemTime::now()
@@ -120,8 +120,8 @@ pub fn log(line: &str) {
     }
 }
 
-/// 将可读日志限制在 tmpfs 的内存上限内（≤ 2MB）：
-/// 超过 2MB 时仅保留最近 1MB。
+/// 将可读日志限制在 tmpfs 的内存上限内（≤ 512KB）：
+/// 超过 512KB 时仅保留最近 256KB。
 pub fn trim_log() {
     let len = fs::metadata(LOG_FILE).map(|m| m.len()).unwrap_or(0);
     if len <= MAX_LOG_SIZE {

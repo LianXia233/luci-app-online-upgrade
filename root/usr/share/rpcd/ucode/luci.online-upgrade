@@ -159,15 +159,18 @@ function read_plugin_status() {
 function read_log() {
 	let st = stat(LOG_FILE);
 	if (!st || st.size == 0)
-		return { log: '', size: 0 };
+		return { log: '', size: 0, file_size: 0, limit: 524288 };
 	let content = readfile(LOG_FILE);
 	if (!content)
-		return { log: '', size: 0 };
+		return { log: '', size: 0, file_size: st.size, limit: 524288 };
 	content = '' + content;
-	// 内存上限：读取缓冲区最大 2MB（2 * 1024 * 1024 = 2097152 字节）
-	if (length(content) > 2097152)
-		content = substr(content, length(content) - 2097152);
-	return { log: content, size: length(content) };
+	// 内存上限：读取缓冲区最大 512KB（512 * 1024 = 524288 字节）。
+	// 截断后丢弃首个不完整行：既避免半行日志，也避免切断多字节 UTF-8 字符。
+	if (length(content) > 524288) {
+		content = substr(content, length(content) - 524288);
+		content = replace(content, /^[^\n]*\n/, '');
+	}
+	return { log: content, size: length(content), file_size: st.size, limit: 524288 };
 }
 
 function list_backups() {

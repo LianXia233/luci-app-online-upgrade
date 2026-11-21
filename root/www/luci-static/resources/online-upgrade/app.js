@@ -1845,6 +1845,42 @@
 	/* ---------------- 日志 ---------------- */
 
 	var LOG_VIEW_MAX = 1200;
+	var LOG_LIMIT_BYTES = 512 * 1024;
+	var logMeta = { size: 0, file_size: 0, limit: LOG_LIMIT_BYTES, truncated: false };
+	var logCategory = 'all';
+	var logErrorsOnly = false;
+
+	// 任务类型：优先按后端 [tag] 归类，旧日志没有标签时按正文关键字兜底。
+	var LOG_CATS = [
+		{ key: 'download', label: '下载', tags: ['download', 'dl'] },
+		{ key: 'check', label: '检测', tags: ['check', 'verify', 'compat', 'ghapi', 'releases', 'artifacts', 'actions', 'network', 'probe'] },
+		{ key: 'upgrade', label: '升级', tags: ['upgrade', 'flash', 'sysupgrade'] },
+		{ key: 'backup', label: '备份', tags: ['backup', 'restore', 'snapshot'] },
+		{ key: 'plugin', label: '插件', tags: ['plugin', 'selfupdate'] },
+		{ key: 'system', label: '系统', tags: ['lock', 'task', 'cmd', 'cfg', 'config', 'status', 'system'] }
+	];
+	var LOG_CAT_INDEX = {};
+	LOG_CATS.forEach(function (c) {
+		c.tags.forEach(function (t) { LOG_CAT_INDEX[t] = c.key; });
+	});
+
+	function logCatLabel(key) {
+		for (var i = 0; i < LOG_CATS.length; i++)
+			if (LOG_CATS[i].key === key) return LOG_CATS[i].label;
+		return '系统';
+	}
+
+	function logCatOf(tag, body) {
+		var key = LOG_CAT_INDEX[String(tag || '').toLowerCase()];
+		if (key) return key;
+		var b = String(body || '');
+		if (/备份|恢复|快照|snapshot/i.test(b)) return 'backup';
+		if (/下载|分段|分块|Range|断点|限速|stall/i.test(b)) return 'download';
+		if (/插件|自我更新/.test(b)) return 'plugin';
+		if (/刷写|升级|重启|固件包/.test(b)) return 'upgrade';
+		if (/检测|校验|比对|兼容|Release|Actions|Artifact|SHA256|仓库|网络/i.test(b)) return 'check';
+		return 'system';
+	}
 
 	// 日志级别：只根据文本判定，不依赖后端格式，旧日志也能正确着色。
 	function logLevelOf(text) {
@@ -1854,37 +1890,48 @@
 		return 'info';
 	}
 
+	function updateLogBadge() {
+		var badge = $('log-limit-badge');
+		if (!badge) return;
+		var limit = logMeta.limit || LOG_LIMIT_BYTES;
+		var used = Number(logMeta.file_size) || 0;
+		badge.textContent = fmtSize(Math.min(used, limit)) + ' / ' + fmtSize(limit) +
+			(logMeta.truncated ? ' · 已裁剪' : '');
+		badge.title = '日志文件 ' + fmtSize(used) + '，内存上限 ' + fmtSize(limit) +
+			'；超过上限时自动裁剪并保留最近 ' + fmtSize(Math.round(limit / 2)) + '。';
+	}
+
 	// 结构化渲染运行日志：
-	//   - [tag] 前缀变成色块，正文单独成列，长行可读换行
-	//   - 纯 JSON 行（states 等）默认折叠，只显示 model/state/ok/时间摘要
-	//   - 连续重复行合并为 ×N，避免反复检测刷屏
-	//   - 超过 1200 行只渲染最近部分，顶部给出统计
+	//   - 类型徽标（下载 / 检测 / 升级 / 备份 / 插件 / 系统）+ 原始 tag + 正文分列
+	//   - 错误 / 警告 / 成功用级别色与左侧色条区分
+	//   - 纯 JSON 行默认折叠；连续重复行合并为 ×N
+	//   - 顶部工具栏按类型筛选，并给出各类型与错误计数
 	function renderLog(text) {
 		var lv = $('log-view');
 		if (!lv) return;
-		var all = String(text == null ? '' : text).split('\n');
+		var raw = String(text == null ? '' : text);
+		var all = raw.split('\n');
 		var total = all.length;
 		var truncated = false;
 		if (total > LOG_VIEW_MAX) {
 			all = all.slice(total - LOG_VIEW_MAX);
 			truncated = true;
 		}
+		logMeta.size = raw.length;
+		logMeta.truncated = truncated ||
+			(logMeta.file_size > (logMeta.limit || LOG_LIMIT_BYTES));
+		updateLogBadge();
 
-		var rows = [];
-		var errors = 0, warns = 0, jsonFolded = 0, prev = null, same = 0;
-
-		function markRepeat() {
-			if (same > 1 && rows.length)
-				rows[rows.length - 1] += '<span class="ou-log-repeat">×' + same + '</span>';
-		}
+		var entries = [];
+		var counts = { download: 0, check: 0, upgrade: 0, backup: 0, plugin: 0, system: 0 };
+		var errors = 0, warns = 0, okCount = 0, jsonFolded = 0;
+		var prevLine = null, prevEntry = null;
 
 		for (var i = 0; i < all.length; i++) {
 			var line = all[i];
 			if (!line.trim()) continue;
-			if (line === prev) { same++; continue; }
-			markRepeat();
-			prev = line;
-			same = 1;
+			if (line === prevLine && prevEntry) { prevEntry.repeat++; continue; }
+			prevLine = line;
 
 			var t = line.trim();
 			// 只有真能解析成对象/数组的长行才当 JSON 折叠；
@@ -1897,49 +1944,127 @@
 				} catch (e2) { folded = null; }
 			}
 			if (folded) {
-				var o = folded;
 				var summary = '';
-				if (!Array.isArray(o)) {
+				if (!Array.isArray(folded)) {
 					var bits = [];
-					if (o.model) bits.push('model=' + o.model);
-					if (o.state) bits.push('state=' + o.state);
-					if (o.ok !== undefined) bits.push('ok=' + o.ok);
-					if (o.generated_at_local) bits.push(o.generated_at_local);
+					if (folded.model) bits.push('model=' + folded.model);
+					if (folded.state) bits.push('state=' + folded.state);
+					if (folded.ok !== undefined) bits.push('ok=' + folded.ok);
+					if (folded.generated_at_local) bits.push(folded.generated_at_local);
 					summary = bits.join(' · ');
 				}
 				jsonFolded++;
-				rows.push('<details class="ou-log-json"><summary><span class="ou-log-tag json">JSON</span>' +
-					esc(summary || '结构化输出') + ' · ' + esc(fmtSize(t.length)) + '（点开查看）</summary>' +
-					'<pre class="ou-log-json-body">' + esc(t) + '</pre></details>');
+				counts.check++;
+				entries.push({ kind: 'json', cat: 'check', summary: summary || '结构化输出',
+					size: t.length, body: t });
+				prevEntry = null;
 				continue;
 			}
 
 			var m = /^\[([A-Za-z0-9_.\-]+)\]\s?(.*)$/.exec(line);
 			var tag = m ? m[1] : '';
 			var body = m ? m[2] : line;
+			var cat = logCatOf(tag, body);
 			var lvl = logLevelOf(body);
+			counts[cat] = (counts[cat] || 0) + 1;
 			if (lvl === 'error') errors++;
 			else if (lvl === 'warn') warns++;
-			rows.push('<div class="ou-log-line" data-level="' + lvl + '">' +
-				'<span class="ou-log-tag' + (tag ? '' : ' plain') + '">' + esc(tag || '·') + '</span>' +
-				'<span class="ou-log-text">' + esc(body) + '</span></div>');
+			else if (lvl === 'ok') okCount++;
+			var entry = { kind: 'line', cat: cat, tag: tag, body: body, lvl: lvl, repeat: 1 };
+			entries.push(entry);
+			prevEntry = entry;
 		}
-		markRepeat();
 
-		var head = '<div class="ou-log-summary"><strong>共 ' + total + ' 行</strong>' +
+		function catBadge(cat) {
+			return '<span class="ou-log-cat" data-cat="' + cat + '">' + logCatLabel(cat) + '</span>';
+		}
+
+		var rows = entries.map(function (e) {
+			if (e.kind === 'json') {
+				return '<details class="ou-log-json" data-cat="' + e.cat + '" data-level="info">' +
+					'<summary>' + catBadge(e.cat) +
+					'<span class="ou-log-tag json">JSON</span>' +
+					'<span class="ou-log-json-title">' + esc(e.summary) + ' · ' +
+					esc(fmtSize(e.size)) + '</span></summary>' +
+					'<pre class="ou-log-json-body">' + esc(e.body) + '</pre></details>';
+			}
+			return '<div class="ou-log-line" data-cat="' + e.cat + '" data-level="' + e.lvl + '">' +
+				catBadge(e.cat) +
+				'<span class="ou-log-lvl" data-level="' + e.lvl + '" aria-hidden="true"></span>' +
+				'<span class="ou-log-tag' + (e.tag ? '' : ' plain') + '">' +
+				esc(e.tag || '·') + '</span>' +
+				'<span class="ou-log-text">' + esc(e.body) +
+				(e.repeat > 1 ? '<span class="ou-log-repeat">×' + e.repeat + '</span>' : '') +
+				'</span></div>';
+		});
+
+		var limit = logMeta.limit || LOG_LIMIT_BYTES;
+		var fileSize = logMeta.file_size || raw.length;
+		var chips = '<button type="button" class="ou-log-chip' +
+			(logCategory === 'all' ? ' active' : '') + '" data-log-cat="all">全部 <b>' +
+			entries.length + '</b></button>' +
+			LOG_CATS.map(function (c) {
+				return '<button type="button" class="ou-log-chip' +
+					(logCategory === c.key ? ' active' : '') + '" data-log-cat="' + c.key + '">' +
+					c.label + ' <b>' + (counts[c.key] || 0) + '</b></button>';
+			}).join('') +
+			'<button type="button" class="ou-log-chip ou-log-chip-err' +
+			(logErrorsOnly ? ' active' : '') + '" data-log-errors="1">仅错误 <b>' +
+			errors + '</b></button>';
+
+		var head = '<div class="ou-log-toolbar">' +
+			'<div class="ou-log-summary"><strong>共 ' + total + ' 行</strong>' +
 			(truncated ? ' · 仅渲染最近 ' + LOG_VIEW_MAX + ' 行' : '') +
+			' · 文件 ' + fmtSize(fileSize) + ' / ' + fmtSize(limit) +
 			(errors ? ' · <span class="ou-log-err">错误 ' + errors + '</span>' : '') +
 			(warns ? ' · <span class="ou-log-warn">警告 ' + warns + '</span>' : '') +
-			(jsonFolded ? ' · 折叠 JSON ' + jsonFolded + ' 段' : '') + '</div>';
+			(okCount ? ' · <span class="ou-log-ok">成功 ' + okCount + '</span>' : '') +
+			(jsonFolded ? ' · 折叠 JSON ' + jsonFolded + ' 段' : '') + '</div>' +
+			'<div class="ou-log-filters">' + chips + '</div></div>';
 
-		lv.innerHTML = head +
-			(rows.length ? rows.join('') : '<div class="ou-log-empty">暂无日志</div>');
+		lv.innerHTML = head + '<div class="ou-log-lines">' +
+			(rows.length ? rows.join('') : '<div class="ou-log-empty">暂无日志</div>') + '</div>';
 		lv.scrollTop = lv.scrollHeight;
+		applyLogFilter();
+	}
+
+	function applyLogFilter() {
+		var lv = $('log-view');
+		if (!lv) return;
+		var rows = lv.querySelectorAll('.ou-log-line, .ou-log-json');
+		for (var i = 0; i < rows.length; i++) {
+			var cat = rows[i].getAttribute('data-cat');
+			var lvl = rows[i].getAttribute('data-level');
+			rows[i].hidden = !((logCategory === 'all' || cat === logCategory) &&
+				(!logErrorsOnly || lvl === 'error'));
+		}
+		lv.querySelectorAll('[data-log-cat]').forEach(function (b) {
+			b.classList.toggle('active', b.getAttribute('data-log-cat') === logCategory);
+		});
+		var errBtn = lv.querySelector('[data-log-errors]');
+		if (errBtn) errBtn.classList.toggle('active', logErrorsOnly);
+	}
+
+	function bindLogFilters() {
+		var lv = $('log-view');
+		if (!lv) return;
+		lv.addEventListener('click', function (e) {
+			var el = e.target;
+			while (el && el !== lv && !el.hasAttribute('data-log-cat') &&
+				!el.hasAttribute('data-log-errors')) el = el.parentElement;
+			if (!el || el === lv) return;
+			if (el.hasAttribute('data-log-errors')) logErrorsOnly = !logErrorsOnly;
+			else logCategory = el.getAttribute('data-log-cat');
+			applyLogFilter();
+		});
 	}
 
 	function refreshLog() {
 		setBusy('btn-refresh-log', true);
 		ubus('get_log').then(function (r) {
+			logMeta.file_size = Number(r && r.file_size) || 0;
+			logMeta.limit = Number(r && r.limit) || LOG_LIMIT_BYTES;
+			logMeta.size = Number(r && r.size) || 0;
 			renderLog((r && r.log) ? r.log : '');
 		}).catch(function (e) {
 			renderLog('日志读取失败: ' + e.message);
@@ -1960,6 +2085,10 @@
 			setBusy('btn-clear-log', true, '清空中...');
 			ubus('clear_log').then(function (r) {
 				if (r && r.ok) {
+					logCategory = 'all';
+					logErrorsOnly = false;
+					logMeta.file_size = 0;
+					logMeta.size = 0;
 					renderLog('');
 				}
 			}).catch(function (e) {
@@ -2787,6 +2916,7 @@
 		$('btn-netcheck') && $('btn-netcheck').addEventListener('click', runNetcheck);
 		$('btn-clear-states') && $('btn-clear-states').addEventListener('click', clearStatesCache);
 		bindDialog();
+		bindLogFilters();
 		bindDrawers();
 
 		document.querySelectorAll('.ou-quick-pill').forEach(function (pill) {

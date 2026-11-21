@@ -1,7 +1,7 @@
 {% include('header') %}
 
 <!-- luci-app-online-upgrade v2 —— 现代纯白视觉风格 -->
-<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.15">
+<link rel="stylesheet" href="{{ resource }}/online-upgrade/style.css?v=2.6.16">
 
 <div class="cbi-map ou-container">
 	<!-- 顶部主视觉横幅：定制矢量插画 -->
@@ -914,7 +914,7 @@
 					<div class="ou-head-title-row">
 						<h3>运行日志</h3>
 					</div>
-					<p class="ou-head-sub">实时查看后端 Tokio 多线程分段下载与升级调度日志（自动限制内存占用 ≤ 2MB，支持随时清空）</p>
+					<p class="ou-head-sub">实时查看后端 Tokio 多线程分段下载与升级调度日志（512KB 上限、按任务类型筛选与统计，支持随时清空）</p>
 				</div>
 			</div>
 			<div class="ou-btn-row">
@@ -939,7 +939,7 @@
 				</div>
 				<span class="ou-terminal-title">/tmp/online-upgrade.log</span>
 				<div class="ou-terminal-spacer"></div>
-				<span class="ou-terminal-limit-badge">内存上限 2MB</span>
+				<span class="ou-terminal-limit-badge" id="log-limit-badge">上限 512KB</span>
 			</div>
 			<div class="ou-terminal ou-log" id="log-view"><div class="ou-log-empty">日志加载中...</div></div>
 		</div>
@@ -1007,6 +1007,6 @@
 </div>
 
 <script>window.__OU_SESSION__ = '{{ ctx.authsession || "" }}';</script>
-<script src="{{ resource }}/online-upgrade/app.js?v=2.6.15"></script>
+<script src="{{ resource }}/online-upgrade/app.js?v=2.6.16"></script>
 
 {% include('footer') %}

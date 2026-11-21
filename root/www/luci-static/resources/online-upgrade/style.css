@@ -1280,12 +1280,21 @@
 .ou-terminal-dots .ou-dot.green  { background: #10b981 !important; }
 
 .ou-terminal-title {
+	flex: 1 1 auto !important;
+	min-width: 0 !important;
+	padding: 0 10px !important;
 	font-size: 12px !important;
 	font-family: ui-monospace, Consolas, monospace !important;
 	color: #94a3b8 !important;
+	text-align: center !important;
+	overflow: hidden !important;
+	text-overflow: ellipsis !important;
+	white-space: nowrap !important;
 }
 
 .ou-terminal-limit-badge {
+	flex: 0 0 auto !important;
+	white-space: nowrap !important;
 	font-size: 11px !important;
 	font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif !important;
 	font-weight: 500 !important;
@@ -1463,60 +1472,196 @@
 	white-space: normal !important;
 	word-break: normal !important;
 	line-height: 1.55 !important;
-	padding: 12px 14px !important;
+	padding: 0 !important;
+	max-height: 460px !important;
 }
-.ou-log-summary {
+
+/* 顶部工具栏：统计 + 类型筛选，滚动时吸顶 */
+.ou-log-toolbar {
 	position: sticky !important;
 	top: 0 !important;
-	z-index: 1 !important;
-	padding: 2px 2px 7px !important;
-	margin-bottom: 4px !important;
-	font-size: 11.5px !important;
-	color: #cbd5e1 !important;
-	border-bottom: 1px solid #1e293b !important;
+	z-index: 4 !important;
+	padding: 10px 14px 8px !important;
 	background: #0b1220 !important;
+	border-bottom: 1px solid #1e293b !important;
 }
+.ou-log-summary {
+	display: flex !important;
+	flex-wrap: wrap !important;
+	gap: 2px 10px !important;
+	align-items: center !important;
+	margin-bottom: 8px !important;
+	font-size: 11.5px !important;
+	line-height: 1.5 !important;
+	color: #94a3b8 !important;
+}
+.ou-log-summary strong { color: #e2e8f0 !important; font-weight: 700 !important; }
 .ou-log-err { color: #fca5a5 !important; }
 .ou-log-warn { color: #fcd34d !important; }
-.ou-log-line {
+.ou-log-ok { color: #86efac !important; }
+.ou-log-filters {
 	display: flex !important;
-	gap: 8px !important;
-	align-items: flex-start !important;
-	padding: 2px 0 !important;
+	flex-wrap: wrap !important;
+	gap: 6px !important;
 }
-.ou-log-tag {
-	flex: 0 0 auto !important;
-	min-width: 52px !important;
-	max-width: 96px !important;
-	text-align: center !important;
-	padding: 0 6px !important;
+.ou-log-chip {
+	display: inline-flex !important;
+	align-items: center !important;
+	gap: 5px !important;
+	padding: 4px 10px !important;
+	border-radius: 999px !important;
+	border: 1px solid #334155 !important;
+	background: #111827 !important;
+	color: #cbd5e1 !important;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+	font-size: 11.5px !important;
+	font-weight: 600 !important;
+	line-height: 1.2 !important;
+	cursor: pointer !important;
+	transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease !important;
+}
+.ou-log-chip b { font-size: 11px !important; font-weight: 700 !important; color: #94a3b8 !important; }
+.ou-log-chip:hover { background: #1e293b !important; border-color: #475569 !important; color: #f1f5f9 !important; }
+.ou-log-chip.active {
+	background: rgba(37, 99, 235, 0.22) !important;
+	border-color: #3b82f6 !important;
+	color: #bfdbfe !important;
+}
+.ou-log-chip.active b { color: #dbeafe !important; }
+.ou-log-chip-err.active {
+	background: rgba(239, 68, 68, 0.18) !important;
+	border-color: #ef4444 !important;
+	color: #fecaca !important;
+}
+
+.ou-log-lines { padding: 6px 14px 14px !important; }
+
+/* 行：类型徽标 | 级别点 | 原始 tag | 正文 */
+.ou-log-line {
+	display: grid !important;
+	grid-template-columns: 54px 8px 76px minmax(0, 1fr) !important;
+	gap: 8px !important;
+	align-items: start !important;
+	padding: 4px 8px 4px 6px !important;
+	border-left: 2px solid transparent !important;
 	border-radius: 6px !important;
+}
+.ou-log-line:hover { background: rgba(148, 163, 184, 0.08) !important; }
+.ou-log-line[data-level="error"] {
+	border-left-color: #ef4444 !important;
+	background: rgba(239, 68, 68, 0.07) !important;
+}
+.ou-log-line[data-level="warn"] {
+	border-left-color: #f59e0b !important;
+	background: rgba(245, 158, 11, 0.06) !important;
+}
+.ou-log-line[hidden],
+.ou-log-json[hidden] { display: none !important; }
+
+.ou-log-cat {
+	display: inline-flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+	height: 20px !important;
+	padding: 0 6px !important;
+	border-radius: 5px !important;
 	background: #1e293b !important;
 	color: #93c5fd !important;
 	font-size: 11px !important;
-	line-height: 18px !important;
+	font-weight: 700 !important;
+	line-height: 1 !important;
+	letter-spacing: 0.02em !important;
+	white-space: nowrap !important;
+}
+.ou-log-cat[data-cat="download"] { background: rgba(37, 99, 235, 0.22) !important; color: #93c5fd !important; }
+.ou-log-cat[data-cat="check"]    { background: rgba(124, 58, 237, 0.22) !important; color: #c4b5fd !important; }
+.ou-log-cat[data-cat="upgrade"]  { background: rgba(5, 150, 105, 0.22) !important; color: #86efac !important; }
+.ou-log-cat[data-cat="backup"]   { background: rgba(217, 119, 6, 0.24) !important; color: #fcd34d !important; }
+.ou-log-cat[data-cat="plugin"]   { background: rgba(79, 70, 229, 0.24) !important; color: #a5b4fc !important; }
+.ou-log-cat[data-cat="system"]   { background: rgba(100, 116, 139, 0.24) !important; color: #cbd5e1 !important; }
+
+.ou-log-lvl {
+	width: 8px !important;
+	height: 8px !important;
+	margin-top: 6px !important;
+	border-radius: 50% !important;
+	background: #334155 !important;
+}
+.ou-log-lvl[data-level="error"] { background: #ef4444 !important; box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18) !important; }
+.ou-log-lvl[data-level="warn"]  { background: #f59e0b !important; }
+.ou-log-lvl[data-level="ok"]    { background: #10b981 !important; }
+
+.ou-log-tag {
+	min-width: 0 !important;
+	max-width: none !important;
+	padding: 0 !important;
+	background: transparent !important;
+	color: #64748b !important;
+	font-family: ui-monospace, "Cascadia Code", Consolas, monospace !important;
+	font-size: 11px !important;
+	line-height: 20px !important;
+	text-align: left !important;
 	white-space: nowrap !important;
 	overflow: hidden !important;
 	text-overflow: ellipsis !important;
 }
-.ou-log-tag.plain { background: transparent !important; color: #64748b !important; }
-.ou-log-tag.json { background: #312e81 !important; color: #c7d2fe !important; }
+.ou-log-tag.plain { color: #475569 !important; }
+.ou-log-tag.json {
+	padding: 0 6px !important;
+	border-radius: 4px !important;
+	background: rgba(49, 46, 129, 0.7) !important;
+	color: #c7d2fe !important;
+	line-height: 18px !important;
+}
 .ou-log-text {
-	flex: 1 1 auto !important;
 	min-width: 0 !important;
 	white-space: pre-wrap !important;
 	overflow-wrap: anywhere !important;
 	word-break: break-word !important;
 	color: #e2e8f0 !important;
+	font-size: 12.5px !important;
+	line-height: 1.55 !important;
 }
 .ou-log-line[data-level="error"] .ou-log-text { color: #fca5a5 !important; }
 .ou-log-line[data-level="warn"] .ou-log-text { color: #fcd34d !important; }
 .ou-log-line[data-level="ok"] .ou-log-text { color: #86efac !important; }
 .ou-log-repeat { margin-left: 6px !important; color: #94a3b8 !important; font-size: 11px !important; }
-.ou-log-json { margin: 4px 0 !important; }
-.ou-log-json > summary { cursor: pointer !important; color: #cbd5e1 !important; font-size: 12px !important; padding: 2px 0 !important; }
+
+/* JSON 折叠段：与普通行共用类型徽标与网格 */
+.ou-log-json {
+	margin: 4px 0 !important;
+	padding-left: 6px !important;
+	border-left: 2px solid transparent !important;
+	border-radius: 6px !important;
+}
+.ou-log-json > summary {
+	display: grid !important;
+	grid-template-columns: 12px 54px 76px minmax(0, 1fr) !important;
+	gap: 8px !important;
+	align-items: center !important;
+	padding: 4px 8px 4px 0 !important;
+	border-radius: 6px !important;
+	cursor: pointer !important;
+	list-style: none !important;
+	color: #cbd5e1 !important;
+	font-size: 12px !important;
+}
+.ou-log-json > summary::-webkit-details-marker { display: none !important; }
+.ou-log-json > summary::before {
+	content: '▸' !important;
+	color: #64748b !important;
+	font-size: 11px !important;
+}
+.ou-log-json[open] > summary::before { content: '▾' !important; }
+.ou-log-json > summary:hover { background: rgba(148, 163, 184, 0.08) !important; }
+.ou-log-json-title {
+	min-width: 0 !important;
+	white-space: nowrap !important;
+	overflow: hidden !important;
+	text-overflow: ellipsis !important;
+}
 .ou-log-json-body {
-	margin: 6px 0 8px !important;
+	margin: 6px 0 8px 20px !important;
 	padding: 8px 10px !important;
 	border-radius: 8px !important;
 	background: #111827 !important;
@@ -1529,7 +1674,31 @@
 	max-height: 240px !important;
 	overflow: auto !important;
 }
-.ou-log-empty { color: #94a3b8 !important; padding: 6px 2px !important; }
+.ou-log-empty { color: #94a3b8 !important; padding: 10px 2px !important; }
+
+@media (max-width: 760px) {
+	.ou-container .ou-terminal.ou-log { max-height: 62vh !important; }
+	.ou-terminal-titlebar { padding: 8px 10px !important; gap: 8px !important; }
+	.ou-terminal-title { font-size: 10.5px !important; text-align: left !important; padding: 0 4px !important; }
+	.ou-terminal-limit-badge { font-size: 10px !important; padding: 2px 6px !important; }
+	.ou-terminal-dots { gap: 4px !important; }
+	.ou-terminal-dots .ou-dot { width: 8px !important; height: 8px !important; }
+	.ou-log-toolbar { padding: 8px 10px 7px !important; }
+	.ou-log-summary { gap: 2px 8px !important; font-size: 11px !important; margin-bottom: 7px !important; }
+	.ou-log-filters { gap: 4px !important; }
+	.ou-log-chip { padding: 3px 8px !important; font-size: 10.5px !important; }
+	.ou-log-lines { padding: 4px 8px 10px !important; }
+	.ou-log-line {
+		grid-template-columns: 48px 8px minmax(0, 1fr) !important;
+		gap: 6px !important;
+		padding-left: 4px !important;
+	}
+	.ou-log-line .ou-log-tag { display: none !important; }
+	.ou-log-text { font-size: 11.5px !important; }
+	.ou-log-json > summary { grid-template-columns: 10px 48px minmax(0, 1fr) !important; gap: 6px !important; }
+	.ou-log-json .ou-log-tag { display: none !important; }
+	.ou-log-json-body { margin-left: 10px !important; }
+}
 
 .ou-terminal::-webkit-scrollbar {
 	width: 8px;
